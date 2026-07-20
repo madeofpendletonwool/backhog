@@ -133,9 +133,13 @@ func (c *IGDB) GamesBySteamAppIDs(ctx context.Context, appIDs []int64) (map[int6
 			quoted[i] = fmt.Sprintf("%q", fmt.Sprint(id))
 		}
 
-		// category 1 is Steam.
-		body := fmt.Sprintf(`fields game,uid; where category = 1 & uid = (%s); limit %d;`,
-			strings.Join(quoted, ","), len(chunk))
+		// Filter on external_game_source, not the deprecated `category` field:
+		// Steam rows no longer carry category = 1, so that filter silently
+		// matches nothing and every game looks unrecognised. Source 1 is Steam.
+		// Request IGDB's maximum: one appid can map to more than one row, and a
+		// limit of len(chunk) would quietly drop the overflow.
+		body := fmt.Sprintf(`fields game,uid; where external_game_source = 1 & uid = (%s); limit 500;`,
+			strings.Join(quoted, ","))
 
 		raw, err := c.post(ctx, "/external_games", body)
 		if err != nil {

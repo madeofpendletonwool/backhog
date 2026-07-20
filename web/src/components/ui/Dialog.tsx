@@ -22,6 +22,17 @@ export function Dialog({ open, onClose, children, className, bare, label }: Dial
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreFocusTo = useRef<HTMLElement | null>(null);
 
+  // Held in a ref so the setup effect below can depend on `open` alone.
+  // Callers routinely pass an inline arrow function, whose identity changes on
+  // every render — including every keystroke into an input inside the dialog.
+  // If the effect depended on it, each keystroke would tear down and re-run
+  // this setup, and the cleanup would yank focus back to whatever opened the
+  // dialog. That reads as "the text box deselects itself as I type".
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
 
@@ -30,7 +41,7 @@ export function Dialog({ open, onClose, children, className, bare, label }: Dial
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener("keydown", onKeyDown);
@@ -49,7 +60,7 @@ export function Dialog({ open, onClose, children, className, bare, label }: Dial
       document.body.style.overflow = previousOverflow;
       restoreFocusTo.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

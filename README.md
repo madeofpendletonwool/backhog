@@ -131,6 +131,12 @@ image, so the container healthcheck re-invokes the binary itself
 
 ---
 
+## AI Disclosure
+
+Yes AI helped me make this program. If you don't like it don't use it. I made this for my own personal usage so your opinions make no difference to me in scope of this project. 
+
+---
+
 ## Project layout
 
 ```

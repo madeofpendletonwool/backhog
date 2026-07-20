@@ -1,5 +1,7 @@
 import { cn } from "@/lib/cn";
 import {
+  Dices,
+  Download,
   ListOrdered,
   LayoutGrid,
   ListTree,
@@ -12,6 +14,8 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { AddGameDialog } from "./AddGameDialog";
+import { PickDialog } from "./PickDialog";
+import { SteamImportDialog } from "./SteamImportDialog";
 import { Button } from "./ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
 import { useLists } from "@/hooks/useLists";
@@ -25,6 +29,8 @@ const navItems = [
 
 export function Layout() {
   const [addOpen, setAddOpen] = useState(false);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { data: stats } = useStats();
@@ -65,6 +71,11 @@ export function Layout() {
           </kbd>
         </Button>
 
+        <Button variant="secondary" className="mb-6 w-full" onClick={() => setPickOpen(true)}>
+          <Dices className="size-4" />
+          Pick for me
+        </Button>
+
         <nav className="space-y-0.5">
           {navItems.map(({ to, label, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end} className={navLinkClass}>
@@ -94,6 +105,10 @@ export function Layout() {
         )}
 
         <div className="mt-auto space-y-0.5 border-t border-white/[0.06] pt-3">
+          <button onClick={() => setImportOpen(true)} className={actionLinkClass}>
+            <Download className="size-4" />
+            Import from Steam
+          </button>
           <NavLink to="/settings" className={navLinkClass}>
             <Settings className="size-4" />
             <span className="truncate">{user?.username}</span>
@@ -124,6 +139,9 @@ export function Layout() {
             <Settings className="size-4" />
           </NavLink>
         </nav>
+        <button onClick={() => setPickOpen(true)} className={mobileActionClass} aria-label="Pick for me">
+          <Dices className="size-4" />
+        </button>
         <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>
           <Plus className="size-4" />
           Add
@@ -135,6 +153,8 @@ export function Layout() {
       </main>
 
       <AddGameDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <PickDialog open={pickOpen} onClose={() => setPickOpen(false)} />
+      <SteamImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }
@@ -146,6 +166,11 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
       ? "bg-white/[0.08] font-medium text-ink-100"
       : "text-ink-400 hover:bg-white/[0.05] hover:text-ink-200",
   );
+
+const mobileActionClass = "rounded-lg p-2 text-ink-400 transition-colors hover:text-ink-100";
+
+const actionLinkClass =
+  "flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-ink-400 transition-colors hover:bg-white/[0.05] hover:text-ink-200 focus-visible:focus-ring";
 
 const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(

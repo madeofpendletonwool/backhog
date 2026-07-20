@@ -109,6 +109,76 @@ func (c *IGDB) GetByID(ctx context.Context, id int64) (Game, error) {
 	return games[0], nil
 }
 
+// GamesBySteamAppIDs maps Steam appids to IGDB games.
+//
+// IGDB's external_games table carries the Steam appid for most titles, so this
+// is an exact join rather than a name guess — "Prey" and "Prey (2006)" would
+// defeat name matching, and Steam's punctuation rarely matches IGDB's anyway.
+// Returns a map keyed by Steam appid; unmatched appids are simply absent.
+func (c *IGDB) GamesBySteamAppIDs(ctx context.Context, appIDs []int64) (map[int64]Game, error) {
+	out := make(map[int64]Game, len(appIDs))
+	if len(appIDs) == 0 {
+		return out, nil
+	}
+
+	// IGDB caps a response at 500 rows, and long where-clauses get unwieldy, so
+	// walk the library in chunks.
+	const chunkSize = 200
+	for start := 0; start < len(appIDs); start += chunkSize {
+		end := min(start+chunkSize, len(appIDs))
+		chunk := appIDs[start:end]
+
+		quoted := make([]string, len(chunk))
+		for i, id := range chunk {
+			quoted[i] = fmt.Sprintf("%q", fmt.Sprint(id))
+		}
+
+		// category 1 is Steam.
+		body := fmt.Sprintf(`fields game,uid; where category = 1 & uid = (%s); limit %d;`,
+			strings.Join(quoted, ","), len(chunk))
+
+		raw, err := c.post(ctx, "/external_games", body)
+		if err != nil {
+			return nil, err
+		}
+
+		var links []struct {
+			Game int64  `json:"game"`
+			UID  string `json:"uid"`
+		}
+		if err := json.Unmarshal(raw, &links); err != nil {
+			return nil, fmt.Errorf("igdb: decode external games: %w", err)
+		}
+		if len(links) == 0 {
+			continue
+		}
+
+		gameToApp := make(map[int64]int64, len(links))
+		gameIDs := make([]string, 0, len(links))
+		for _, link := range links {
+			var appID int64
+			if _, err := fmt.Sscanf(link.UID, "%d", &appID); err != nil {
+				continue
+			}
+			gameToApp[link.Game] = appID
+			gameIDs = append(gameIDs, fmt.Sprint(link.Game))
+		}
+
+		detail := fmt.Sprintf(`where id = (%s); %s limit %d;`,
+			strings.Join(gameIDs, ","), gameFields, len(gameIDs))
+		games, err := c.queryGames(ctx, detail, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, g := range games {
+			if appID, ok := gameToApp[g.ID]; ok {
+				out[appID] = g
+			}
+		}
+	}
+	return out, nil
+}
+
 // escapeQuotes keeps a user's quote characters from terminating the APICalypse
 // string literal. %q handles Go-side escaping; this guards the input first.
 func escapeQuotes(s string) string {

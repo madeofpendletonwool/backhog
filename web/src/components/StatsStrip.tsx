@@ -34,19 +34,32 @@ export function StatsStrip() {
       <Tile
         label="Playing now"
         value={String(stats.playing)}
-        hint={stats.playing === 0 ? "Nothing in progress" : "Keep going"}
+        // Logged hours are what you actually recorded, so they beat the
+        // crowd-sourced estimate whenever there are any.
+        hint={
+          stats.logged_hours > 0
+            ? `${formatHours(stats.logged_hours)} logged by you`
+            : stats.playing === 0
+              ? "Nothing in progress"
+              : "Keep going"
+        }
         icon={<Clock className="size-4" />}
         accent="text-cyan-300"
       />
       <Tile
         label="Completed"
         value={String(stats.played)}
-        hint={`${formatHours(stats.played_hours)} played`}
+        hint={`${formatHours(stats.played_hours)} of games beaten`}
         icon={<Trophy className="size-4" />}
         accent="text-emerald-300"
       />
       <div className="panel p-4">
-        <p className="text-xs font-medium text-ink-400">Completion</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-ink-400">Completion</p>
+          {stats.wishlist > 0 && (
+            <span className="text-[11px] text-amber-300/70">{stats.wishlist} wishlisted</span>
+          )}
+        </div>
         <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight text-ink-100">
           {stats.completion}%
         </p>

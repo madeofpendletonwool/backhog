@@ -13,6 +13,12 @@ actually get to them.
   that stay current on their own
 - **Per-game detail** — your rating, notes, which platform you're playing it on,
   and which lists it belongs to
+- **Wishlist** — track what you want separately from what you own; wishlisted
+  games stay out of your backlog hours and completion percentage
+- **Playtime** — log sessions by hand, because a process watcher measures how
+  long the game was *open*, not how long you actually played
+- **Pick for me** — a random backlog game, optionally "under 5 hours" or "85+"
+- **Steam import** — bulk-import an owned library, matched to IGDB by appid
 - **Multi-user** — real accounts, fully isolated libraries, shared metadata cache
 
 Go API · SQLite · React + Vite + Tailwind · Docker Compose.
@@ -47,6 +53,17 @@ IGDB_CLIENT_SECRET=your_client_secret
 Without them Backhog still runs and serves everything already in its cache —
 only *adding new games* is disabled, with a clear message saying so.
 
+### Importing from Steam (optional)
+
+Set `STEAM_API_KEY` in `.env` from
+<https://steamcommunity.com/dev/apikey>. This is one key for the whole
+deployment, not a per-user secret — it can read any *public* profile, so each
+user just supplies their own SteamID. Their Steam privacy setting for **Game
+details** must be Public.
+
+Steam appids are matched to IGDB through IGDB's `external_games` table, which is
+an exact join. Name matching would mangle cases like *Prey* (2006 vs 2017).
+
 ### Serving over HTTPS
 
 If you put Backhog behind an HTTPS reverse proxy, set `COOKIE_SECURE=true` in
@@ -62,6 +79,7 @@ nothing.
 |---|---|---|
 | `IGDB_CLIENT_ID` | — | Twitch app client ID; enables game search |
 | `IGDB_CLIENT_SECRET` | — | Twitch app secret |
+| `STEAM_API_KEY` | — | Steam Web API key; enables bulk library import |
 | `PORT` | `8080` | Host port for the web UI |
 | `COOKIE_SECURE` | `false` | Mark the session cookie `Secure` (HTTPS only) |
 | `DATABASE_PATH` | `/data/backhog.db` | SQLite file |

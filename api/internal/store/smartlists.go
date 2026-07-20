@@ -22,7 +22,12 @@ var smartFields = map[string]smartField{
 	"status": {
 		Column: "e.status", Type: "enum", Label: "Status",
 		Ops:  []string{"eq", "neq", "in"},
-		Enum: []string{models.StatusBacklog, models.StatusPlaying, models.StatusPlayed, models.StatusDropped},
+		Enum: models.AllStatuses,
+	},
+	"logged_hours": {
+		Column: "(SELECT COALESCE(SUM(ps.minutes), 0) / 60.0 FROM play_sessions ps WHERE ps.entry_id = e.id)",
+		Type:   "number", Label: "Hours I've logged",
+		Ops: []string{"gt", "lt", "gte", "lte"},
 	},
 	"name":            {Column: "g.name", Type: "text", Label: "Title", Ops: []string{"contains", "eq"}},
 	"igdb_rating":     {Column: "g.igdb_rating", Type: "number", Label: "IGDB rating", Ops: []string{"gt", "lt", "gte", "lte"}},

@@ -13,6 +13,7 @@ type Config struct {
 	CoverDir     string
 	IGDBClientID string
 	IGDBSecret   string
+	SteamAPIKey  string
 	Production   bool
 	// CookieSecure marks the session cookie Secure. It defaults to off because
 	// the common self-hosted setup is plain HTTP on a LAN address, and browsers
@@ -30,6 +31,7 @@ func Load() (Config, error) {
 		CoverDir:     env("COVER_DIR", "./covers"),
 		IGDBClientID: os.Getenv("IGDB_CLIENT_ID"),
 		IGDBSecret:   os.Getenv("IGDB_CLIENT_SECRET"),
+		SteamAPIKey:  os.Getenv("STEAM_API_KEY"),
 		Production:   strings.EqualFold(env("APP_ENV", "development"), "production"),
 		CookieSecure: strings.EqualFold(env("COOKIE_SECURE", "false"), "true"),
 	}

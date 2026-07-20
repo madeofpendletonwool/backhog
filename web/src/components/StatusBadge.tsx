@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { CheckCircle2, CircleDashed, PlayCircle, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, Gift, PlayCircle, XCircle } from "lucide-react";
 
 import { STATUS_LABELS, type Status } from "@/lib/types";
 
@@ -8,6 +8,7 @@ const statusStyles: Record<Status, string> = {
   playing: "bg-cyan-500/15 text-cyan-300 ring-cyan-400/30",
   played: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
   dropped: "bg-red-500/15 text-red-300 ring-red-400/30",
+  wishlist: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
 };
 
 const statusIcons: Record<Status, typeof CircleDashed> = {
@@ -15,6 +16,7 @@ const statusIcons: Record<Status, typeof CircleDashed> = {
   playing: PlayCircle,
   played: CheckCircle2,
   dropped: XCircle,
+  wishlist: Gift,
 };
 
 export function StatusBadge({
@@ -46,4 +48,5 @@ export const STATUS_DOT: Record<Status, string> = {
   playing: "bg-cyan-400",
   played: "bg-emerald-400",
   dropped: "bg-red-400",
+  wishlist: "bg-amber-400",
 };

@@ -7,6 +7,7 @@ import { GameCover } from "@/components/GameCover";
 import { StatusMenu } from "@/components/StatusMenu";
 import { Button, Panel, Select, Skeleton } from "@/components/ui/primitives";
 import { CreateListDialog } from "@/components/CreateListDialog";
+import { SessionLog } from "@/components/SessionLog";
 import { Dialog } from "@/components/ui/Dialog";
 import { useDeleteEntry, useEntry, useUpdateEntry } from "@/hooks/useLibrary";
 import { useEntryLists, useLists, useToggleListMembership } from "@/hooks/useLists";
@@ -159,6 +160,8 @@ export function GameDetailPage() {
         </div>
 
         <div className="space-y-5">
+          <SessionLog entry={entry} />
+
           <Panel className="p-5">
             <h2 className="mb-3 text-sm font-semibold text-ink-200">Your rating</h2>
             <RatingPicker

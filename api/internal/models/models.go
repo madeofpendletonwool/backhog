@@ -8,12 +8,19 @@ const (
 	StatusPlaying = "playing"
 	StatusPlayed  = "played"
 	StatusDropped = "dropped"
+	// StatusWishlist is for games you want but do not own yet. It is deliberately
+	// excluded from backlog totals and completion: a wishlist is a shopping list,
+	// not a debt you owe yourself.
+	StatusWishlist = "wishlist"
 )
 
-// ValidStatus reports whether s is one of the four tracked statuses.
+// AllStatuses lists every tracked status, in display order.
+var AllStatuses = []string{StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped, StatusWishlist}
+
+// ValidStatus reports whether s is a tracked status.
 func ValidStatus(s string) bool {
 	switch s {
-	case StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped:
+	case StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped, StatusWishlist:
 		return true
 	}
 	return false
@@ -56,6 +63,7 @@ type Entry struct {
 	UserRating    *int       `json:"user_rating"`
 	Notes         string     `json:"notes"`
 	QueuePosition *float64   `json:"queue_position"`
+	LoggedMinutes int        `json:"logged_minutes"`
 	StartedAt     *time.Time `json:"started_at"`
 	FinishedAt    *time.Time `json:"finished_at"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -98,7 +106,21 @@ type Stats struct {
 	Playing      int     `json:"playing"`
 	Played       int     `json:"played"`
 	Dropped      int     `json:"dropped"`
+	Wishlist     int     `json:"wishlist"`
 	BacklogHours float64 `json:"backlog_hours"`
 	PlayedHours  float64 `json:"played_hours"`
-	Completion   float64 `json:"completion"`
+	// LoggedHours is time you actually recorded playing, as opposed to the
+	// crowd-sourced estimates the other two are built from.
+	LoggedHours float64 `json:"logged_hours"`
+	Completion  float64 `json:"completion"`
+}
+
+// Session is one manually logged stretch of play.
+type Session struct {
+	ID        string    `json:"id"`
+	EntryID   string    `json:"entry_id"`
+	PlayedOn  string    `json:"played_on"`
+	Minutes   int       `json:"minutes"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
 }

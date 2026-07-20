@@ -1,12 +1,13 @@
-export type Status = "backlog" | "playing" | "played" | "dropped";
+export type Status = "backlog" | "playing" | "played" | "dropped" | "wishlist";
 
-export const STATUSES: Status[] = ["backlog", "playing", "played", "dropped"];
+export const STATUSES: Status[] = ["backlog", "playing", "played", "dropped", "wishlist"];
 
 export const STATUS_LABELS: Record<Status, string> = {
   backlog: "Backlog",
   playing: "Playing",
   played: "Played",
   dropped: "Dropped",
+  wishlist: "Wishlist",
 };
 
 export interface NamedRef {
@@ -37,6 +38,7 @@ export interface Entry {
   user_rating: number | null;
   notes: string;
   queue_position: number | null;
+  logged_minutes: number;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
@@ -56,9 +58,27 @@ export interface Stats {
   playing: number;
   played: number;
   dropped: number;
+  wishlist: number;
   backlog_hours: number;
   played_hours: number;
+  logged_hours: number;
   completion: number;
+}
+
+export interface PlaySession {
+  id: string;
+  entry_id: string;
+  played_on: string;
+  minutes: number;
+  note: string;
+  created_at: string;
+}
+
+export interface SteamMatch {
+  steam_name: string;
+  app_id: number;
+  game: Game | null;
+  in_library: boolean;
 }
 
 export type RuleValue = string | number | string[] | null;

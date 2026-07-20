@@ -101,7 +101,12 @@ func run() error {
 		slog.Warn("IGDB credentials not set; game search is disabled")
 	}
 
-	server := apihttp.NewServer(cfg, st, provider, covers)
+	steam := metadata.NewSteam(cfg.SteamAPIKey)
+	if steam.Enabled() {
+		slog.Info("steam import enabled")
+	}
+
+	server := apihttp.NewServer(cfg, st, provider, covers, steam)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           server.Routes(),

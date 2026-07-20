@@ -12,6 +12,8 @@ services:
       # Get these from https://dev.twitch.tv/console/apps — see README.
       IGDB_CLIENT_ID: ${IGDB_CLIENT_ID:-}
       IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
+      # Optional: enables bulk import of an owned Steam library.
+      STEAM_API_KEY: ${STEAM_API_KEY:-}
     volumes:
       - backhog-data:/data
     healthcheck:

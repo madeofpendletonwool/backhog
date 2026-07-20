@@ -3,11 +3,13 @@ import type {
   GameList,
   Game,
   NamedRef,
+  PlaySession,
   RuleSet,
   SearchResult,
   SmartField,
   Stats,
   Status,
+  SteamMatch,
   User,
 } from "./types";
 
@@ -92,6 +94,39 @@ export const api = {
   deleteEntry: (id: string) => request<void>(`/library/${id}`, { method: "DELETE" }),
 
   stats: () => request<Stats>("/library/stats"),
+
+  // --- play sessions --------------------------------------------------
+  sessions: (entryId: string) =>
+    request<{ sessions: PlaySession[] }>(`/library/${entryId}/sessions`),
+
+  addSession: (entryId: string, input: { minutes: number; played_on?: string; note?: string }) =>
+    request<PlaySession>(`/library/${entryId}/sessions`, { method: "POST", body: body(input) }),
+
+  deleteSession: (sessionId: string) =>
+    request<void>(`/sessions/${sessionId}`, { method: "DELETE" }),
+
+  // --- pick / import --------------------------------------------------
+  pick: (params: { max_hours?: number; min_rating?: number; genre?: number }) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value) query.set(key, String(value));
+    }
+    return request<Entry>(`/library/pick?${query}`);
+  },
+
+  steamPreview: (steam_id: string) =>
+    request<{ steam_id: string; total: number; unmatched: number; matches: SteamMatch[] }>(
+      "/import/steam/preview",
+      { method: "POST", body: body({ steam_id }) },
+    ),
+
+  bulkAdd: (game_ids: number[], status: Status) =>
+    request<{ added: number; skipped: number }>("/library/bulk", {
+      method: "POST",
+      body: body({ game_ids, status }),
+    }),
+
+  health: () => request<{ status: string; metadata: boolean; steam: boolean }>("/healthz"),
 
   facets: () => request<{ platforms: NamedRef[]; genres: NamedRef[] }>("/library/facets"),
 

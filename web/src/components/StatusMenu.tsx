@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { CheckCircle2, CircleDashed, PlayCircle, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, Gift, PlayCircle, XCircle } from "lucide-react";
 
 import { useUpdateEntry } from "@/hooks/useLibrary";
 import { STATUS_LABELS, STATUSES, type Entry, type Status } from "@/lib/types";
@@ -9,6 +9,7 @@ const icons: Record<Status, typeof CircleDashed> = {
   playing: PlayCircle,
   played: CheckCircle2,
   dropped: XCircle,
+  wishlist: Gift,
 };
 
 const activeStyles: Record<Status, string> = {
@@ -16,6 +17,7 @@ const activeStyles: Record<Status, string> = {
   playing: "bg-cyan-500 text-ink-950",
   played: "bg-emerald-500 text-ink-950",
   dropped: "bg-red-500 text-white",
+  wishlist: "bg-amber-500 text-ink-950",
 };
 
 /**

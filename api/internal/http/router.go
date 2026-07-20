@@ -19,10 +19,11 @@ type Server struct {
 	store    *store.Store
 	provider metadata.Provider
 	covers   *metadata.CoverCache
+	steam    *metadata.Steam
 }
 
-func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache) *Server {
-	return &Server{cfg: cfg, store: st, provider: provider, covers: covers}
+func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache, steam *metadata.Steam) *Server {
+	return &Server{cfg: cfg, store: st, provider: provider, covers: covers, steam: steam}
 }
 
 // Routes builds the API router. Everything is mounted under /api so nginx can
@@ -63,11 +64,18 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/queue", s.handleQueue)
 				r.Post("/reorder", s.handleReorder)
 				r.Get("/facets", s.handleFacets)
+				r.Get("/pick", s.handlePick)
+				r.Post("/bulk", s.handleBulkAdd)
 				r.Get("/{entryID}", s.handleGetEntry)
 				r.Get("/{entryID}/lists", s.handleEntryLists)
+				r.Get("/{entryID}/sessions", s.handleGetSessions)
+				r.Post("/{entryID}/sessions", s.handleAddSession)
 				r.Patch("/{entryID}", s.handleUpdateEntry)
 				r.Delete("/{entryID}", s.handleDeleteEntry)
 			})
+
+			r.Delete("/sessions/{sessionID}", s.handleDeleteSession)
+			r.Post("/import/steam/preview", s.handleSteamPreview)
 
 			r.Route("/lists", func(r chi.Router) {
 				r.Get("/", s.handleGetLists)
@@ -94,5 +102,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "ok",
 		"metadata": s.cfg.MetadataEnabled(),
+		"steam":    s.steam.Enabled(),
 	})
 }

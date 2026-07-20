@@ -27,7 +27,8 @@ type LibraryFilter struct {
 // are attached separately by hydrate.
 const entrySelect = `
 	SELECT e.id, e.status, e.platform_id, e.user_rating, e.notes, e.queue_position,
-	       e.started_at, e.finished_at, e.created_at, e.updated_at, e.game_id
+	       e.started_at, e.finished_at, e.created_at, e.updated_at, e.game_id,
+	       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0)
 	FROM library_entries e JOIN games g ON g.id = e.game_id`
 
 // sortClauses whitelists user-supplied sort keys. Never interpolate raw input.
@@ -214,7 +215,7 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 			sets = append(sets, "finished_at = CURRENT_TIMESTAMP")
 		case models.StatusDropped:
 			sets = append(sets, "finished_at = CURRENT_TIMESTAMP")
-		case models.StatusBacklog:
+		case models.StatusBacklog, models.StatusWishlist:
 			sets = append(sets, "started_at = NULL", "finished_at = NULL")
 		}
 
@@ -286,6 +287,7 @@ func (s *Store) DeleteEntry(ctx context.Context, userID, entryID string) error {
 // Stats summarises the library for the dashboard.
 func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) {
 	var st models.Stats
+	var loggedMinutes float64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			COUNT(*),
@@ -293,22 +295,29 @@ func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) 
 			COALESCE(SUM(status = 'playing'), 0),
 			COALESCE(SUM(status = 'played'), 0),
 			COALESCE(SUM(status = 'dropped'), 0),
+			COALESCE(SUM(status = 'wishlist'), 0),
 			COALESCE(SUM(CASE WHEN e.status IN ('backlog','playing')
 			                  THEN g.time_to_beat_main ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN e.status = 'played'
-			                  THEN g.time_to_beat_main ELSE 0 END), 0)
+			                  THEN g.time_to_beat_main ELSE 0 END), 0),
+			COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.user_id = ?), 0)
 		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ?`, userID).
-		Scan(&st.Total, &st.Backlog, &st.Playing, &st.Played, &st.Dropped,
-			&st.BacklogHours, &st.PlayedHours)
+		WHERE e.user_id = ?`, userID, userID).
+		Scan(&st.Total, &st.Backlog, &st.Playing, &st.Played, &st.Dropped, &st.Wishlist,
+			&st.BacklogHours, &st.PlayedHours, &loggedMinutes)
 	if err != nil {
 		return st, err
 	}
-	// time_to_beat is stored in seconds.
+	// time_to_beat is stored in seconds; logged sessions in minutes.
 	st.BacklogHours = round1(st.BacklogHours / 3600)
 	st.PlayedHours = round1(st.PlayedHours / 3600)
-	if st.Total > 0 {
-		st.Completion = round1(float64(st.Played) / float64(st.Total) * 100)
+	st.LoggedHours = round1(loggedMinutes / 60)
+
+	// Completion measures games you own, so wishlist entries are excluded from
+	// the denominator — wanting more games shouldn't lower your progress.
+	owned := st.Total - st.Wishlist
+	if owned > 0 {
+		st.Completion = round1(float64(st.Played) / float64(owned) * 100)
 	}
 	return st, nil
 }
@@ -369,7 +378,8 @@ func (s *Store) queryEntries(ctx context.Context, query string, args ...any) ([]
 		var e models.Entry
 		var gameID int64
 		if err := rows.Scan(&e.ID, &e.Status, &e.PlatformID, &e.UserRating, &e.Notes,
-			&e.QueuePosition, &e.StartedAt, &e.FinishedAt, &e.CreatedAt, &e.UpdatedAt, &gameID); err != nil {
+			&e.QueuePosition, &e.StartedAt, &e.FinishedAt, &e.CreatedAt, &e.UpdatedAt, &gameID,
+			&e.LoggedMinutes); err != nil {
 			return nil, err
 		}
 		e.Game.ID = gameID

@@ -1,0 +1,37 @@
+services:
+  api:
+    build: ./api
+    environment:
+      DATABASE_PATH: /data/backhog.db
+      COVER_DIR: /data/covers
+      APP_ENV: production
+      # Leave false for plain HTTP on a LAN address; browsers discard Secure
+      # cookies on non-HTTPS origins, which breaks login. Set true only when
+      # serving through an HTTPS reverse proxy.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Get these from https://dev.twitch.tv/console/apps — see README.
+      IGDB_CLIENT_ID: ${IGDB_CLIENT_ID:-}
+      IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
+    volumes:
+      - backhog-data:/data
+    healthcheck:
+      # The distroless image has no shell, so the binary probes itself.
+      test: ["CMD", "/app/backhog", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    ports:
+      # Only nginx is published; the API stays on the internal network.
+      - "${PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  backhog-data:

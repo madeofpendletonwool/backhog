@@ -1,0 +1,19 @@
+# Build output
+web/dist/
+web/node_modules/
+api/backhog
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+covers/
+data/
+
+# Environment
+.env
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

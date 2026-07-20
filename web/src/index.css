@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+/* Dark-first palette. Surfaces stay near-black and desaturated so cover art is
+   the only saturated thing on screen. */
+@theme {
+  --color-ink-950: #08080a;
+  --color-ink-900: #0c0c10;
+  --color-ink-850: #121218;
+  --color-ink-800: #17171f;
+  --color-ink-750: #1d1d27;
+  --color-ink-700: #26262f;
+  --color-ink-600: #3a3a46;
+  --color-ink-500: #55555f;
+  --color-ink-400: #7c7c88;
+  --color-ink-300: #a3a3ad;
+  --color-ink-200: #cbcbd2;
+  --color-ink-100: #e8e8ec;
+
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+
+  --color-status-backlog: #64748b;
+  --color-status-playing: #22d3ee;
+  --color-status-played: #34d399;
+  --color-status-dropped: #f87171;
+
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+:root {
+  color-scheme: dark;
+  /* Per-card accent, overridden inline from the cover's sampled colour. */
+  --accent: var(--color-brand-500);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-ink-950);
+  color: var(--color-ink-100);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* A soft aurora behind the app so flat black never reads as dead space. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 15% -10%, rgba(124, 58, 237, 0.13), transparent 70%),
+    radial-gradient(50rem 35rem at 95% 0%, rgba(34, 211, 238, 0.07), transparent 70%);
+}
+
+::selection {
+  background: var(--color-brand-600);
+  color: white;
+}
+
+/* Slim, unobtrusive scrollbars that match the surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-700) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-ink-700);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-ink-600);
+}
+
+@utility focus-ring {
+  @apply outline-none ring-2 ring-brand-500/70 ring-offset-2 ring-offset-ink-950;
+}
+
+/* Shared surface treatment: subtle top-lit border, as if lit from above. */
+@utility panel {
+  @apply rounded-2xl border border-white/[0.06] bg-ink-900/70 backdrop-blur-xl;
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+    0 20px 40px -24px rgba(0, 0, 0, 0.9);
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Skeleton placeholder with a light sweep. */
+@utility skeleton {
+  @apply relative overflow-hidden bg-ink-800;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.05),
+    transparent
+  );
+  animation: shimmer 1.6s infinite;
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-rise {
+  animation: fade-rise 0.35s var(--ease-spring) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

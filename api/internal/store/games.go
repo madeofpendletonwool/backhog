@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -20,13 +21,23 @@ func (s *Store) UpsertGame(ctx context.Context, g metadata.Game, accentHex strin
 	}
 	defer tx.Rollback()
 
+	// Extras are only present on a detail fetch. On a lean search/import upsert
+	// they're empty, and the COALESCE below preserves any extras a previous
+	// detail fetch already stored — searching a game must not wipe its metadata.
+	var extrasJSON string
+	if g.Extras != nil {
+		if encoded, mErr := json.Marshal(g.Extras); mErr == nil {
+			extrasJSON = string(encoded)
+		}
+	}
+
 	// Keep an existing accent if this call did not compute one (e.g. the cover
 	// was already cached and re-sampling was skipped).
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO games (id, name, slug, summary, cover_url, accent_hex,
 		                   first_release_date, igdb_rating, time_to_beat_main,
-		                   time_to_beat_complete, raw_json, fetched_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		                   time_to_beat_complete, raw_json, extras_json, fetched_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			name                  = excluded.name,
 			slug                  = excluded.slug,
@@ -38,9 +49,10 @@ func (s *Store) UpsertGame(ctx context.Context, g metadata.Game, accentHex strin
 			time_to_beat_main     = excluded.time_to_beat_main,
 			time_to_beat_complete = excluded.time_to_beat_complete,
 			raw_json              = excluded.raw_json,
+			extras_json           = COALESCE(NULLIF(excluded.extras_json, ''), games.extras_json),
 			fetched_at            = CURRENT_TIMESTAMP`,
 		g.ID, g.Name, g.Slug, g.Summary, g.CoverURL, accentHex,
-		g.FirstReleaseDate, g.Rating, g.TimeToBeatMain, g.TimeToBeatComplete, string(g.Raw))
+		g.FirstReleaseDate, g.Rating, g.TimeToBeatMain, g.TimeToBeatComplete, string(g.Raw), extrasJSON)
 	if err != nil {
 		return err
 	}
@@ -155,7 +167,7 @@ func (s *Store) gamesByID(ctx context.Context, ids []int64) (map[int64]models.Ga
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, COALESCE(slug,''), COALESCE(summary,''), COALESCE(cover_url,''),
 		       COALESCE(accent_hex,''), first_release_date, igdb_rating,
-		       time_to_beat_main, time_to_beat_complete
+		       time_to_beat_main, time_to_beat_complete, COALESCE(extras_json,'')
 		FROM games WHERE id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -164,9 +176,15 @@ func (s *Store) gamesByID(ctx context.Context, ids []int64) (map[int64]models.Ga
 
 	for rows.Next() {
 		var g models.Game
+		var extras string
 		if err := rows.Scan(&g.ID, &g.Name, &g.Slug, &g.Summary, &g.CoverURL, &g.AccentHex,
-			&g.FirstReleaseDate, &g.IGDBRating, &g.TimeToBeatMain, &g.TimeToBeatComplete); err != nil {
+			&g.FirstReleaseDate, &g.IGDBRating, &g.TimeToBeatMain, &g.TimeToBeatComplete, &extras); err != nil {
 			return nil, err
+		}
+		// Served verbatim to the client. Left nil (JSON null) when unfetched, so
+		// the detail page knows to backfill it.
+		if extras != "" {
+			g.Extras = json.RawMessage(extras)
 		}
 		g.Genres = []models.NamedRef{}
 		g.Platforms = []models.NamedRef{}

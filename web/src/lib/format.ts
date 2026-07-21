@@ -27,6 +27,71 @@ export function releaseYear(game: Game): string {
   return String(new Date(game.first_release_date * 1000).getUTCFullYear());
 }
 
+/** The full release date ("Feb 25, 2022"), for the detail page. */
+export function releaseDate(game: Game): string {
+  if (!game.first_release_date) return "";
+  return new Date(game.first_release_date * 1000).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+// IGDB's website `category` enum is being deprecated and now comes back empty,
+// so we label each link from its URL instead — which also relabels links whose
+// metadata was cached before this existed.
+const WEBSITE_RULES: [RegExp, string][] = [
+  [/nintendo/, "Nintendo"],
+  [/playstation/, "PlayStation Store"],
+  [/steampowered|steamcommunity/, "Steam"],
+  [/xbox/, "Xbox"],
+  [/epicgames/, "Epic Games"],
+  [/gog\.com/, "GOG"],
+  [/microsoft/, "Microsoft Store"],
+  [/apps\.apple|itunes\.apple/, "App Store"],
+  [/play\.google/, "Google Play"],
+  [/twitch/, "Twitch"],
+  [/youtube|youtu\.be/, "YouTube"],
+  [/twitter|(^|\.)x\.com/, "Twitter / X"],
+  [/facebook/, "Facebook"],
+  [/instagram/, "Instagram"],
+  [/discord/, "Discord"],
+  [/reddit/, "Reddit"],
+  [/wikipedia/, "Wikipedia"],
+  [/fandom|wikia/, "Wiki"],
+  [/itch\.io/, "itch.io"],
+];
+
+/**
+ * A human label for an external link, derived from its host. Known storefronts
+ * and socials get a proper name; anything else falls back to the bare domain
+ * (e.g. "eldenring.com") so links stay distinguishable instead of all reading
+ * "Website".
+ */
+export function websiteLabel(url: string): string {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    for (const [pattern, label] of WEBSITE_RULES) {
+      if (pattern.test(host)) return label;
+    }
+    return host || "Website";
+  } catch {
+    return "Website";
+  }
+}
+
+const IGDB_IMG = "https://images.igdb.com/igdb/image/upload";
+
+/** Builds an IGDB CDN URL for an image id at a named size preset. */
+export const igdbImage = (imageId: string, size: string) => `${IGDB_IMG}/t_${size}/${imageId}.jpg`;
+
+/** Screenshot presets: a medium thumbnail that links to the full-size image. */
+export const screenshotThumbUrl = (imageId: string) => igdbImage(imageId, "screenshot_med");
+export const screenshotUrl = (imageId: string) => igdbImage(imageId, "screenshot_huge");
+
+/** A small cover for related-game thumbnails (similar / DLC / expansions). */
+export const relatedCoverUrl = (imageId: string) => igdbImage(imageId, "cover_small_2x");
+
 export function formatDate(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString(undefined, {

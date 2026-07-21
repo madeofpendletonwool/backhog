@@ -23,9 +23,22 @@ const (
 	twitchTokenURL = "https://id.twitch.tv/oauth2/token"
 	// IGDB serves covers from a CDN with fixed size presets.
 	coverTemplate = "https://images.igdb.com/igdb/image/upload/t_cover_big_2x/%s.jpg"
-	// Fields we request for every game lookup.
+	// Fields for list-oriented lookups (search, Steam import). Deliberately lean:
+	// these fire many at a time, and the rich metadata isn't shown in a list.
 	gameFields = "fields name,slug,summary,cover.image_id,genres.id,genres.name," +
 		"platforms.id,platforms.name,first_release_date,rating,total_rating,total_rating_count;"
+	// Fields for a single-game detail lookup. Everything above, plus the rich
+	// metadata rendered on the detail page. Only fetched one game at a time.
+	gameFieldsFull = "fields name,slug,summary,cover.image_id,genres.id,genres.name," +
+		"platforms.id,platforms.name,first_release_date,rating,total_rating,total_rating_count," +
+		"storyline,aggregated_rating,category," +
+		"involved_companies.company.name,involved_companies.developer,involved_companies.publisher," +
+		"game_modes.name,player_perspectives.name,themes.name,franchise.name,collection.name," +
+		"alternative_names.name,age_ratings.rating,websites.url,websites.category," +
+		"screenshots.image_id,videos.video_id,videos.name," +
+		"similar_games.id,similar_games.name,similar_games.cover.image_id," +
+		"dlcs.id,dlcs.name,dlcs.cover.image_id," +
+		"expansions.id,expansions.name,expansions.cover.image_id;"
 )
 
 // IGDB is a Provider backed by IGDB, authenticated through Twitch.
@@ -96,9 +109,10 @@ func (c *IGDB) Search(ctx context.Context, query string, limit int) ([]Game, err
 	return games, nil
 }
 
-// GetByID returns a single game by its IGDB id, including time-to-beat.
+// GetByID returns a single game by its IGDB id, including time-to-beat and the
+// full set of display-only extras.
 func (c *IGDB) GetByID(ctx context.Context, id int64) (Game, error) {
-	body := fmt.Sprintf("where id = %d; %s limit 1;", id, gameFields)
+	body := fmt.Sprintf("where id = %d; %s limit 1;", id, gameFieldsFull)
 	games, err := c.queryGames(ctx, body, true)
 	if err != nil {
 		return Game{}, err
@@ -241,12 +255,64 @@ type igdbGame struct {
 	Rating           *float64 `json:"rating"`
 	TotalRating      *float64 `json:"total_rating"`
 	TotalRatingCount int      `json:"total_rating_count"`
+
+	// Detail-only fields (present only when queried with gameFieldsFull).
+	Storyline         string   `json:"storyline"`
+	AggregatedRating  *float64 `json:"aggregated_rating"`
+	Category          *int     `json:"category"`
+	InvolvedCompanies []struct {
+		Company struct {
+			Name string `json:"name"`
+		} `json:"company"`
+		Developer bool `json:"developer"`
+		Publisher bool `json:"publisher"`
+	} `json:"involved_companies"`
+	GameModes          []Ref `json:"game_modes"`
+	PlayerPerspectives []Ref `json:"player_perspectives"`
+	Themes             []Ref `json:"themes"`
+	Franchise          *struct {
+		Name string `json:"name"`
+	} `json:"franchise"`
+	Collection *struct {
+		Name string `json:"name"`
+	} `json:"collection"`
+	AlternativeNames []struct {
+		Name string `json:"name"`
+	} `json:"alternative_names"`
+	AgeRatings []struct {
+		Rating *int `json:"rating"`
+	} `json:"age_ratings"`
+	Websites []struct {
+		URL      string `json:"url"`
+		Category *int   `json:"category"`
+	} `json:"websites"`
+	Screenshots []struct {
+		ImageID string `json:"image_id"`
+	} `json:"screenshots"`
+	Videos []struct {
+		VideoID string `json:"video_id"`
+		Name    string `json:"name"`
+	} `json:"videos"`
+	SimilarGames []igdbRelated `json:"similar_games"`
+	DLCs         []igdbRelated `json:"dlcs"`
+	Expansions   []igdbRelated `json:"expansions"`
 }
 
-// queryGames runs an APICalypse game query. withTimeToBeat controls the extra
-// round trip for playtime data: search skips it to stay fast and well under the
-// rate limit, and it is filled in when a game is actually added.
-func (c *IGDB) queryGames(ctx context.Context, body string, withTimeToBeat bool) ([]Game, error) {
+// igdbRelated is a game referenced by another, with just enough to render a
+// linked thumbnail.
+type igdbRelated struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Cover struct {
+		ImageID string `json:"image_id"`
+	} `json:"cover"`
+}
+
+// queryGames runs an APICalypse game query. detail controls the extra round
+// trip for playtime data and whether the display-only extras are parsed: list
+// lookups (search, Steam import) skip both to stay fast and well under the rate
+// limit, and a single-game detail lookup fills them in.
+func (c *IGDB) queryGames(ctx context.Context, body string, detail bool) ([]Game, error) {
 	raw, err := c.post(ctx, "/games", body)
 	if err != nil {
 		return nil, err
@@ -280,6 +346,9 @@ func (c *IGDB) queryGames(ctx context.Context, body string, withTimeToBeat bool)
 		if p.Cover.ImageID != "" {
 			g.CoverURL = fmt.Sprintf(coverTemplate, p.Cover.ImageID)
 		}
+		if detail {
+			g.Extras = buildExtras(p)
+		}
 		if encoded, err := json.Marshal(p); err == nil {
 			g.Raw = encoded
 		}
@@ -289,7 +358,7 @@ func (c *IGDB) queryGames(ctx context.Context, body string, withTimeToBeat bool)
 
 	// Time-to-beat lives on a separate endpoint and cannot be expanded inline.
 	// It is a nice-to-have, so a failure here degrades rather than fails.
-	if withTimeToBeat {
+	if detail {
 		if ttb, err := c.timesToBeat(ctx, ids); err != nil {
 			slog.Warn("igdb: time-to-beat lookup failed", "error", err)
 		} else {

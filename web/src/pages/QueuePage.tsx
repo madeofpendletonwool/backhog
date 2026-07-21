@@ -37,24 +37,34 @@ export function QueuePage() {
 
   const totalHours = entries.reduce((sum, entry) => sum + toHours(entry.game.time_to_beat_main), 0);
 
-  const onDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = entries.findIndex((entry) => entry.id === active.id);
-    const newIndex = entries.findIndex((entry) => entry.id === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
-
-    // Reorder locally first; the mutation applies this optimistically and rolls
-    // it back if the server rejects the move.
+  // Persist a move from oldIndex to newIndex. Both drag and the quick-move
+  // buttons funnel through here: reorder locally, then tell the server the new
+  // neighbours. The mutation is optimistic and rolls back if the move is
+  // rejected.
+  const applyMove = (oldIndex: number, newIndex: number) => {
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
     const reordered = arrayMove(entries, oldIndex, newIndex);
-
     reorder.mutate({
-      entryId: String(active.id),
+      entryId: entries[oldIndex].id,
       beforeId: reordered[newIndex - 1]?.id ?? "",
       afterId: reordered[newIndex + 1]?.id ?? "",
       reordered,
     });
+  };
+
+  const onDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    applyMove(
+      entries.findIndex((entry) => entry.id === active.id),
+      entries.findIndex((entry) => entry.id === over.id),
+    );
+  };
+
+  const moveBy = (index: number, kind: "top" | "up" | "down" | "bottom") => {
+    const target =
+      kind === "top" ? 0 : kind === "bottom" ? entries.length - 1 : kind === "up" ? index - 1 : index + 1;
+    applyMove(index, target);
   };
 
   return (
@@ -110,6 +120,9 @@ export function QueuePage() {
                   key={entry.id}
                   entry={entry}
                   position={index + 1}
+                  isFirst={index === 0}
+                  isLast={index === entries.length - 1}
+                  onMove={(kind) => moveBy(index, kind)}
                   cumulativeHours={entries
                     .slice(0, index + 1)
                     .reduce((sum, e) => sum + toHours(e.game.time_to_beat_main), 0)}

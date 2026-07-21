@@ -1,7 +1,17 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/cn";
-import { Clock, GripVertical, PlayCircle, Star } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  ChevronsDown,
+  ChevronsUp,
+  Clock,
+  GripVertical,
+  PlayCircle,
+  Star,
+} from "lucide-react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { GameCover } from "./GameCover";
@@ -15,14 +25,22 @@ import type { Entry } from "@/lib/types";
  * rather than the whole row, so the title stays a working link and keyboard
  * users get an explicit, focusable target.
  */
+export type QueueMove = "top" | "up" | "down" | "bottom";
+
 export function QueueRow({
   entry,
   position,
   cumulativeHours,
+  isFirst,
+  isLast,
+  onMove,
 }: {
   entry: Entry;
   position: number;
   cumulativeHours: number;
+  isFirst: boolean;
+  isLast: boolean;
+  onMove: (kind: QueueMove) => void;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: entry.id });
@@ -88,6 +106,22 @@ export function QueueRow({
         {formatHours(cumulativeHours)}
       </span>
 
+      {/* Quick moves — dragging a 200-item queue by hand is unbearable. */}
+      <div className="flex shrink-0 items-center gap-0.5">
+        <MoveButton label={`Move ${game.name} to top`} disabled={isFirst} onClick={() => onMove("top")}>
+          <ChevronsUp className="size-4" />
+        </MoveButton>
+        <MoveButton label={`Move ${game.name} up`} disabled={isFirst} onClick={() => onMove("up")}>
+          <ChevronUp className="size-4" />
+        </MoveButton>
+        <MoveButton label={`Move ${game.name} down`} disabled={isLast} onClick={() => onMove("down")}>
+          <ChevronDown className="size-4" />
+        </MoveButton>
+        <MoveButton label={`Move ${game.name} to bottom`} disabled={isLast} onClick={() => onMove("bottom")}>
+          <ChevronsDown className="size-4" />
+        </MoveButton>
+      </div>
+
       <Button
         size="sm"
         variant="secondary"
@@ -99,5 +133,31 @@ export function QueueRow({
         Start
       </Button>
     </li>
+  );
+}
+
+/** A compact icon button for the quick-move controls. */
+function MoveButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded-md p-1 text-ink-500 transition-colors hover:bg-white/[0.06] hover:text-ink-200 focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-25"
+    >
+      {children}
+    </button>
   );
 }

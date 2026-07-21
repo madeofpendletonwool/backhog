@@ -1,5 +1,16 @@
 import { cn } from "@/lib/cn";
-import { ArrowLeft, Calendar, Clock, Plus, Star, Trash2, Trophy } from "lucide-react";
+import {
+  ArrowLeft,
+  Building2,
+  Calendar,
+  Clock,
+  ExternalLink,
+  Film,
+  Plus,
+  Star,
+  Trash2,
+  Trophy,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -11,8 +22,19 @@ import { SessionLog } from "@/components/SessionLog";
 import { Dialog } from "@/components/ui/Dialog";
 import { useDeleteEntry, useEntry, useUpdateEntry } from "@/hooks/useLibrary";
 import { useEntryLists, useLists, useToggleListMembership } from "@/hooks/useLists";
-import type { Entry } from "@/lib/types";
-import { accentStyle, formatDate, formatDuration, relativeTime, releaseYear } from "@/lib/format";
+import { STATUSES, type Entry, type Game, type RelatedGame } from "@/lib/types";
+import {
+  accentStyle,
+  formatDate,
+  formatDuration,
+  relatedCoverUrl,
+  relativeTime,
+  releaseDate,
+  releaseYear,
+  screenshotThumbUrl,
+  screenshotUrl,
+  websiteLabel,
+} from "@/lib/format";
 import { coverUrl } from "@/lib/api";
 
 export function GameDetailPage() {
@@ -45,6 +67,7 @@ export function GameDetailPage() {
   }
 
   const { game } = entry;
+  const extras = game.extras;
   const hasCover = Boolean(game.cover_url);
 
   const saveNotes = () => {
@@ -87,10 +110,16 @@ export function GameDetailPage() {
               </h1>
 
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-ink-300">
-                {releaseYear(game) && (
+                {(releaseDate(game) || releaseYear(game)) && (
                   <span className="inline-flex items-center gap-1.5">
                     <Calendar className="size-4 text-ink-500" />
-                    {releaseYear(game)}
+                    {releaseDate(game) || releaseYear(game)}
+                  </span>
+                )}
+                {extras?.developer && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Building2 className="size-4 text-ink-500" />
+                    {extras.developer}
                   </span>
                 )}
                 {game.time_to_beat_main && (
@@ -99,10 +128,22 @@ export function GameDetailPage() {
                     {formatDuration(game.time_to_beat_main)} to beat
                   </span>
                 )}
+                {game.time_to_beat_complete && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Clock className="size-4 text-ink-500" />
+                    {formatDuration(game.time_to_beat_complete)} to 100%
+                  </span>
+                )}
                 {game.igdb_rating != null && (
                   <span className="inline-flex items-center gap-1.5">
                     <Trophy className="size-4 text-ink-500" />
                     {Math.round(game.igdb_rating)} on IGDB
+                  </span>
+                )}
+                {extras?.aggregated_rating != null && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Star className="size-4 text-ink-500" />
+                    {Math.round(extras.aggregated_rating)} critics
                   </span>
                 )}
               </div>
@@ -121,7 +162,7 @@ export function GameDetailPage() {
               )}
 
               <div className="mt-5 max-w-md">
-                <StatusMenu entry={entry} size="md" />
+                <StatusMenu entry={entry} size="md" statuses={STATUSES} />
               </div>
             </div>
           </div>
@@ -130,11 +171,73 @@ export function GameDetailPage() {
 
       <div className="mx-auto grid max-w-5xl gap-5 px-4 pb-16 sm:px-6 lg:grid-cols-3 lg:px-8">
         <div className="space-y-5 lg:col-span-2">
-          {game.summary && (
+          {(game.summary || extras?.storyline) && (
             <Panel className="p-5">
               <h2 className="mb-2.5 text-sm font-semibold text-ink-200">About</h2>
-              <p className="text-sm leading-relaxed text-ink-400">{game.summary}</p>
+              {game.summary && <p className="text-sm leading-relaxed text-ink-400">{game.summary}</p>}
+              {extras?.storyline && extras.storyline !== game.summary && (
+                <p className="mt-3 border-t border-white/[0.06] pt-3 text-sm leading-relaxed text-ink-400">
+                  {extras.storyline}
+                </p>
+              )}
             </Panel>
+          )}
+
+          <GameFacts game={game} />
+
+          {extras && extras.screenshot_image_ids.length > 0 && (
+            <Panel className="p-5">
+              <h2 className="mb-3 text-sm font-semibold text-ink-200">Screenshots</h2>
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                {extras.screenshot_image_ids.map((id) => (
+                  <a
+                    key={id}
+                    href={screenshotUrl(id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group overflow-hidden rounded-lg ring-1 ring-white/[0.07] focus-visible:focus-ring"
+                  >
+                    <img
+                      src={screenshotThumbUrl(id)}
+                      alt=""
+                      loading="lazy"
+                      className="aspect-video w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    />
+                  </a>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          {extras && extras.videos.length > 0 && (
+            <Panel className="p-5">
+              <h2 className="mb-3 text-sm font-semibold text-ink-200">Videos</h2>
+              <div className="space-y-1.5">
+                {extras.videos.map((video) => (
+                  <a
+                    key={video.video_id}
+                    href={`https://www.youtube.com/watch?v=${video.video_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-white/[0.05] hover:text-ink-100 focus-visible:focus-ring"
+                  >
+                    <Film className="size-4 shrink-0 text-ink-500" />
+                    <span className="min-w-0 flex-1 truncate">{video.name}</span>
+                    <ExternalLink className="size-3.5 shrink-0 text-ink-600" />
+                  </a>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          {extras && extras.similar_games.length > 0 && (
+            <RelatedGames title="Similar games" games={extras.similar_games} />
+          )}
+          {extras && extras.expansions.length > 0 && (
+            <RelatedGames title="Expansions" games={extras.expansions} />
+          )}
+          {extras && extras.dlcs.length > 0 && (
+            <RelatedGames title="DLC & add-ons" games={extras.dlcs} />
           )}
 
           <Panel className="p-5">
@@ -207,6 +310,26 @@ export function GameDetailPage() {
                   </option>
                 ))}
               </Select>
+            </Panel>
+          )}
+
+          {extras && extras.websites.length > 0 && (
+            <Panel className="p-5">
+              <h2 className="mb-3 text-sm font-semibold text-ink-200">Links</h2>
+              <div className="space-y-0.5">
+                {extras.websites.map((site) => (
+                  <a
+                    key={site.url}
+                    href={site.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-white/[0.05] hover:text-ink-100 focus-visible:focus-ring"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{websiteLabel(site.url)}</span>
+                    <ExternalLink className="size-3.5 shrink-0 text-ink-600" />
+                  </a>
+                ))}
+              </div>
             </Panel>
           )}
 
@@ -296,6 +419,92 @@ function ListMembership({ entry }: { entry: Entry }) {
       )}
 
       <CreateListDialog open={creating} onClose={() => setCreating(false)} />
+    </Panel>
+  );
+}
+
+/**
+ * The at-a-glance metadata table: everything IGDB knows that isn't a rating, a
+ * date, or long-form text. Renders nothing if there's nothing to show, so a
+ * sparsely documented game doesn't get an empty panel.
+ */
+function GameFacts({ game }: { game: Game }) {
+  const extras = game.extras;
+  const platforms = game.platforms.map((p) => p.name);
+
+  const rows: { label: string; items: string[] }[] = [
+    { label: "Platforms", items: platforms },
+    { label: "Publisher", items: extras?.publisher ? [extras.publisher] : [] },
+    { label: "Modes", items: extras?.game_modes ?? [] },
+    { label: "Perspective", items: extras?.player_perspectives ?? [] },
+    { label: "Themes", items: extras?.themes ?? [] },
+    { label: "Franchise", items: extras?.franchise ? [extras.franchise] : [] },
+    { label: "Collection", items: extras?.collection ? [extras.collection] : [] },
+    { label: "Age rating", items: extras?.age_ratings ?? [] },
+    { label: "Also known as", items: extras?.alternative_names ?? [] },
+    { label: "Type", items: extras?.category ? [extras.category] : [] },
+  ].filter((row) => row.items.length > 0);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-3 text-sm font-semibold text-ink-200">Details</h2>
+      <dl className="space-y-3">
+        {rows.map((row) => (
+          <PillRow key={row.label} label={row.label} items={row.items} />
+        ))}
+      </dl>
+    </Panel>
+  );
+}
+
+function PillRow({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-baseline sm:gap-3">
+      <dt className="shrink-0 text-xs font-medium text-ink-500 sm:w-28">{label}</dt>
+      <dd className="flex flex-wrap gap-1.5">
+        {items.map((item) => (
+          <span
+            key={item}
+            className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs text-ink-300"
+          >
+            {item}
+          </span>
+        ))}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * A horizontally scrolling row of related-game covers (similar / DLC /
+ * expansions). Display-only for now — these games aren't necessarily in the
+ * user's library, and wiring a click-through into search is a later step.
+ */
+function RelatedGames({ title, games }: { title: string; games: RelatedGame[] }) {
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-3 text-sm font-semibold text-ink-200">{title}</h2>
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        {games.map((related) => (
+          <div key={related.id} title={related.name} className="w-20 shrink-0">
+            {related.cover_image_id ? (
+              <img
+                src={relatedCoverUrl(related.cover_image_id)}
+                alt=""
+                loading="lazy"
+                className="aspect-[3/4] w-full rounded-lg object-cover ring-1 ring-white/[0.07]"
+              />
+            ) : (
+              <div className="flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-ink-800 text-2xl ring-1 ring-white/[0.07]">
+                🐗
+              </div>
+            )}
+            <p className="mt-1.5 line-clamp-2 text-[11px] leading-tight text-ink-400">{related.name}</p>
+          </div>
+        ))}
+      </div>
     </Panel>
   );
 }

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Status values for a library entry.
 const (
@@ -8,6 +11,11 @@ const (
 	StatusPlaying = "playing"
 	StatusPlayed  = "played"
 	StatusDropped = "dropped"
+	// StatusIgnored is for games you own and have played but will never "beat" —
+	// endless or open-ended titles. Like wishlist, it is excluded from completion
+	// so a game you'll never finish doesn't drag your progress down forever. It is
+	// kept out of the backlog and the play queue.
+	StatusIgnored = "ignored"
 	// StatusWishlist is for games you want but do not own yet. It is deliberately
 	// excluded from backlog totals and completion: a wishlist is a shopping list,
 	// not a debt you owe yourself.
@@ -15,12 +23,12 @@ const (
 )
 
 // AllStatuses lists every tracked status, in display order.
-var AllStatuses = []string{StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped, StatusWishlist}
+var AllStatuses = []string{StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped, StatusIgnored, StatusWishlist}
 
 // ValidStatus reports whether s is a tracked status.
 func ValidStatus(s string) bool {
 	switch s {
-	case StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped, StatusWishlist:
+	case StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped, StatusIgnored, StatusWishlist:
 		return true
 	}
 	return false
@@ -52,6 +60,11 @@ type Game struct {
 	TimeToBeatComplete *int64     `json:"time_to_beat_complete"`
 	Genres             []NamedRef `json:"genres"`
 	Platforms          []NamedRef `json:"platforms"`
+	// Extras is the rich, display-only IGDB metadata, stored and served as an
+	// opaque JSON document (see metadata.GameExtras for its shape). A null value
+	// means it hasn't been fetched yet, which the detail handler uses to trigger
+	// a lazy refresh.
+	Extras json.RawMessage `json:"extras"`
 }
 
 // Entry is one game in one user's library.
@@ -106,6 +119,7 @@ type Stats struct {
 	Playing      int     `json:"playing"`
 	Played       int     `json:"played"`
 	Dropped      int     `json:"dropped"`
+	Ignored      int     `json:"ignored"`
 	Wishlist     int     `json:"wishlist"`
 	BacklogHours float64 `json:"backlog_hours"`
 	PlayedHours  float64 `json:"played_hours"`

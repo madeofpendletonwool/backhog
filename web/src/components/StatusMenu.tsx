@@ -1,14 +1,15 @@
 import { cn } from "@/lib/cn";
-import { CheckCircle2, CircleDashed, Gift, PlayCircle, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, CircleDashed, Gift, PlayCircle, XCircle } from "lucide-react";
 
 import { useUpdateEntry } from "@/hooks/useLibrary";
-import { STATUS_LABELS, STATUSES, type Entry, type Status } from "@/lib/types";
+import { QUICK_STATUSES, STATUS_LABELS, type Entry, type Status } from "@/lib/types";
 
 const icons: Record<Status, typeof CircleDashed> = {
   backlog: CircleDashed,
   playing: PlayCircle,
   played: CheckCircle2,
   dropped: XCircle,
+  ignored: Ban,
   wishlist: Gift,
 };
 
@@ -17,14 +18,26 @@ const activeStyles: Record<Status, string> = {
   playing: "bg-cyan-500 text-ink-950",
   played: "bg-emerald-500 text-ink-950",
   dropped: "bg-red-500 text-white",
+  ignored: "bg-zinc-500 text-white",
   wishlist: "bg-amber-500 text-ink-950",
 };
 
 /**
  * A compact segmented control for changing an entry's status straight from the
  * grid, so the most common action never needs a page change.
+ *
+ * `statuses` defaults to the quick-access set (no wishlist). The detail page
+ * passes the full list so wishlist can be set there.
  */
-export function StatusMenu({ entry, size = "sm" }: { entry: Entry; size?: "sm" | "md" }) {
+export function StatusMenu({
+  entry,
+  size = "sm",
+  statuses = QUICK_STATUSES,
+}: {
+  entry: Entry;
+  size?: "sm" | "md";
+  statuses?: Status[];
+}) {
   const update = useUpdateEntry();
 
   return (
@@ -36,7 +49,7 @@ export function StatusMenu({ entry, size = "sm" }: { entry: Entry; size?: "sm" |
         update.isPending && "opacity-60",
       )}
     >
-      {STATUSES.map((status) => {
+      {statuses.map((status) => {
         const Icon = icons[status];
         const isActive = entry.status === status;
         return (

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/collinpendleton/backhog/api/internal/auth"
+	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -129,7 +130,38 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+
+	// The rich metadata is fetched lazily: games cached before this feature (or
+	// added via the lean search/import path) have no extras, so backfill them the
+	// first time their detail page is opened. Best-effort — a lookup failure or
+	// missing IGDB credentials just serves what we already have.
+	if len(entry.Game.Extras) == 0 {
+		entry = s.backfillGameExtras(r, userID, entry)
+	}
+
 	writeJSON(w, http.StatusOK, entry)
+}
+
+// backfillGameExtras refetches a game's full metadata from the provider and
+// re-caches it, returning the reloaded entry. On any failure it returns the
+// entry unchanged.
+func (s *Server) backfillGameExtras(r *http.Request, userID string, entry models.Entry) models.Entry {
+	fetched, err := s.provider.GetByID(r.Context(), entry.Game.ID)
+	if err != nil {
+		if !errors.Is(err, metadata.ErrUnavailable) {
+			slog.Warn("backfill game metadata", "game_id", entry.Game.ID, "error", err)
+		}
+		return entry
+	}
+	if err := s.store.UpsertGame(r.Context(), fetched, ""); err != nil {
+		slog.Warn("store backfilled metadata", "game_id", entry.Game.ID, "error", err)
+		return entry
+	}
+	refreshed, err := s.store.GetEntry(r.Context(), userID, entry.ID)
+	if err != nil {
+		return entry
+	}
+	return refreshed
 }
 
 type updateEntryRequest struct {

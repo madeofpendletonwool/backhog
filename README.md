@@ -5,16 +5,20 @@ IGDB, sort them into lists, and drag your play queue into the order you'll
 actually get to them.
 
 - **Library** — cover grid or dense table, filter by status, platform, genre,
-  paged as it grows
-- **Statuses** — backlog / playing / played / dropped, with automatic start and
-  finish timestamps
-- **Play queue** — drag to reorder, with a running "how deep am I" hour count
+  paged as it grows; your filters and sort are remembered between visits
+- **Statuses** — backlog / playing / played / dropped / ignored, with automatic
+  start and finish timestamps. *Ignored* is for games you own and have played but
+  will never "beat" — endless titles that shouldn't sit in the backlog or drag
+  down your completion
+- **Play queue** — drag to reorder, or jump a game to the top/bottom (or nudge it
+  up/down) with one click, with a running "how deep am I" hour count
 - **Lists** — hand-curated and drag-sortable, or **smart lists** defined by rules
   that stay current on their own
-- **Per-game detail** — your rating, notes, which platform you're playing it on,
-  and which lists it belongs to
-- **Wishlist** — track what you want separately from what you own; wishlisted
-  games stay out of your backlog hours and completion percentage
+- **Per-game detail** — a full IGDB dossier (developer/publisher, platforms, game
+  modes, themes, screenshots, videos, similar games, DLC, age ratings…) alongside
+  your rating, notes, playing-on platform, and lists
+- **Wishlist** — track what you want separately from what you own; set from a
+  game's detail page, and kept out of your backlog hours and completion percentage
 - **Playtime** — log sessions by hand, because a process watcher measures how
   long the game was *open*, not how long you actually played
 - **Pick for me** — a random backlog game, optionally "under 5 hours" or "85+"

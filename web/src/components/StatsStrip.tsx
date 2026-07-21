@@ -56,8 +56,15 @@ export function StatsStrip() {
       <div className="panel p-4">
         <div className="flex items-center justify-between">
           <p className="text-xs font-medium text-ink-400">Completion</p>
-          {stats.wishlist > 0 && (
-            <span className="text-[11px] text-amber-300/70">{stats.wishlist} wishlisted</span>
+          {(stats.wishlist > 0 || stats.ignored > 0) && (
+            <span className="text-[11px] text-ink-500">
+              {[
+                stats.wishlist > 0 && `${stats.wishlist} wishlisted`,
+                stats.ignored > 0 && `${stats.ignored} ignored`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
           )}
         </div>
         <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight text-ink-100">

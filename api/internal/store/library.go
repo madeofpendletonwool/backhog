@@ -295,6 +295,7 @@ func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) 
 			COALESCE(SUM(status = 'playing'), 0),
 			COALESCE(SUM(status = 'played'), 0),
 			COALESCE(SUM(status = 'dropped'), 0),
+			COALESCE(SUM(status = 'ignored'), 0),
 			COALESCE(SUM(status = 'wishlist'), 0),
 			COALESCE(SUM(CASE WHEN e.status IN ('backlog','playing')
 			                  THEN g.time_to_beat_main ELSE 0 END), 0),
@@ -303,7 +304,7 @@ func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) 
 			COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.user_id = ?), 0)
 		FROM library_entries e JOIN games g ON g.id = e.game_id
 		WHERE e.user_id = ?`, userID, userID).
-		Scan(&st.Total, &st.Backlog, &st.Playing, &st.Played, &st.Dropped, &st.Wishlist,
+		Scan(&st.Total, &st.Backlog, &st.Playing, &st.Played, &st.Dropped, &st.Ignored, &st.Wishlist,
 			&st.BacklogHours, &st.PlayedHours, &loggedMinutes)
 	if err != nil {
 		return st, err
@@ -313,9 +314,10 @@ func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) 
 	st.PlayedHours = round1(st.PlayedHours / 3600)
 	st.LoggedHours = round1(loggedMinutes / 60)
 
-	// Completion measures games you own, so wishlist entries are excluded from
-	// the denominator — wanting more games shouldn't lower your progress.
-	owned := st.Total - st.Wishlist
+	// Completion measures games you mean to finish, so both wishlist (don't own)
+	// and ignored (own, but never-ending — you'll never "beat" them) are excluded
+	// from the denominator.
+	owned := st.Total - st.Wishlist - st.Ignored
 	if owned > 0 {
 		st.Completion = round1(float64(st.Played) / float64(owned) * 100)
 	}

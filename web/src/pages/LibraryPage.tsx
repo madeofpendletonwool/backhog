@@ -8,7 +8,8 @@ import { GameTable } from "@/components/GameTable";
 import { StatsStrip } from "@/components/StatsStrip";
 import { Button, EmptyState, Input, Select } from "@/components/ui/primitives";
 import { useDebounced, useFacets, useLibrary } from "@/hooks/useLibrary";
-import { STATUS_LABELS, STATUSES } from "@/lib/types";
+import { usePersistentState } from "@/hooks/usePersistentState";
+import { QUICK_STATUSES, STATUS_LABELS } from "@/lib/types";
 
 const SORTS = [
   { value: "added", label: "Recently added" },
@@ -23,12 +24,14 @@ const SORTS = [
 export function LibraryPage() {
   const { openAddDialog } = useOutletContext<{ openAddDialog: () => void }>();
 
-  const [status, setStatus] = useState("");
+  // These persist across navigation and reload — see usePersistentState. The
+  // search box and the filters-panel toggle are intentionally transient.
+  const [status, setStatus] = usePersistentState("backhog:library:status", "");
+  const [sort, setSort] = usePersistentState("backhog:library:sort", "name");
+  const [platform, setPlatform] = usePersistentState<string>("backhog:library:platform", "");
+  const [genre, setGenre] = usePersistentState<string>("backhog:library:genre", "");
+  const [view, setView] = usePersistentState<"grid" | "table">("backhog:library:view", "grid");
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("added");
-  const [platform, setPlatform] = useState<string>("");
-  const [genre, setGenre] = useState<string>("");
-  const [view, setView] = useState<"grid" | "table">("grid");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const debouncedSearch = useDebounced(search, 250);
@@ -80,7 +83,7 @@ export function LibraryPage() {
         <StatusTab active={status === ""} onClick={() => setStatus("")}>
           All
         </StatusTab>
-        {STATUSES.map((value) => (
+        {QUICK_STATUSES.map((value) => (
           <StatusTab key={value} active={status === value} onClick={() => setStatus(value)}>
             {STATUS_LABELS[value]}
           </StatusTab>

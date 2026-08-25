@@ -126,11 +126,12 @@ export function QueueRow({
         size="sm"
         variant="secondary"
         loading={update.isPending}
+        aria-label={`Mark ${game.name} as playing`}
         onClick={() => update.mutate({ id: entry.id, patch: { status: "playing" } })}
-        className="shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+        className="shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <PlayCircle className="size-3.5" />
-        Start
+        <span className="hidden sm:inline">Start</span>
       </Button>
     </li>
   );

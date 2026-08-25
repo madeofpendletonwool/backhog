@@ -1,14 +1,19 @@
+import { Download, LogOut } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { Field } from "./LoginPage";
 import { StatsStrip } from "@/components/StatsStrip";
+import { SteamImportDialog } from "@/components/SteamImportDialog";
 import { Button, Input, Panel } from "@/components/ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
 export function SettingsPage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const [importOpen, setImportOpen] = useState(false);
 
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -116,7 +121,32 @@ export function SettingsPage() {
             </Button>
           </form>
         </Panel>
+
+        {/* The sidebar below lg carries these; on phones there is no sidebar,
+            so Settings is their home. */}
+        <Panel className="p-5 lg:hidden">
+          <h2 className="mb-4 text-sm font-semibold text-ink-200">More</h2>
+          <div className="flex flex-col gap-2">
+            <Button onClick={() => setImportOpen(true)}>
+              <Download className="size-4" />
+              Import from Steam
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              onClick={async () => {
+                await logout();
+                navigate("/login");
+              }}
+            >
+              <LogOut className="size-4" />
+              Sign out
+            </Button>
+          </div>
+        </Panel>
       </div>
+
+      <SteamImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }

@@ -139,6 +139,17 @@ body::before {
   animation: fade-rise 0.35s var(--ease-spring) both;
 }
 
+/* iOS Safari zooms the whole viewport when an input smaller than 16px gains
+   focus, which violently pans a phone-sized layout around. Keep form controls
+   at 16px on touch screens. */
+@media (hover: none) and (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

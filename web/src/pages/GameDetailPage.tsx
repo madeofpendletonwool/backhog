@@ -169,7 +169,7 @@ export function GameDetailPage() {
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-5xl gap-5 px-4 pb-16 sm:px-6 lg:grid-cols-3 lg:px-8">
+      <div className="mx-auto grid max-w-5xl grid-cols-1 gap-5 px-4 pb-16 sm:px-6 lg:grid-cols-3 lg:px-8">
         <div className="space-y-5 lg:col-span-2">
           {(game.summary || extras?.storyline) && (
             <Panel className="p-5">

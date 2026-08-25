@@ -204,7 +204,7 @@ export function SessionLog({ entry }: { entry: Entry }) {
               <button
                 onClick={() => deleteSession.mutate(session.id)}
                 aria-label="Delete session"
-                className="ml-auto shrink-0 rounded p-1 text-ink-700 opacity-0 transition-opacity hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100"
+                className="ml-auto shrink-0 rounded p-1 text-ink-700 opacity-0 transition-opacity hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
               >
                 <Trash2 className="size-3.5" />
               </button>

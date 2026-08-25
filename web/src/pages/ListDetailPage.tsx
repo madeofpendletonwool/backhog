@@ -19,6 +19,8 @@ import { ArrowLeft, GripVertical, ListTree, Pencil, Sparkles, Trash2 } from "luc
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { cn } from "@/lib/cn";
+
 import { GameCard, GameCardSkeleton } from "@/components/GameCard";
 import { SmartListBuilder } from "@/components/SmartListBuilder";
 import { Button, EmptyState, Input } from "@/components/ui/primitives";
@@ -39,7 +41,7 @@ function SortableGameCard({ entry }: { entry: Entry }) {
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={isDragging ? "relative z-10 opacity-80" : "relative"}
+      className={cn("group", isDragging ? "relative z-10 opacity-80" : "relative")}
     >
       <GameCard entry={entry} />
       <button
@@ -47,7 +49,7 @@ function SortableGameCard({ entry }: { entry: Entry }) {
         {...attributes}
         {...listeners}
         aria-label={`Reorder ${entry.game.name}`}
-        className="absolute right-1.5 top-1.5 cursor-grab touch-none rounded-lg bg-ink-950/75 p-1 text-ink-300 opacity-0 backdrop-blur-sm transition-opacity hover:text-white focus-visible:opacity-100 focus-visible:focus-ring active:cursor-grabbing group-hover:opacity-100 [.group:hover_&]:opacity-100"
+        className="absolute right-1.5 top-1.5 cursor-grab touch-none rounded-lg bg-ink-950/75 p-1 text-ink-300 opacity-0 backdrop-blur-sm transition-opacity hover:text-white focus-visible:opacity-100 focus-visible:focus-ring active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <GripVertical className="size-4" />
       </button>

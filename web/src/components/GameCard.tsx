@@ -69,7 +69,7 @@ export function GameCard({ entry }: { entry: Entry }) {
       </Link>
 
       {/* Quick status switch, revealed on hover or keyboard focus. */}
-      <div className="pointer-events-none absolute inset-x-2 bottom-2 opacity-0 transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+      <div className="pointer-events-none absolute inset-x-2 bottom-2 opacity-0 transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
         <StatusMenu entry={entry} />
       </div>
     </div>

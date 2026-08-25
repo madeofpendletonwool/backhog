@@ -30,7 +30,7 @@ export function ListsPage() {
       </header>
 
       {isLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {Array.from({ length: 4 }).map((_, index) => (
             <Skeleton key={index} className="h-24" />
           ))}
@@ -81,7 +81,7 @@ function Section({
         <h2 className="text-sm font-semibold text-ink-200">{title}</h2>
         <p className="text-xs text-ink-500">{caption}</p>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {lists.map((list) => (
           <Link
             key={list.id}

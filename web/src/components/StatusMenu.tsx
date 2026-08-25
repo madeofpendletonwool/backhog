@@ -45,7 +45,8 @@ export function StatusMenu({
       role="group"
       aria-label={`Status for ${entry.game.name}`}
       className={cn(
-        "flex items-center gap-0.5 rounded-xl bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
+        "gap-0.5 rounded-xl bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
+        size === "md" ? "grid grid-cols-3 sm:flex sm:items-center" : "flex items-center",
         update.isPending && "opacity-60",
       )}
     >

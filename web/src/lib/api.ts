@@ -3,6 +3,7 @@ import type {
   Entry,
   GameList,
   Game,
+  Insights,
   NamedRef,
   PlaySession,
   RuleSet,
@@ -98,6 +99,8 @@ export const api = {
   stats: () => request<Stats>("/library/stats"),
 
   debt: () => request<DebtReport>("/library/debt"),
+
+  insights: () => request<Insights>("/library/insights"),
 
   // --- play sessions --------------------------------------------------
   sessions: (entryId: string) =>

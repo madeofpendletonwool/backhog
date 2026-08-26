@@ -62,6 +62,7 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/", s.handleAddToLibrary)
 				r.Get("/stats", s.handleStats)
 				r.Get("/debt", s.handleDebt)
+				r.Get("/insights", s.handleInsights)
 				r.Get("/queue", s.handleQueue)
 				r.Post("/reorder", s.handleReorder)
 				r.Get("/facets", s.handleFacets)

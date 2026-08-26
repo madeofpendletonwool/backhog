@@ -250,6 +250,20 @@ func (s *Server) handleDebt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, debt)
 }
 
+func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+	insights, err := s.store.Insights(r.Context(), userID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, insights)
+}
+
 // handleTonight answers "I have N minutes, what should I play?" with one
 // explainable pick per category. `exclude` (comma-separated entry ids) drops
 // entries from candidacy, which is how the client re-rolls a category: exclude

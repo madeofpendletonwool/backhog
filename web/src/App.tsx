@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Spinner } from "./components/ui/primitives";
 import { useAuth } from "./hooks/useAuth";
+import { DebtPage } from "./pages/DebtPage";
 import { GameDetailPage } from "./pages/GameDetailPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { ListDetailPage } from "./pages/ListDetailPage";
@@ -40,6 +41,7 @@ export function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<LibraryPage />} />
         <Route path="/queue" element={<QueuePage />} />
+        <Route path="/debt" element={<DebtPage />} />
         <Route path="/lists" element={<ListsPage />} />
         <Route path="/lists/:listId" element={<ListDetailPage />} />
         <Route path="/game/:entryId" element={<GameDetailPage />} />

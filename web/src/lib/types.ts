@@ -122,6 +122,38 @@ export interface Stats {
   completion: number;
 }
 
+/** Actual play pace derived from logged sessions. Null means no data. */
+export interface DebtPace {
+  hours_per_week_90d: number | null;
+  hours_per_week_all: number | null;
+}
+
+/** When the backlog clears at one fixed hours/week rate. */
+export interface ClearanceScenario {
+  hours_per_week: number;
+  weeks: number;
+  /** "2027-03-05"; null means it never clears at this pace. */
+  clear_by: string | null;
+}
+
+export interface DebtProjection {
+  current_pace: ClearanceScenario | null;
+  scenarios: ClearanceScenario[];
+}
+
+export interface DebtReport {
+  total_hours: number;
+  main_backlog_hours: number;
+  started_hours: number;
+  short_games_hours: number;
+  /** Null by design: a wishlist is a shopping list, not debt you owe yourself. */
+  wishlist_hours: number | null;
+  /** Null until DLC-aware debt lands. */
+  dlc_hours: number | null;
+  pace: DebtPace;
+  projection: DebtProjection;
+}
+
 export interface PlaySession {
   id: string;
   entry_id: string;

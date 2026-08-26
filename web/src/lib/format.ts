@@ -21,6 +21,41 @@ export function formatHours(hours: number): string {
   return `${Math.round(hours)}h`;
 }
 
+/**
+ * A span of weeks as a human sentence: "1 year 6 months", "8 months",
+ * "3 weeks". Used for backlog clearance estimates, where decimal weeks
+ * would be noise.
+ */
+export function formatTimespan(weeks: number): string {
+  if (weeks <= 0) return "no time at all";
+  const totalDays = weeks * 7;
+  if (totalDays < 60) {
+    const w = Math.max(1, Math.round(weeks));
+    return `${w} week${w === 1 ? "" : "s"}`;
+  }
+  // Average month/year lengths keep the rounding stable across year spans.
+  const totalMonths = totalDays / 30.44;
+  const years = Math.floor(totalMonths / 12);
+  const months = Math.round(totalMonths - years * 12);
+  if (months === 12) return plural(years + 1, "year");
+  if (years === 0) return plural(Math.max(months, 1), "month");
+  if (months === 0) return plural(years, "year");
+  return `${plural(years, "year")} ${plural(months, "month")}`;
+}
+
+function plural(n: number, unit: string): string {
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+}
+
+/** "March 2027" from a plain 2027-03-05 date, in local time. */
+export function formatMonthYear(date: string | null): string {
+  if (!date) return "never";
+  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+  });
+}
+
 /** IGDB stores release dates as a unix timestamp in seconds. */
 export function releaseYear(game: Game): string {
   if (!game.first_release_date) return "";

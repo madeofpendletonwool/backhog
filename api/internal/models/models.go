@@ -129,6 +129,47 @@ type Stats struct {
 	Completion  float64 `json:"completion"`
 }
 
+// Pace is how fast the user is actually playing, from logged sessions. Null
+// means there is no data to compute a figure from, not "zero hours".
+type Pace struct {
+	// HoursPerWeek90d is the trailing 90-day average.
+	HoursPerWeek90d *float64 `json:"hours_per_week_90d"`
+	// HoursPerWeekAll spans first logged session to now.
+	HoursPerWeekAll *float64 `json:"hours_per_week_all"`
+}
+
+// ClearanceScenario projects when the backlog debt is fully played at one
+// fixed hours/week rate.
+type ClearanceScenario struct {
+	HoursPerWeek float64 `json:"hours_per_week"`
+	Weeks        float64 `json:"weeks"`
+	// ClearBy is the estimated clearance date (2027-03-05). Null means the
+	// backlog never clears at this pace.
+	ClearBy *string `json:"clear_by"`
+}
+
+// DebtProjection bundles the current-pace estimate with fixed-rate scenarios.
+type DebtProjection struct {
+	CurrentPace *ClearanceScenario  `json:"current_pace"`
+	Scenarios   []ClearanceScenario `json:"scenarios"`
+}
+
+// DebtReport is the backlog-debt summary: unplayed hours split by where they
+// sit, actual play pace, and clearance projections.
+type DebtReport struct {
+	TotalHours       float64 `json:"total_hours"`
+	MainBacklogHours float64 `json:"main_backlog_hours"`
+	StartedHours     float64 `json:"started_hours"`
+	ShortGamesHours  float64 `json:"short_games_hours"`
+	// WishlistHours is null by design: a wishlist is a shopping list, not debt
+	// you owe yourself. The field stays in the shape so later work can fill it.
+	WishlistHours *float64 `json:"wishlist_hours"`
+	// DLCHours is null until a later franchises task adds DLC-aware debt.
+	DLCHours   *float64       `json:"dlc_hours"`
+	Pace       Pace           `json:"pace"`
+	Projection DebtProjection `json:"projection"`
+}
+
 // Session is one manually logged stretch of play.
 type Session struct {
 	ID        string    `json:"id"`

@@ -1,4 +1,5 @@
 import type {
+  DebtReport,
   Entry,
   GameList,
   Game,
@@ -94,6 +95,8 @@ export const api = {
   deleteEntry: (id: string) => request<void>(`/library/${id}`, { method: "DELETE" }),
 
   stats: () => request<Stats>("/library/stats"),
+
+  debt: () => request<DebtReport>("/library/debt"),
 
   // --- play sessions --------------------------------------------------
   sessions: (entryId: string) =>

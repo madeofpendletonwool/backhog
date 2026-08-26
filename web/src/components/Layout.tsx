@@ -2,6 +2,7 @@ import { cn } from "@/lib/cn";
 import {
   Dices,
   Download,
+  Hourglass,
   ListOrdered,
   LayoutGrid,
   ListTree,
@@ -24,6 +25,7 @@ import { useStats } from "@/hooks/useLibrary";
 const navItems = [
   { to: "/", label: "Library", icon: LayoutGrid, end: true },
   { to: "/queue", label: "Play Queue", icon: ListOrdered, end: false },
+  { to: "/debt", label: "Backlog Debt", icon: Hourglass, end: false },
   { to: "/lists", label: "Lists", icon: ListTree, end: false },
 ];
 

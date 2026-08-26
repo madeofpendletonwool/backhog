@@ -235,6 +235,20 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+func (s *Server) handleDebt(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+	debt, err := s.store.Debt(r.Context(), userID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, debt)
+}
+
 func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {

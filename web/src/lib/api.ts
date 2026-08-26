@@ -1,4 +1,5 @@
 import type {
+  AchievementStatus,
   DebtReport,
   Entry,
   GameList,
@@ -9,6 +10,7 @@ import type {
   PlaySession,
   RuleSet,
   SearchResult,
+  Season,
   Series,
   SeriesDetail,
   SeriesSummary,
@@ -97,8 +99,12 @@ export const api = {
 
   entryLists: (id: string) => request<{ list_ids: string[] }>(`/library/${id}/lists`),
 
+  /** The PATCH response also carries any achievements the change unlocked. */
   updateEntry: (id: string, patch: Partial<Record<string, unknown>>) =>
-    request<Entry>(`/library/${id}`, { method: "PATCH", body: body(patch) }),
+    request<{ entry: Entry; unlocks: AchievementStatus[] }>(`/library/${id}`, {
+      method: "PATCH",
+      body: body(patch),
+    }),
 
   deleteEntry: (id: string) => request<void>(`/library/${id}`, { method: "DELETE" }),
 
@@ -131,12 +137,23 @@ export const api = {
 
   insights: () => request<Insights>("/library/insights"),
 
+  // --- achievements -----------------------------------------------------
+  achievements: () => request<{ achievements: AchievementStatus[] }>("/achievements"),
+
+  /** The "YYYY Backlog Challenge" rollup; defaults to the current year. */
+  season: (year?: number) =>
+    request<Season>(`/achievements/season${year != null ? `?year=${year}` : ""}`),
+
   // --- play sessions --------------------------------------------------
   sessions: (entryId: string) =>
     request<{ sessions: PlaySession[] }>(`/library/${entryId}/sessions`),
 
+  /** The response also carries any achievements the session unlocked. */
   addSession: (entryId: string, input: { minutes: number; played_on?: string; note?: string }) =>
-    request<PlaySession>(`/library/${entryId}/sessions`, { method: "POST", body: body(input) }),
+    request<{ session: PlaySession; unlocks: AchievementStatus[] }>(
+      `/library/${entryId}/sessions`,
+      { method: "POST", body: body(input) },
+    ),
 
   deleteSession: (sessionId: string) =>
     request<void>(`/sessions/${sessionId}`, { method: "DELETE" }),

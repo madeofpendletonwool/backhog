@@ -192,7 +192,7 @@ func (s *Server) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, err := s.store.UpdateEntry(r.Context(), userID, chi.URLParam(r, "entryID"), body)
+	entry, unlocks, err := s.store.UpdateEntry(r.Context(), userID, chi.URLParam(r, "entryID"), body)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, errNotFound)
 		return
@@ -201,7 +201,7 @@ func (s *Server) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		fail(w, errorf(http.StatusBadRequest, err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, entry)
+	writeJSON(w, http.StatusOK, map[string]any{"entry": entry, "unlocks": unlocks})
 }
 
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {

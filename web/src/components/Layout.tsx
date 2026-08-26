@@ -12,10 +12,12 @@ import {
   Plus,
   Settings,
   Sparkles,
+  Trophy,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { AchievementToasts } from "./AchievementToasts";
 import { AddGameDialog } from "./AddGameDialog";
 import { PickDialog } from "./PickDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
@@ -30,6 +32,7 @@ const navItems = [
   { to: "/queue", label: "Play Queue", icon: ListOrdered, end: false },
   { to: "/debt", label: "Backlog Debt", icon: Hourglass, end: false },
   { to: "/series", label: "Series", icon: Layers, end: false },
+  { to: "/achievements", label: "Achievements", icon: Trophy, end: false },
   { to: "/lists", label: "Lists", icon: ListTree, end: false },
 ];
 
@@ -165,6 +168,7 @@ export function Layout() {
       <AddGameDialog open={addOpen} onClose={() => setAddOpen(false)} />
       <PickDialog open={pickOpen} onClose={() => setPickOpen(false)} />
       <SteamImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
+      <AchievementToasts />
     </div>
   );
 }

@@ -311,7 +311,7 @@ func TestDLCHoursAndDebt(t *testing.T) {
 	}
 
 	// Finishing the parent drops the DLC debt entirely.
-	if _, err := s.UpdateEntry(ctx, userID, entry.ID, EntryUpdate{Status: strptr(models.StatusPlayed)}); err != nil {
+	if _, _, err := s.UpdateEntry(ctx, userID, entry.ID, EntryUpdate{Status: strptr(models.StatusPlayed)}); err != nil {
 		t.Fatal(err)
 	}
 	hours, err = s.DLCHours(ctx, userID)

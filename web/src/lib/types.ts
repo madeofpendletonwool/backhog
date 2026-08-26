@@ -330,3 +330,29 @@ export interface Insights {
   headline: InsightsHeadline;
   superlatives: Superlative[];
 }
+
+/** One achievement from the code-defined catalogue. */
+export interface Achievement {
+  id: string;
+  title: string;
+  description: string;
+  /** Code key the client maps to an icon glyph. */
+  icon: string;
+}
+
+/** An achievement plus the user's unlock state: no date and no game = locked. */
+export interface AchievementStatus extends Achievement {
+  unlocked_at?: string;
+  /** The game that triggered the unlock, when there is one. */
+  entry?: Entry;
+}
+
+/** The per-calendar-year "Backlog Challenge" rollup. */
+export interface Season {
+  year: number;
+  games_completed: number;
+  hours_played: number;
+  franchises_cleared: number;
+  /** Games finished after a year or more of ownership. */
+  rescues: number;
+}

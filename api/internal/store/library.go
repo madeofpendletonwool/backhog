@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/collinpendleton/backhog/api/internal/achievements"
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
 
@@ -172,10 +173,12 @@ type EntryUpdate struct {
 // UpdateEntry applies a partial update. Status transitions stamp started_at and
 // finished_at, and moving in or out of 'backlog' adds or removes the entry from
 // the play queue, so the queue always reflects exactly what is still unplayed.
-func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u EntryUpdate) (models.Entry, error) {
+// Finishing or dropping a game evaluates achievements inside the same
+// transaction; any newly unlocked ones are returned for the UI toast.
+func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u EntryUpdate) (models.Entry, []models.AchievementStatus, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return models.Entry{}, err
+		return models.Entry{}, nil, err
 	}
 	defer tx.Rollback()
 
@@ -185,18 +188,19 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 		`SELECT status, started_at FROM library_entries WHERE user_id = ? AND id = ?`,
 		userID, entryID).Scan(&currentStatus, &startedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return models.Entry{}, ErrNotFound
+		return models.Entry{}, nil, ErrNotFound
 	}
 	if err != nil {
-		return models.Entry{}, err
+		return models.Entry{}, nil, err
 	}
 
 	sets := []string{"updated_at = CURRENT_TIMESTAMP"}
 	var args []any
+	evalKind := ""
 
 	if u.Status != nil && *u.Status != currentStatus {
 		if !models.ValidStatus(*u.Status) {
-			return models.Entry{}, fmt.Errorf("invalid status %q", *u.Status)
+			return models.Entry{}, nil, fmt.Errorf("invalid status %q", *u.Status)
 		}
 		newStatus := *u.Status
 		sets = append(sets, "status = ?")
@@ -213,8 +217,10 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 				sets = append(sets, "started_at = CURRENT_TIMESTAMP")
 			}
 			sets = append(sets, "finished_at = CURRENT_TIMESTAMP")
+			evalKind = achievements.EventFinished
 		case models.StatusDropped:
 			sets = append(sets, "finished_at = CURRENT_TIMESTAMP")
+			evalKind = achievements.EventDropped
 		case models.StatusBacklog, models.StatusWishlist:
 			sets = append(sets, "started_at = NULL", "finished_at = NULL")
 		}
@@ -222,7 +228,7 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 		if newStatus == models.StatusBacklog {
 			pos, err := nextQueuePositionTx(ctx, tx, userID)
 			if err != nil {
-				return models.Entry{}, err
+				return models.Entry{}, nil, err
 			}
 			sets = append(sets, "queue_position = ?")
 			args = append(args, pos)
@@ -244,7 +250,7 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 		sets = append(sets, "user_rating = NULL")
 	case u.UserRating != nil:
 		if *u.UserRating < 1 || *u.UserRating > 10 {
-			return models.Entry{}, fmt.Errorf("rating must be between 1 and 10")
+			return models.Entry{}, nil, fmt.Errorf("rating must be between 1 and 10")
 		}
 		sets = append(sets, "user_rating = ?")
 		args = append(args, *u.UserRating)
@@ -259,12 +265,25 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 	_, err = tx.ExecContext(ctx,
 		`UPDATE library_entries SET `+strings.Join(sets, ", ")+` WHERE user_id = ? AND id = ?`, args...)
 	if err != nil {
-		return models.Entry{}, err
+		return models.Entry{}, nil, err
 	}
+
+	var newly []unlockStub
+	if evalKind != "" {
+		newly, err = evaluateAchievementsTx(ctx, tx, userID, entryID, evalKind)
+		if err != nil {
+			return models.Entry{}, nil, err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
-		return models.Entry{}, err
+		return models.Entry{}, nil, err
 	}
-	return s.GetEntry(ctx, userID, entryID)
+	entry, err := s.GetEntry(ctx, userID, entryID)
+	if err != nil {
+		return models.Entry{}, nil, err
+	}
+	return entry, s.hydrateUnlocks(ctx, userID, newly), nil
 }
 
 // DeleteEntry removes a game from a user's library.

@@ -34,6 +34,11 @@ actually get to them.
   with human reasons: continue something, a short win that fits, a wildcard
   you've never touched, and the longest-owned least-played rescue — or just
   roll one at random
+- **Achievements & Backlog Season** — trophies for progress through the pile,
+  not hours in it: first finish, five-game cleanup crew, the 5-year
+  archaeologist dig, honest abandonment, and more. Plus a per-year
+  "Backlog Challenge" card tracking completions, hours, franchises cleared,
+  and rescues of long-owned games
 - **Steam import** — bulk-import an owned library, matched to IGDB by appid
 - **Multi-user** — real accounts, fully isolated libraries, shared metadata cache
 
@@ -181,6 +186,7 @@ api/
     db/                 sqlite open + embedded goose migrations
     store/              data access — one file per aggregate
     metadata/           IGDB client, cover cache, accent sampling
+    achievements/       code-defined achievement catalogue + predicates
     auth/               argon2id, session cookie middleware
     http/               router and handlers
 web/

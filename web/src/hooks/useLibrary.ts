@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { dispatchUnlocks } from "@/hooks/useAchievements";
 import { api } from "@/lib/api";
 import type { Entry, Status } from "@/lib/types";
 
@@ -15,7 +16,7 @@ export interface LibraryParams {
 
 /** Invalidates every view whose contents depend on entry state. */
 function invalidateLibrary(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const key of ["library", "queue", "stats", "debt", "insights", "lists", "list", "entry", "facets", "series"]) {
+  for (const key of ["library", "queue", "stats", "debt", "insights", "lists", "list", "entry", "facets", "series", "achievements", "season"]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }
@@ -84,9 +85,10 @@ export function useUpdateEntry() {
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
       api.updateEntry(id, patch),
-    onSuccess: (entry) => {
+    onSuccess: ({ entry, unlocks }) => {
       queryClient.setQueryData(["entry", entry.id], entry);
       invalidateLibrary(queryClient);
+      dispatchUnlocks(unlocks);
     },
   });
 }

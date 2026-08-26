@@ -64,6 +64,14 @@ func (s *Store) UpsertGame(ctx context.Context, g metadata.Game, accentHex strin
 		return err
 	}
 
+	// A detail fetch also carries the series grouping and DLC relations; write
+	// them in the same transaction so a game is never visible with a
+	// half-written set of series links. Lean fetches (nil Series/Extras) skip
+	// this entirely.
+	if err := syncGameSeries(ctx, tx, g.ID, g.Series, g.Extras); err != nil {
+		return err
+	}
+
 	return tx.Commit()
 }
 

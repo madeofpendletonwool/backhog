@@ -58,6 +58,11 @@ func (s *Store) Debt(ctx context.Context, userID string) (models.DebtReport, err
 		StartedHours:     round1(startedSeconds / 3600),
 		ShortGamesHours:  round1(shortSeconds / 3600),
 	}
+	dlcHours, err := s.DLCHours(ctx, userID)
+	if err != nil {
+		return models.DebtReport{}, err
+	}
+	report.DLCHours = dlcHours
 	report.TotalHours = round1((mainSeconds + startedSeconds) / 3600)
 	report.Pace = computePace(recentMinutes, totalMinutes, firstPlayedOn, time.Now().UTC())
 	report.Projection = buildProjection(report.TotalHours, report.Pace, time.Now().UTC())

@@ -33,7 +33,9 @@ const (
 		"platforms.id,platforms.name,first_release_date,rating,total_rating,total_rating_count," +
 		"storyline,aggregated_rating,category," +
 		"involved_companies.company.name,involved_companies.developer,involved_companies.publisher," +
-		"game_modes.name,player_perspectives.name,themes.name,franchise.name,collection.name," +
+		"game_modes.name,player_perspectives.name,themes.name," +
+		"franchise.id,franchise.name,franchise.slug," +
+		"collection.id,collection.name,collection.slug," +
 		"alternative_names.name,age_ratings.rating,websites.url,websites.category," +
 		"screenshots.image_id,videos.video_id,videos.name," +
 		"similar_games.id,similar_games.name,similar_games.cover.image_id," +
@@ -121,6 +123,31 @@ func (c *IGDB) GetByID(ctx context.Context, id int64) (Game, error) {
 		return Game{}, fmt.Errorf("igdb: game %d not found", id)
 	}
 	return games[0], nil
+}
+
+// GetManyByIDs batch-loads full detail records, used by the series backfill to
+// pull a parent game's DLC and expansions in one call each. Order is not
+// preserved; callers match on ID.
+func (c *IGDB) GetManyByIDs(ctx context.Context, ids []int64) ([]Game, error) {
+	out := make([]Game, 0, len(ids))
+	const chunkSize = 50
+	for start := 0; start < len(ids); start += chunkSize {
+		end := min(start+chunkSize, len(ids))
+		chunk := ids[start:end]
+
+		list := make([]string, len(chunk))
+		for i, id := range chunk {
+			list[i] = fmt.Sprint(id)
+		}
+		body := fmt.Sprintf("where id = (%s); %s limit %d;",
+			strings.Join(list, ","), gameFieldsFull, len(chunk))
+		games, err := c.queryGames(ctx, body, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, games...)
+	}
+	return out, nil
 }
 
 // GamesBySteamAppIDs maps Steam appids to IGDB games.
@@ -271,10 +298,14 @@ type igdbGame struct {
 	PlayerPerspectives []Ref `json:"player_perspectives"`
 	Themes             []Ref `json:"themes"`
 	Franchise          *struct {
+		ID   int64  `json:"id"`
 		Name string `json:"name"`
+		Slug string `json:"slug"`
 	} `json:"franchise"`
 	Collection *struct {
+		ID   int64  `json:"id"`
 		Name string `json:"name"`
+		Slug string `json:"slug"`
 	} `json:"collection"`
 	AlternativeNames []struct {
 		Name string `json:"name"`
@@ -348,6 +379,7 @@ func (c *IGDB) queryGames(ctx context.Context, body string, detail bool) ([]Game
 		}
 		if detail {
 			g.Extras = buildExtras(p)
+			g.Series = buildSeries(p)
 		}
 		if encoded, err := json.Marshal(p); err == nil {
 			g.Raw = encoded

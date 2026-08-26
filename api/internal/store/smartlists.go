@@ -29,15 +29,16 @@ var smartFields = map[string]smartField{
 		Type:   "number", Label: "Hours I've logged",
 		Ops: []string{"gt", "lt", "gte", "lte"},
 	},
-	"name":            {Column: "g.name", Type: "text", Label: "Title", Ops: []string{"contains", "eq"}},
-	"igdb_rating":     {Column: "g.igdb_rating", Type: "number", Label: "IGDB rating", Ops: []string{"gt", "lt", "gte", "lte"}},
-	"user_rating":     {Column: "e.user_rating", Type: "number", Label: "My rating", Ops: []string{"gt", "lt", "gte", "lte", "eq", "is_null", "not_null"}},
-	"hours_to_beat":   {Column: "g.time_to_beat_main / 3600.0", Type: "number", Label: "Hours to beat", Ops: []string{"lt", "gt", "lte", "gte", "is_null", "not_null"}},
-	"release_year":    {Column: "CAST(strftime('%Y', g.first_release_date, 'unixepoch') AS INTEGER)", Type: "number", Label: "Release year", Ops: []string{"eq", "gt", "lt", "gte", "lte"}},
-	"days_since_added": {Column: "julianday('now') - julianday(e.created_at)", Type: "number", Label: "Days since added", Ops: []string{"gt", "lt"}},
+	"name":               {Column: "g.name", Type: "text", Label: "Title", Ops: []string{"contains", "eq"}},
+	"igdb_rating":        {Column: "g.igdb_rating", Type: "number", Label: "IGDB rating", Ops: []string{"gt", "lt", "gte", "lte"}},
+	"user_rating":        {Column: "e.user_rating", Type: "number", Label: "My rating", Ops: []string{"gt", "lt", "gte", "lte", "eq", "is_null", "not_null"}},
+	"hours_to_beat":      {Column: "g.time_to_beat_main / 3600.0", Type: "number", Label: "Hours to beat", Ops: []string{"lt", "gt", "lte", "gte", "is_null", "not_null"}},
+	"release_year":       {Column: "CAST(strftime('%Y', g.first_release_date, 'unixepoch') AS INTEGER)", Type: "number", Label: "Release year", Ops: []string{"eq", "gt", "lt", "gte", "lte"}},
+	"days_since_added":   {Column: "julianday('now') - julianday(e.created_at)", Type: "number", Label: "Days since added", Ops: []string{"gt", "lt"}},
 	"days_since_started": {Column: "julianday('now') - julianday(e.started_at)", Type: "number", Label: "Days since started", Ops: []string{"gt", "lt"}},
-	"genre":           {Column: "genre", Type: "ref", Label: "Genre", Ops: []string{"in", "not_in"}},
-	"platform":        {Column: "platform", Type: "ref", Label: "Platform", Ops: []string{"in", "not_in"}},
+	"genre":              {Column: "genre", Type: "ref", Label: "Genre", Ops: []string{"in", "not_in"}},
+	"platform":           {Column: "platform", Type: "ref", Label: "Platform", Ops: []string{"in", "not_in"}},
+	"series":             {Column: "series", Type: "ref", Label: "Series", Ops: []string{"in", "not_in"}},
 }
 
 // smartSorts whitelists sort keys for smart lists.
@@ -143,11 +144,22 @@ var comparisonOps = map[string]string{
 	"eq": "=", "neq": "!=", "gt": ">", "lt": "<", "gte": ">=", "lte": "<=",
 }
 
+// refJoins whitelists the many-to-many fields and the tables behind them.
+// Table and column names are only ever resolved through this map, so no
+// user-controlled string reaches the query text.
+var refJoins = map[string][3]string{
+	// field → {join table, lookup table, join column}
+	"genre":    {"game_genres", "genres", "genre_id"},
+	"platform": {"game_platforms", "platforms", "platform_id"},
+	"series":   {"series_games", "series", "series_id"},
+}
+
 func compileRefRule(rule models.Rule) (string, []any, error) {
-	joinTable, lookupTable, joinCol := "game_genres", "genres", "genre_id"
-	if rule.Field == "platform" {
-		joinTable, lookupTable, joinCol = "game_platforms", "platforms", "platform_id"
+	join, ok := refJoins[rule.Field]
+	if !ok {
+		return "", nil, fmt.Errorf("%q is not a ref field", rule.Field)
 	}
+	joinTable, lookupTable, joinCol := join[0], join[1], join[2]
 
 	values, err := asSlice(rule.Value)
 	if err != nil {

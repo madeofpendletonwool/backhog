@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/collinpendleton/backhog/api/internal/backfill"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
 	apihttp "github.com/collinpendleton/backhog/api/internal/http"
@@ -106,7 +107,11 @@ func run() error {
 		slog.Info("steam import enabled")
 	}
 
-	server := apihttp.NewServer(cfg, st, provider, covers, steam)
+	// The series backfill enriches cached games with full IGDB metadata in the
+	// background, a bounded batch per boot.
+	seriesBackfill := backfill.NewRunner(st, provider)
+
+	server := apihttp.NewServer(cfg, st, provider, covers, steam, seriesBackfill)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           server.Routes(),
@@ -118,6 +123,11 @@ func run() error {
 	defer stop()
 
 	go purgeSessions(ctx, st)
+	go func() {
+		if _, err := seriesBackfill.Run(ctx, backfill.StartupCap); err != nil {
+			slog.Warn("startup series backfill", "error", err)
+		}
+	}()
 
 	errc := make(chan error, 1)
 	go func() {

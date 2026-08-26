@@ -28,12 +28,30 @@ type Game struct {
 	// lean, and the detail page backfills the rest lazily. Nil means "not fetched
 	// yet", which is the signal the store uses to decide whether to refresh.
 	Extras *GameExtras
+	// Series is the franchise/collection grouping, also detail-only. It drives
+	// the series tables rather than the display-only extras blob.
+	Series *GameSeries
 	Raw    []byte
 }
 
 type Ref struct {
 	ID   int64
 	Name string
+}
+
+// SeriesRef identifies a franchise or collection a game belongs to. Unlike Ref
+// it also carries the slug, which is the natural key for a series row.
+type SeriesRef struct {
+	ID   int64
+	Name string
+	Slug string
+}
+
+// GameSeries is the franchise/collection grouping of a game, populated only on
+// a full detail lookup alongside Extras.
+type GameSeries struct {
+	Franchise  *SeriesRef
+	Collection *SeriesRef
 }
 
 // GameExtras is the rich, display-only IGDB metadata surfaced on the detail
@@ -49,7 +67,9 @@ type GameExtras struct {
 	PlayerPerspectives []string      `json:"player_perspectives"`
 	Themes             []string      `json:"themes"`
 	Franchise          string        `json:"franchise"`
+	FranchiseID        *int64        `json:"franchise_id"`
 	Collection         string        `json:"collection"`
+	CollectionID       *int64        `json:"collection_id"`
 	AlternativeNames   []string      `json:"alternative_names"`
 	AgeRatings         []string      `json:"age_ratings"`
 	Websites           []GameWebsite `json:"websites"`
@@ -86,6 +106,9 @@ type RelatedGame struct {
 type Provider interface {
 	Search(ctx context.Context, query string, limit int) ([]Game, error)
 	GetByID(ctx context.Context, id int64) (Game, error)
+	// GetManyByIDs is a batch detail lookup used by the series backfill. A
+	// provider that cannot serve batches can satisfy it by looping GetByID.
+	GetManyByIDs(ctx context.Context, ids []int64) ([]Game, error)
 }
 
 // Unconfigured is the Provider used when credentials are absent. The app still
@@ -98,4 +121,8 @@ func (Unconfigured) Search(context.Context, string, int) ([]Game, error) {
 
 func (Unconfigured) GetByID(context.Context, int64) (Game, error) {
 	return Game{}, ErrUnavailable
+}
+
+func (Unconfigured) GetManyByIDs(context.Context, []int64) ([]Game, error) {
+	return nil, ErrUnavailable
 }

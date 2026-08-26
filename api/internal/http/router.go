@@ -8,10 +8,15 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/collinpendleton/backhog/api/internal/auth"
+	"github.com/collinpendleton/backhog/api/internal/backfill"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
+
+// backfillKickCap is the per-run budget when a user triggers the enrichment
+// walk from the UI.
+const backfillKickCap = backfill.KickCap
 
 // Server holds the dependencies shared by all handlers.
 type Server struct {
@@ -20,10 +25,11 @@ type Server struct {
 	provider metadata.Provider
 	covers   *metadata.CoverCache
 	steam    *metadata.Steam
+	backfill *backfill.Runner
 }
 
-func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache, steam *metadata.Steam) *Server {
-	return &Server{cfg: cfg, store: st, provider: provider, covers: covers, steam: steam}
+func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache, steam *metadata.Steam, backfill *backfill.Runner) *Server {
+	return &Server{cfg: cfg, store: st, provider: provider, covers: covers, steam: steam, backfill: backfill}
 }
 
 // Routes builds the API router. Everything is mounted under /api so nginx can
@@ -56,6 +62,17 @@ func (s *Server) Routes() http.Handler {
 
 			r.Get("/games/search", s.handleGameSearch)
 			r.Get("/games/{gameID}", s.handleGetGame)
+			r.Get("/games/{gameID}/series", s.handleGameSeries)
+
+			r.Route("/series", func(r chi.Router) {
+				r.Get("/", s.handleSeriesIndex)
+				// Static path first: chi routes it before the {seriesID} param.
+				r.Get("/backfill", s.handleSeriesBackfill)
+				r.Post("/backfill", s.handleSeriesBackfill)
+				r.Get("/{seriesID}", s.handleSeriesDetail)
+				r.Put("/{seriesID}/order", s.handleSeriesPlayOrder)
+				r.Post("/{seriesID}/reorder", s.handleSeriesReorder)
+			})
 
 			r.Route("/library", func(r chi.Router) {
 				r.Get("/", s.handleListLibrary)

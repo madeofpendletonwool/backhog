@@ -92,9 +92,13 @@ func buildExtras(p igdbGame) *GameExtras {
 	}
 	if p.Franchise != nil {
 		e.Franchise = p.Franchise.Name
+		id := p.Franchise.ID
+		e.FranchiseID = &id
 	}
 	if p.Collection != nil {
 		e.Collection = p.Collection.Name
+		id := p.Collection.ID
+		e.CollectionID = &id
 	}
 
 	for _, c := range p.InvolvedCompanies {
@@ -149,6 +153,22 @@ func buildExtras(p igdbGame) *GameExtras {
 		}
 	}
 	return e
+}
+
+// buildSeries extracts the franchise/collection grouping from a parsed IGDB
+// game, for the relational series tables.
+func buildSeries(p igdbGame) *GameSeries {
+	s := &GameSeries{}
+	if p.Franchise != nil && p.Franchise.ID != 0 {
+		s.Franchise = &SeriesRef{ID: p.Franchise.ID, Name: p.Franchise.Name, Slug: p.Franchise.Slug}
+	}
+	if p.Collection != nil && p.Collection.ID != 0 {
+		s.Collection = &SeriesRef{ID: p.Collection.ID, Name: p.Collection.Name, Slug: p.Collection.Slug}
+	}
+	if s.Franchise == nil && s.Collection == nil {
+		return nil
+	}
+	return s
 }
 
 // names extracts non-empty Ref names into a non-nil slice.

@@ -15,7 +15,7 @@ export interface LibraryParams {
 
 /** Invalidates every view whose contents depend on entry state. */
 function invalidateLibrary(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const key of ["library", "queue", "stats", "debt", "lists", "list", "entry", "facets"]) {
+  for (const key of ["library", "queue", "stats", "debt", "lists", "list", "entry", "facets", "series"]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }

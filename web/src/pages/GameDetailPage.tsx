@@ -6,6 +6,7 @@ import {
   Clock,
   ExternalLink,
   Film,
+  Layers,
   Plus,
   Star,
   Trash2,
@@ -22,6 +23,7 @@ import { SessionLog } from "@/components/SessionLog";
 import { Dialog } from "@/components/ui/Dialog";
 import { useDeleteEntry, useEntry, useUpdateEntry } from "@/hooks/useLibrary";
 import { useEntryLists, useLists, useToggleListMembership } from "@/hooks/useLists";
+import { useGameSeries } from "@/hooks/useSeries";
 import { STATUSES, type Entry, type Game, type RelatedGame } from "@/lib/types";
 import {
   accentStyle,
@@ -160,6 +162,8 @@ export function GameDetailPage() {
                   ))}
                 </div>
               )}
+
+              <GameSeriesChips gameId={game.id} />
 
               <div className="mt-5 max-w-md">
                 <StatusMenu entry={entry} size="md" statuses={STATUSES} />
@@ -420,6 +424,31 @@ function ListMembership({ entry }: { entry: Entry }) {
 
       <CreateListDialog open={creating} onClose={() => setCreating(false)} />
     </Panel>
+  );
+}
+
+/**
+ * Chips linking to the series this game belongs to — the two-way link from a
+ * game back to its journey.
+ */
+function GameSeriesChips({ gameId }: { gameId: number }) {
+  const { data } = useGameSeries(gameId);
+  const series = data?.series ?? [];
+  if (series.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {series.map((s) => (
+        <Link
+          key={s.id}
+          to={`/series/${s.id}`}
+          className="inline-flex items-center gap-1.5 rounded-full bg-brand-600/15 px-2.5 py-1 text-xs font-medium text-brand-300 ring-1 ring-inset ring-brand-500/25 transition-colors hover:bg-brand-600/25 hover:text-brand-200 focus-visible:focus-ring"
+        >
+          <Layers className="size-3" />
+          {s.name}
+        </Link>
+      ))}
+    </div>
   );
 }
 

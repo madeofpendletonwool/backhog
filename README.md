@@ -6,6 +6,10 @@ actually get to them.
 
 - **Library** — cover grid or dense table, filter by status, platform, genre,
   paged as it grows; your filters and sort are remembered between visits
+- **Dashboard** — "Your Gaming Problem": a diagnosis of the pile (games owned,
+  unplayed, hours owed, years at your pace) plus ridiculous superlatives — the
+  oldest game you never touched, the genre you keep buying but never playing,
+  the platform with the worst backlog
 - **Statuses** — backlog / playing / played / dropped / ignored, with automatic
   start and finish timestamps. *Ignored* is for games you own and have played but
   will never "beat" — endless titles that shouldn't sit in the backlog or drag

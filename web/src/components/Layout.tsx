@@ -4,6 +4,7 @@ import {
   Download,
   Hourglass,
   ListOrdered,
+  Gauge,
   LayoutGrid,
   ListTree,
   LogOut,
@@ -23,7 +24,8 @@ import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
 
 const navItems = [
-  { to: "/", label: "Library", icon: LayoutGrid, end: true },
+  { to: "/", label: "Dashboard", icon: Gauge, end: true },
+  { to: "/library", label: "Library", icon: LayoutGrid, end: true },
   { to: "/queue", label: "Play Queue", icon: ListOrdered, end: false },
   { to: "/debt", label: "Backlog Debt", icon: Hourglass, end: false },
   { to: "/lists", label: "Lists", icon: ListTree, end: false },

@@ -84,13 +84,13 @@ type Entry struct {
 }
 
 type List struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Kind        string     `json:"kind"`
-	Rules       *RuleSet   `json:"rules,omitempty"`
-	Count       int        `json:"count"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Kind        string    `json:"kind"`
+	Rules       *RuleSet  `json:"rules,omitempty"`
+	Count       int       `json:"count"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // RuleSet is the stored definition of a smart list.
@@ -178,4 +178,60 @@ type Session struct {
 	Minutes   int       `json:"minutes"`
 	Note      string    `json:"note"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Kinds of superlative on the "Your Gaming Problem" dashboard.
+const (
+	SuperlativeOldestUntouched = "oldest_untouched"
+	SuperlativeLongestUnplayed = "longest_unplayed"
+	SuperlativeNeglectedGenre  = "neglected_genre"
+	SuperlativeWorstPlatform   = "worst_platform"
+	SuperlativeNeglectedYear   = "neglected_year"
+)
+
+// InsightsHeadline is the top row of the dashboard: the size of the problem.
+type InsightsHeadline struct {
+	GamesOwned     int     `json:"games_owned"`
+	UnplayedGames  int     `json:"unplayed_games"`
+	HoursRemaining float64 `json:"hours_remaining"`
+	// YearsAtCurrentRate is how long the remaining hours take at the current
+	// 90-day pace. Null when there is no pace to project from.
+	YearsAtCurrentRate *float64 `json:"years_at_current_rate"`
+}
+
+// SuperlativePayload carries the numbers behind one superlative. Which fields
+// are set depends on the kind: game-backed stats fill Game/EntryID/AddedOn/
+// Hours, bucket stats (genre / platform / release year) fill the counts.
+type SuperlativePayload struct {
+	Game    *Game  `json:"game,omitempty"`
+	EntryID string `json:"entry_id,omitempty"`
+	// AddedOn is the date the game entered the library (YYYY-MM-DD).
+	AddedOn string `json:"added_on,omitempty"`
+	// Hours is the playtime figure the superlative turns on.
+	Hours *float64 `json:"hours,omitempty"`
+
+	// Name is the genre or platform name.
+	Name string `json:"name,omitempty"`
+	// Owned / Played count games for a bucket stat; a wishlist is not owned.
+	Owned  int `json:"owned,omitempty"`
+	Played int `json:"played,omitempty"`
+	// BacklogGames / BacklogHours size a platform's unplayed debt.
+	BacklogGames int     `json:"backlog_games,omitempty"`
+	BacklogHours float64 `json:"backlog_hours,omitempty"`
+	// Year is the release year the release-year stat is about.
+	Year *int `json:"year,omitempty"`
+}
+
+// Superlative is one ridiculous stat. Label is pre-rendered so the copy lives
+// in one place; the payload carries the raw numbers for clients that want them.
+type Superlative struct {
+	Kind    string             `json:"kind"`
+	Payload SuperlativePayload `json:"payload"`
+	Label   string             `json:"label"`
+}
+
+// Insights is the "Your Gaming Problem" dashboard payload.
+type Insights struct {
+	Headline     InsightsHeadline `json:"headline"`
+	Superlatives []Superlative    `json:"superlatives"`
 }

@@ -36,7 +36,7 @@ func (s *Server) handleAddSession(w http.ResponseWriter, r *http.Request) {
 		body.PlayedOn = time.Now().Format("2006-01-02")
 	}
 
-	session, err := s.store.AddSession(r.Context(), userID,
+	session, unlocks, err := s.store.AddSession(r.Context(), userID,
 		chi.URLParam(r, "entryID"), body.PlayedOn, body.Minutes, body.Note)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, errNotFound)
@@ -46,7 +46,7 @@ func (s *Server) handleAddSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, errorf(http.StatusBadRequest, err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusCreated, session)
+	writeJSON(w, http.StatusCreated, map[string]any{"session": session, "unlocks": unlocks})
 }
 
 func (s *Server) handleGetSessions(w http.ResponseWriter, r *http.Request) {

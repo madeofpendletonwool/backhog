@@ -9,6 +9,7 @@ import {
 import { Link } from "react-router-dom";
 
 import { GameCover } from "@/components/GameCover";
+import { SeasonCard } from "@/components/SeasonCard";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useInsights } from "@/hooks/useLibrary";
 import { accentStyle, formatHours } from "@/lib/format";
@@ -54,6 +55,7 @@ export function DashboardPage() {
       ) : (
         <div className="space-y-4">
           <Diagnosis insights={insights!} />
+          <SeasonCard />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {insights!.superlatives.map((superlative) => (
               <SuperlativeCard key={superlative.kind} superlative={superlative} />

@@ -321,3 +321,32 @@ type Insights struct {
 	Headline     InsightsHeadline `json:"headline"`
 	Superlatives []Superlative    `json:"superlatives"`
 }
+
+// Achievement is one catalogue entry, defined in code (internal/achievements).
+type Achievement struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	// Icon is a code key the client maps to an actual icon glyph.
+	Icon string `json:"icon"`
+}
+
+// AchievementStatus is an achievement plus the user's unlock state: locked
+// (UnlockedAt nil, no entry) or unlocked with the triggering game attached.
+type AchievementStatus struct {
+	Achievement
+	UnlockedAt *time.Time `json:"unlocked_at,omitempty"`
+	Entry      *Entry     `json:"entry,omitempty"`
+}
+
+// Season is the per-calendar-year "Backlog Challenge" rollup. It is derived
+// on demand — no table — from finishes, sessions, series completion, and
+// ownership ages.
+type Season struct {
+	Year              int     `json:"year"`
+	GamesCompleted    int     `json:"games_completed"`
+	HoursPlayed       float64 `json:"hours_played"`
+	FranchisesCleared int     `json:"franchises_cleared"`
+	// Rescues counts games finished after sitting owned for a year or more.
+	Rescues int `json:"rescues"`
+}

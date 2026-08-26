@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/collinpendleton/backhog/api/internal/achievements"
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
 
@@ -19,17 +20,22 @@ const maxSessionMinutes = 1440
 // Logging time on something still sitting in the backlog implies you've started
 // it, so the status moves to 'playing' and it leaves the queue — otherwise the
 // queue would keep suggesting a game you're already partway through.
-func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string, minutes int, note string) (models.Session, error) {
+//
+// The session also re-evaluates achievements: the final session is often logged
+// after the game was already marked played, and that late entry can be the one
+// that tips a completion-time predicate over its line. Newly unlocked
+// achievements are returned for the UI toast.
+func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string, minutes int, note string) (models.Session, []models.AchievementStatus, error) {
 	if minutes <= 0 || minutes > maxSessionMinutes {
-		return models.Session{}, fmt.Errorf("minutes must be between 1 and %d", maxSessionMinutes)
+		return models.Session{}, nil, fmt.Errorf("minutes must be between 1 and %d", maxSessionMinutes)
 	}
 	if _, err := time.Parse("2006-01-02", playedOn); err != nil {
-		return models.Session{}, fmt.Errorf("played_on must be a date like 2026-07-20")
+		return models.Session{}, nil, fmt.Errorf("played_on must be a date like 2026-07-20")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return models.Session{}, err
+		return models.Session{}, nil, err
 	}
 	defer tx.Rollback()
 
@@ -37,10 +43,10 @@ func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string
 	err = tx.QueryRowContext(ctx,
 		`SELECT status FROM library_entries WHERE user_id = ? AND id = ?`, userID, entryID).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
-		return models.Session{}, ErrNotFound
+		return models.Session{}, nil, ErrNotFound
 	}
 	if err != nil {
-		return models.Session{}, err
+		return models.Session{}, nil, err
 	}
 
 	session := models.Session{
@@ -51,7 +57,7 @@ func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string
 		VALUES (?, ?, ?, ?, ?, ?) RETURNING created_at`,
 		session.ID, userID, entryID, playedOn, minutes, note).Scan(&session.CreatedAt)
 	if err != nil {
-		return models.Session{}, err
+		return models.Session{}, nil, err
 	}
 
 	if status == models.StatusBacklog || status == models.StatusWishlist {
@@ -62,14 +68,19 @@ func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string
 			    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
 			    updated_at = CURRENT_TIMESTAMP
 			WHERE user_id = ? AND id = ?`, userID, entryID); err != nil {
-			return models.Session{}, err
+			return models.Session{}, nil, err
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return models.Session{}, err
+	newly, err := evaluateAchievementsTx(ctx, tx, userID, entryID, achievements.EventSession)
+	if err != nil {
+		return models.Session{}, nil, err
 	}
-	return session, nil
+
+	if err := tx.Commit(); err != nil {
+		return models.Session{}, nil, err
+	}
+	return session, s.hydrateUnlocks(ctx, userID, newly), nil
 }
 
 // Sessions returns an entry's logged sessions, newest first.

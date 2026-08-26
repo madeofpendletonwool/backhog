@@ -170,6 +170,24 @@ type DebtReport struct {
 	Projection DebtProjection `json:"projection"`
 }
 
+// TonightPick is one category's answer to "what should I play tonight?". The
+// reason is built server-side so the API stays the source of truth for why a
+// game was suggested.
+type TonightPick struct {
+	Entry  Entry   `json:"entry"`
+	Score  float64 `json:"score"`
+	Reason string  `json:"reason"`
+}
+
+// TonightPicksResult is the four-category answer to a time budget. Any category
+// is null when the library has nothing to offer it.
+type TonightPicksResult struct {
+	Continue *TonightPick `json:"continue"`
+	ShortWin *TonightPick `json:"short_win"`
+	Wildcard *TonightPick `json:"wildcard"`
+	Rescue   *TonightPick `json:"rescue"`
+}
+
 // Session is one manually logged stretch of play.
 type Session struct {
 	ID        string    `json:"id"`

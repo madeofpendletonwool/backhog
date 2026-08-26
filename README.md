@@ -21,7 +21,10 @@ actually get to them.
   game's detail page, and kept out of your backlog hours and completion percentage
 - **Playtime** — log sessions by hand, because a process watcher measures how
   long the game was *open*, not how long you actually played
-- **Pick for me** — a random backlog game, optionally "under 5 hours" or "85+"
+- **What should I play?** — give it tonight's time budget and get four picks
+  with human reasons: continue something, a short win that fits, a wildcard
+  you've never touched, and the longest-owned least-played rescue — or just
+  roll one at random
 - **Steam import** — bulk-import an owned library, matched to IGDB by appid
 - **Multi-user** — real accounts, fully isolated libraries, shared metadata cache
 

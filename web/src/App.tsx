@@ -11,6 +11,8 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { ListDetailPage } from "./pages/ListDetailPage";
 import { ListsPage } from "./pages/ListsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import { QueuePage } from "./pages/QueuePage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { SeriesDetailPage } from "./pages/SeriesDetailPage";
@@ -49,6 +51,8 @@ export function App() {
         <Route path="/debt" element={<DebtPage />} />
         <Route path="/lists" element={<ListsPage />} />
         <Route path="/lists/:listId" element={<ListDetailPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
         <Route path="/series" element={<SeriesPage />} />
         <Route path="/series/:seriesId" element={<SeriesDetailPage />} />
         <Route path="/achievements" element={<AchievementsPage />} />

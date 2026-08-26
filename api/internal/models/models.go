@@ -171,6 +171,73 @@ type DebtReport struct {
 	Projection DebtProjection `json:"projection"`
 }
 
+// Project kinds: what the target is measured against.
+const (
+	// ProjectChecklist is a curated member list; every member done = complete.
+	ProjectChecklist = "checklist"
+	// ProjectCountGoal is "finish N games"; the whole library counts.
+	ProjectCountGoal = "count_goal"
+	// ProjectRuleGoal is defined by a smart-list RuleSet; matching entries
+	// count, and the target is either target_count or every match.
+	ProjectRuleGoal = "rule_goal"
+)
+
+// AllProjectKinds lists every project kind, in display order.
+var AllProjectKinds = []string{ProjectChecklist, ProjectCountGoal, ProjectRuleGoal}
+
+// ValidProjectKind reports whether k is a known project kind.
+func ValidProjectKind(k string) bool {
+	for _, kind := range AllProjectKinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+// ProjectProgress is the computed state of a project's target, never stored:
+// how much of the target is done, in both games and estimated hours.
+type ProjectProgress struct {
+	// TargetCount is what "done" means: checklist members, count_goal
+	// target_count, or rule_goal target_count (falling back to the full match
+	// pool when no explicit target was set).
+	TargetCount int `json:"target_count"`
+	// CompletedCount is how many entries currently count as done. May exceed
+	// TargetCount for count goals set below the library's played total.
+	CompletedCount int `json:"completed_count"`
+	EstHoursTotal  float64 `json:"est_hours_total"`
+	EstHoursDone   float64 `json:"est_hours_done"`
+	// EstHoursRemaining is the estimated playtime left in the target set,
+	// floored at zero.
+	EstHoursRemaining float64 `json:"est_hours_remaining"`
+	// Percent is CompletedCount / TargetCount, capped at 100.
+	Percent float64 `json:"percent"`
+}
+
+// Project is a temporary objective. Lists answer "what exists"; projects
+// answer "what am I trying to accomplish", and they end.
+type Project struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Kind        string     `json:"kind"`
+	TargetCount *int       `json:"target_count,omitempty"`
+	Rules       *RuleSet   `json:"rules,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	// CompletedAt is stamped when the target is met (automatically on the next
+	// read) or manually when the user closes the project. Null = in progress.
+	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+	Progress    ProjectProgress `json:"progress"`
+}
+
+// ProjectItem is one member of a project view: an entry plus its manual
+// done override. Done is null when completion is derived from the entry's
+// status; it is only ever set for checklist members.
+type ProjectItem struct {
+	Entry Entry  `json:"entry"`
+	Done  *bool  `json:"done"`
+}
+
 // Play orders for a series journey.
 const (
 	PlayOrderRelease       = "release"

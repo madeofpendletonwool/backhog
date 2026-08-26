@@ -8,6 +8,9 @@ import type {
   NamedRef,
   PlayOrder,
   PlaySession,
+  Project,
+  ProjectItem,
+  ProjectKind,
   RuleSet,
   SearchResult,
   Season,
@@ -232,6 +235,58 @@ export const api = {
     }),
 
   smartFields: () => request<{ fields: SmartField[] }>("/lists/fields"),
+
+  // --- projects ---------------------------------------------------------
+  projects: () => request<{ projects: Project[] }>("/projects"),
+
+  createProject: (input: {
+    name: string;
+    description?: string;
+    kind: ProjectKind;
+    target_count?: number | null;
+    rules?: RuleSet;
+  }) => request<Project>("/projects", { method: "POST", body: body(input) }),
+
+  getProject: (id: string) =>
+    request<{ project: Project; items: ProjectItem[] }>(`/projects/${id}`),
+
+  updateProject: (
+    id: string,
+    patch: {
+      name?: string;
+      description?: string;
+      target_count?: number | null;
+      rules?: RuleSet;
+      completed?: boolean;
+    },
+  ) => request<Project>(`/projects/${id}`, { method: "PATCH", body: body(patch) }),
+
+  deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: "DELETE" }),
+
+  addProjectItem: (projectId: string, entry_id: string) =>
+    request<{ ok: boolean }>(`/projects/${projectId}/items`, {
+      method: "POST",
+      body: body({ entry_id }),
+    }),
+
+  removeProjectItem: (projectId: string, entryId: string) =>
+    request<void>(`/projects/${projectId}/items/${entryId}`, { method: "DELETE" }),
+
+  setProjectItemDone: (projectId: string, entryId: string, done: boolean | null) =>
+    request<{ ok: boolean }>(`/projects/${projectId}/items/${entryId}`, {
+      method: "PATCH",
+      body: body({ done }),
+    }),
+
+  reorderProjectItem: (projectId: string, entry_id: string, before_id: string, after_id: string) =>
+    request<{ ok: boolean }>(`/projects/${projectId}/reorder`, {
+      method: "POST",
+      body: body({ entry_id, before_id, after_id }),
+    }),
+
+  /** Which checklist projects a given entry belongs to. */
+  entryProjects: (id: string) =>
+    request<{ project_ids: string[] }>(`/library/${id}/projects`),
 };
 
 /** Cover images are served by our own API from the local cache. */

@@ -163,6 +163,21 @@ export interface PlaySession {
   created_at: string;
 }
 
+/** One category's answer to "what should I play tonight?". */
+export interface TonightPick {
+  entry: Entry;
+  score: number;
+  reason: string;
+}
+
+/** The four-category answer to a time budget; any category may be null. */
+export interface TonightPicks {
+  continue: TonightPick | null;
+  short_win: TonightPick | null;
+  wildcard: TonightPick | null;
+  rescue: TonightPick | null;
+}
+
 export interface SteamMatch {
   steam_name: string;
   app_id: number;
@@ -267,4 +282,51 @@ export interface SeriesDetail extends Series {
   remaining_hours: number;
   /** Unplayed owned DLC/expansion hours inside this series. */
   dlc_hours: number;
+}
+
+/** The top row of the "Your Gaming Problem" dashboard. */
+export interface InsightsHeadline {
+  games_owned: number;
+  unplayed_games: number;
+  hours_remaining: number;
+  /** Null when there is no play pace to project from. */
+  years_at_current_rate: number | null;
+}
+
+/**
+ * The numbers behind one superlative. Which fields are set depends on the
+ * kind — game-backed stats fill the game fields, bucket stats (genre /
+ * platform / release year) fill the counts.
+ */
+export interface SuperlativePayload {
+  game?: Game;
+  entry_id?: string;
+  /** Date the game entered the library (YYYY-MM-DD). */
+  added_on?: string;
+  hours?: number;
+  name?: string;
+  owned?: number;
+  played?: number;
+  backlog_games?: number;
+  backlog_hours?: number;
+  year?: number;
+}
+
+export type SuperlativeKind =
+  | "oldest_untouched"
+  | "longest_unplayed"
+  | "neglected_genre"
+  | "worst_platform"
+  | "neglected_year";
+
+export interface Superlative {
+  kind: SuperlativeKind;
+  payload: SuperlativePayload;
+  /** Pre-rendered by the backend so the copy lives in one place. */
+  label: string;
+}
+
+export interface Insights {
+  headline: InsightsHeadline;
+  superlatives: Superlative[];
 }

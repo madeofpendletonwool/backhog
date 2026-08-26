@@ -15,7 +15,7 @@ export interface LibraryParams {
 
 /** Invalidates every view whose contents depend on entry state. */
 function invalidateLibrary(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const key of ["library", "queue", "stats", "debt", "lists", "list", "entry", "facets", "series"]) {
+  for (const key of ["library", "queue", "stats", "debt", "insights", "lists", "list", "entry", "facets", "series"]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }
@@ -52,6 +52,10 @@ export function useStats() {
 
 export function useDebt() {
   return useQuery({ queryKey: ["debt"], queryFn: api.debt });
+}
+
+export function useInsights() {
+  return useQuery({ queryKey: ["insights"], queryFn: api.insights });
 }
 
 export function useFacets() {

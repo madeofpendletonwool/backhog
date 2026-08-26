@@ -5,6 +5,7 @@ import {
   Hourglass,
   Layers,
   ListOrdered,
+  Gauge,
   LayoutGrid,
   ListTree,
   LogOut,
@@ -24,7 +25,8 @@ import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
 
 const navItems = [
-  { to: "/", label: "Library", icon: LayoutGrid, end: true },
+  { to: "/", label: "Dashboard", icon: Gauge, end: true },
+  { to: "/library", label: "Library", icon: LayoutGrid, end: true },
   { to: "/queue", label: "Play Queue", icon: ListOrdered, end: false },
   { to: "/debt", label: "Backlog Debt", icon: Hourglass, end: false },
   { to: "/series", label: "Series", icon: Layers, end: false },
@@ -77,7 +79,7 @@ export function Layout() {
 
         <Button variant="secondary" className="mb-6 w-full" onClick={() => setPickOpen(true)}>
           <Dices className="size-4" />
-          Pick for me
+          What should I play?
         </Button>
 
         <nav className="space-y-0.5">
@@ -143,7 +145,11 @@ export function Layout() {
             <Settings className="size-4" />
           </NavLink>
         </nav>
-        <button onClick={() => setPickOpen(true)} className={mobileActionClass} aria-label="Pick for me">
+        <button
+          onClick={() => setPickOpen(true)}
+          className={mobileActionClass}
+          aria-label="What should I play?"
+        >
           <Dices className="size-4" />
         </button>
         <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>

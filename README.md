@@ -6,6 +6,10 @@ actually get to them.
 
 - **Library** — cover grid or dense table, filter by status, platform, genre,
   paged as it grows; your filters and sort are remembered between visits
+- **Dashboard** — "Your Gaming Problem": a diagnosis of the pile (games owned,
+  unplayed, hours owed, years at your pace) plus ridiculous superlatives — the
+  oldest game you never touched, the genre you keep buying but never playing,
+  the platform with the worst backlog
 - **Statuses** — backlog / playing / played / dropped / ignored, with automatic
   start and finish timestamps. *Ignored* is for games you own and have played but
   will never "beat" — endless titles that shouldn't sit in the backlog or drag
@@ -26,7 +30,10 @@ actually get to them.
   game's detail page, and kept out of your backlog hours and completion percentage
 - **Playtime** — log sessions by hand, because a process watcher measures how
   long the game was *open*, not how long you actually played
-- **Pick for me** — a random backlog game, optionally "under 5 hours" or "85+"
+- **What should I play?** — give it tonight's time budget and get four picks
+  with human reasons: continue something, a short win that fits, a wildcard
+  you've never touched, and the longest-owned least-played rescue — or just
+  roll one at random
 - **Steam import** — bulk-import an owned library, matched to IGDB by appid
 - **Multi-user** — real accounts, fully isolated libraries, shared metadata cache
 

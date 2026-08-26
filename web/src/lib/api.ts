@@ -3,6 +3,7 @@ import type {
   Entry,
   GameList,
   Game,
+  Insights,
   NamedRef,
   PlayOrder,
   PlaySession,
@@ -15,6 +16,7 @@ import type {
   Stats,
   Status,
   SteamMatch,
+  TonightPicks,
   User,
 } from "./types";
 
@@ -127,6 +129,8 @@ export const api = {
   seriesBackfillStatus: () =>
     request<{ running: boolean }>("/series/backfill"),
 
+  insights: () => request<Insights>("/library/insights"),
+
   // --- play sessions --------------------------------------------------
   sessions: (entryId: string) =>
     request<{ sessions: PlaySession[] }>(`/library/${entryId}/sessions`),
@@ -138,6 +142,13 @@ export const api = {
     request<void>(`/sessions/${sessionId}`, { method: "DELETE" }),
 
   // --- pick / import --------------------------------------------------
+  /** Tonight's picks: four explainable suggestions for a time budget. */
+  tonight: (minutes: number, exclude: string[] = []) => {
+    const query = new URLSearchParams({ minutes: String(minutes) });
+    if (exclude.length > 0) query.set("exclude", exclude.join(","));
+    return request<TonightPicks>(`/library/tonight?${query}`);
+  },
+
   pick: (params: { max_hours?: number; min_rating?: number; genre?: number }) => {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {

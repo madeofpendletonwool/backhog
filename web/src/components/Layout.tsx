@@ -77,7 +77,7 @@ export function Layout() {
 
         <Button variant="secondary" className="mb-6 w-full" onClick={() => setPickOpen(true)}>
           <Dices className="size-4" />
-          Pick for me
+          What should I play?
         </Button>
 
         <nav className="space-y-0.5">
@@ -143,7 +143,11 @@ export function Layout() {
             <Settings className="size-4" />
           </NavLink>
         </nav>
-        <button onClick={() => setPickOpen(true)} className={mobileActionClass} aria-label="Pick for me">
+        <button
+          onClick={() => setPickOpen(true)}
+          className={mobileActionClass}
+          aria-label="What should I play?"
+        >
           <Dices className="size-4" />
         </button>
         <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>

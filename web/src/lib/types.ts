@@ -163,6 +163,21 @@ export interface PlaySession {
   created_at: string;
 }
 
+/** One category's answer to "what should I play tonight?". */
+export interface TonightPick {
+  entry: Entry;
+  score: number;
+  reason: string;
+}
+
+/** The four-category answer to a time budget; any category may be null. */
+export interface TonightPicks {
+  continue: TonightPick | null;
+  short_win: TonightPick | null;
+  wildcard: TonightPick | null;
+  rescue: TonightPick | null;
+}
+
 export interface SteamMatch {
   steam_name: string;
   app_id: number;

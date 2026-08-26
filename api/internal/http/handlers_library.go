@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -261,6 +262,39 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, insights)
+}
+
+// handleTonight answers "I have N minutes, what should I play?" with one
+// explainable pick per category. `exclude` (comma-separated entry ids) drops
+// entries from candidacy, which is how the client re-rolls a category: exclude
+// what it just showed and ask again.
+func (s *Server) handleTonight(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+
+	q := r.URL.Query()
+	minutes := 90
+	if raw := q.Get("minutes"); raw != "" {
+		minutes, err = strconv.Atoi(raw)
+		if err != nil || minutes < 10 || minutes > 1440 {
+			fail(w, errorf(http.StatusBadRequest, "minutes must be between 10 and 1440"))
+			return
+		}
+	}
+	var exclude []string
+	if raw := q.Get("exclude"); raw != "" {
+		exclude = strings.Split(raw, ",")
+	}
+
+	picks, err := s.store.TonightPicks(r.Context(), userID, minutes, exclude)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, picks)
 }
 
 func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {

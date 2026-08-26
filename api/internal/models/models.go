@@ -164,10 +164,78 @@ type DebtReport struct {
 	// WishlistHours is null by design: a wishlist is a shopping list, not debt
 	// you owe yourself. The field stays in the shape so later work can fill it.
 	WishlistHours *float64 `json:"wishlist_hours"`
-	// DLCHours is null until a later franchises task adds DLC-aware debt.
+	// DLCHours is the unplayed add-on debt: DLC and expansions linked to games
+	// still in the backlog or being played. Null until any DLC links are known.
 	DLCHours   *float64       `json:"dlc_hours"`
 	Pace       Pace           `json:"pace"`
 	Projection DebtProjection `json:"projection"`
+}
+
+// Play orders for a series journey.
+const (
+	PlayOrderRelease       = "release"
+	PlayOrderChronological = "chronological"
+	PlayOrderRecommended   = "recommended"
+	PlayOrderCustom        = "custom"
+	PlayOrderGoodOnes      = "good_ones"
+)
+
+// AllPlayOrders lists every play order, in display order.
+var AllPlayOrders = []string{PlayOrderRelease, PlayOrderChronological, PlayOrderRecommended, PlayOrderCustom, PlayOrderGoodOnes}
+
+// ValidPlayOrder reports whether s is a known play order.
+func ValidPlayOrder(s string) bool {
+	for _, o := range AllPlayOrders {
+		if o == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Series is a franchise or collection from IGDB ("Mass Effect"), shared across
+// users like games are.
+type Series struct {
+	ID               string `json:"id"`
+	IGDBCollectionID *int64 `json:"igdb_collection_id"`
+	IGDBFranchiseID  *int64 `json:"igdb_franchise_id"`
+	Name             string `json:"name"`
+	Slug             string `json:"slug"`
+}
+
+// SeriesSummary is one row of the series index: a series the user owns at
+// least two games in, with its journey rolled up.
+type SeriesSummary struct {
+	Series
+	OwnedCount     int       `json:"owned_count"`
+	PlayedCount    int       `json:"played_count"`
+	Completion     float64   `json:"completion"`
+	RemainingHours float64   `json:"remaining_hours"`
+	NextGame       *NamedRef `json:"next_game"`
+}
+
+// SeriesMember is one game in a series, with the requesting user's state
+// attached. Status is "unowned" when the user has no library entry for it.
+type SeriesMember struct {
+	Game          Game     `json:"game"`
+	Kind          string   `json:"kind"` // game | dlc | expansion
+	Status        string   `json:"status"`
+	EntryID       string   `json:"entry_id,omitempty"`
+	Position      *float64 `json:"position,omitempty"` // set when custom-ordered
+	LoggedMinutes int      `json:"logged_minutes"`
+}
+
+// SeriesDetail is the full series view: settings plus the ordered journey.
+type SeriesDetail struct {
+	Series
+	PlayOrder      string         `json:"play_order"`
+	Members        []SeriesMember `json:"members"`
+	OwnedCount     int            `json:"owned_count"`
+	PlayedCount    int            `json:"played_count"`
+	Completion     float64        `json:"completion"`
+	RemainingHours float64        `json:"remaining_hours"`
+	// DLCHours is the unplayed owned DLC/expansion hours inside this series.
+	DLCHours float64 `json:"dlc_hours"`
 }
 
 // TonightPick is one category's answer to "what should I play tonight?". The

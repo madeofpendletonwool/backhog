@@ -3,6 +3,7 @@ import {
   Dices,
   Download,
   Hourglass,
+  Layers,
   ListOrdered,
   Gauge,
   LayoutGrid,
@@ -28,6 +29,7 @@ const navItems = [
   { to: "/library", label: "Library", icon: LayoutGrid, end: true },
   { to: "/queue", label: "Play Queue", icon: ListOrdered, end: false },
   { to: "/debt", label: "Backlog Debt", icon: Hourglass, end: false },
+  { to: "/series", label: "Series", icon: Layers, end: false },
   { to: "/lists", label: "Lists", icon: ListTree, end: false },
 ];
 

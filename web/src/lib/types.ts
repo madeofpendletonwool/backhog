@@ -148,7 +148,7 @@ export interface DebtReport {
   short_games_hours: number;
   /** Null by design: a wishlist is a shopping list, not debt you owe yourself. */
   wishlist_hours: number | null;
-  /** Null until DLC-aware debt lands. */
+  /** Unplayed add-on debt; null until any DLC links are known. */
   dlc_hours: number | null;
   pace: DebtPace;
   projection: DebtProjection;
@@ -221,6 +221,67 @@ export interface SmartField {
 export interface SearchResult {
   game: Game;
   in_library: boolean;
+}
+
+/** A franchise or collection ("Mass Effect"), shared across users. */
+export interface Series {
+  id: string;
+  igdb_collection_id: number | null;
+  igdb_franchise_id: number | null;
+  name: string;
+  slug: string;
+}
+
+/** One series in the index, with the journey rolled up. */
+export interface SeriesSummary extends Series {
+  owned_count: number;
+  played_count: number;
+  /** Played / owned as a percentage, one decimal. */
+  completion: number;
+  remaining_hours: number;
+  /** The first unplayed game in the user's chosen play order. */
+  next_game: NamedRef | null;
+}
+
+/** How a series journey is ordered. */
+export type PlayOrder =
+  | "release"
+  | "chronological"
+  | "recommended"
+  | "custom"
+  | "good_ones";
+
+export const PLAY_ORDERS: { value: PlayOrder; label: string }[] = [
+  { value: "release", label: "Release order" },
+  { value: "chronological", label: "Chronological (DLC with its game)" },
+  { value: "recommended", label: "Recommended (best first)" },
+  { value: "custom", label: "Custom (drag)" },
+  { value: "good_ones", label: "Just the good ones (IGDB ≥ 75)" },
+];
+
+/** How a member relates to the series. */
+export type SeriesMemberKind = "game" | "dlc" | "expansion";
+
+/** One game in a series; status is "unowned" when it isn't in the library. */
+export interface SeriesMember {
+  game: Game;
+  kind: SeriesMemberKind;
+  status: Status | "unowned";
+  entry_id?: string;
+  position?: number | null;
+  logged_minutes: number;
+}
+
+/** The full series view. */
+export interface SeriesDetail extends Series {
+  play_order: PlayOrder;
+  members: SeriesMember[];
+  owned_count: number;
+  played_count: number;
+  completion: number;
+  remaining_hours: number;
+  /** Unplayed owned DLC/expansion hours inside this series. */
+  dlc_hours: number;
 }
 
 /** The top row of the "Your Gaming Problem" dashboard. */

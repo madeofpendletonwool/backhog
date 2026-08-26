@@ -18,6 +18,7 @@ func TestCompileRulesRejectsUnsafeInput(t *testing.T) {
 		{"invalid enum value", models.Rule{Field: "status", Op: "eq", Value: "nonsense"}},
 		{"wrong value type for in", models.Rule{Field: "genre", Op: "in", Value: "RPG"}},
 		{"wrong value type for contains", models.Rule{Field: "name", Op: "contains", Value: 42}},
+		{"series only supports ref operators", models.Rule{Field: "series", Op: "gt", Value: "Mass Effect"}},
 	}
 
 	for _, tt := range tests {
@@ -73,6 +74,41 @@ func TestCompileRulesMatchAny(t *testing.T) {
 	}
 	if !strings.Contains(sql, " OR ") {
 		t.Errorf("match=any should join with OR: %s", sql)
+	}
+}
+
+// A series rule compiles to an EXISTS against the membership join table, with
+// the series names as parameters — never inlined into the query text.
+func TestCompileRulesSeriesRef(t *testing.T) {
+	rs := models.RuleSet{
+		Match: "all",
+		Rules: []models.Rule{
+			{Field: "series", Op: "in", Value: []any{"Mass Effect", "Dragon Age"}},
+		},
+	}
+	sql, args, err := compileRules(rs)
+	if err != nil {
+		t.Fatalf("compileRules: %v", err)
+	}
+	if !strings.Contains(sql, "EXISTS") || !strings.Contains(sql, "series_games") {
+		t.Errorf("series rule should compile to an EXISTS on series_games: %s", sql)
+	}
+	if strings.Contains(sql, "Mass Effect") {
+		t.Errorf("series value was interpolated into SQL: %s", sql)
+	}
+	if len(args) != 2 {
+		t.Errorf("got %d args, want 2: %v", len(args), args)
+	}
+
+	sql, _, err = compileRules(models.RuleSet{
+		Match: "all",
+		Rules: []models.Rule{{Field: "series", Op: "not_in", Value: []any{"Mass Effect"}}},
+	})
+	if err != nil {
+		t.Fatalf("compileRules: %v", err)
+	}
+	if !strings.Contains(sql, "NOT EXISTS") {
+		t.Errorf("not_in should negate the EXISTS: %s", sql)
 	}
 }
 

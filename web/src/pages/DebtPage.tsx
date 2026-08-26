@@ -77,7 +77,7 @@ function BreakdownTable({ debt }: { debt: DebtReport }) {
     { label: "Short games", hint: "Under 8 hours each", hours: debt.short_games_hours },
     // Deliberately not summed: these are shown as "—" until they mean something.
     { label: "Wishlist", hint: "A shopping list, not a debt", hours: debt.wishlist_hours },
-    { label: "DLC", hint: "Coming with franchises", hours: debt.dlc_hours },
+    { label: "DLC", hint: "Add-ons of games still owed", hours: debt.dlc_hours },
   ];
 
   return (

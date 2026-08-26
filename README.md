@@ -16,6 +16,11 @@ actually get to them.
   down your completion
 - **Play queue** — drag to reorder, or jump a game to the top/bottom (or nudge it
   up/down) with one click, with a running "how deep am I" hour count
+- **Series** — franchises and collections as first-class journeys: one Mass
+  Effect card instead of three rows, with completion, hours remaining, a
+  play-order selector (release, chronological with DLC nested under its game,
+  recommended, custom drag, or "just the good ones"), and DLC awareness that
+  feeds the backlog-debt breakdown
 - **Lists** — hand-curated and drag-sortable, or **smart lists** defined by rules
   that stay current on their own
 - **Per-game detail** — a full IGDB dossier (developer/publisher, platforms, game

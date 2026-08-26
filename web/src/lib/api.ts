@@ -5,9 +5,13 @@ import type {
   Game,
   Insights,
   NamedRef,
+  PlayOrder,
   PlaySession,
   RuleSet,
   SearchResult,
+  Series,
+  SeriesDetail,
+  SeriesSummary,
   SmartField,
   Stats,
   Status,
@@ -75,6 +79,8 @@ export const api = {
 
   getGame: (id: number) => request<Game>(`/games/${id}`),
 
+  gameSeries: (gameId: number) => request<{ series: Series[] }>(`/games/${gameId}/series`),
+
   // --- library --------------------------------------------------------
   library: (params: Record<string, string | number | undefined>) => {
     const query = new URLSearchParams();
@@ -99,6 +105,29 @@ export const api = {
   stats: () => request<Stats>("/library/stats"),
 
   debt: () => request<DebtReport>("/library/debt"),
+
+  // --- series ---------------------------------------------------------
+  seriesIndex: () => request<{ series: SeriesSummary[] }>("/series"),
+
+  seriesDetail: (id: string) => request<SeriesDetail>(`/series/${id}`),
+
+  setSeriesPlayOrder: (id: string, play_order: PlayOrder) =>
+    request<{ ok: boolean }>(`/series/${id}/order`, {
+      method: "PUT",
+      body: body({ play_order }),
+    }),
+
+  reorderSeries: (seriesId: string, game_id: number, before_id: number, after_id: number) =>
+    request<{ ok: boolean }>(`/series/${seriesId}/reorder`, {
+      method: "POST",
+      body: body({ game_id, before_id, after_id }),
+    }),
+
+  kickSeriesBackfill: () =>
+    request<{ started: boolean }>("/series/backfill", { method: "POST" }),
+
+  seriesBackfillStatus: () =>
+    request<{ running: boolean }>("/series/backfill"),
 
   insights: () => request<Insights>("/library/insights"),
 

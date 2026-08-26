@@ -12,6 +12,8 @@ import { ListsPage } from "./pages/ListsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { QueuePage } from "./pages/QueuePage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { SeriesDetailPage } from "./pages/SeriesDetailPage";
+import { SeriesPage } from "./pages/SeriesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
@@ -46,6 +48,8 @@ export function App() {
         <Route path="/debt" element={<DebtPage />} />
         <Route path="/lists" element={<ListsPage />} />
         <Route path="/lists/:listId" element={<ListDetailPage />} />
+        <Route path="/series" element={<SeriesPage />} />
+        <Route path="/series/:seriesId" element={<SeriesDetailPage />} />
         <Route path="/game/:entryId" element={<GameDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

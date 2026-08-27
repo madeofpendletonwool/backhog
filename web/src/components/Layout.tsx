@@ -12,6 +12,7 @@ import {
   Plus,
   Settings,
   Sparkles,
+  Target,
   Trophy,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -34,6 +35,7 @@ const navItems = [
   { to: "/series", label: "Series", icon: Layers, end: false },
   { to: "/achievements", label: "Achievements", icon: Trophy, end: false },
   { to: "/lists", label: "Lists", icon: ListTree, end: false },
+  { to: "/projects", label: "Projects", icon: Target, end: false },
 ];
 
 export function Layout() {

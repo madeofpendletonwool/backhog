@@ -356,3 +356,50 @@ export interface Season {
   /** Games finished after a year or more of ownership. */
   rescues: number;
 }
+
+/** A project kind: what the target is measured against. */
+export type ProjectKind = "checklist" | "count_goal" | "rule_goal";
+
+export const PROJECT_KIND_LABELS: Record<ProjectKind, string> = {
+  checklist: "Checklist",
+  count_goal: "Count goal",
+  rule_goal: "Rule goal",
+};
+
+/** The computed state of a project's target, served with every project read. */
+export interface ProjectProgress {
+  /** What "done" means: members, target_count, or the full match pool. */
+  target_count: number;
+  completed_count: number;
+  est_hours_total: number;
+  est_hours_done: number;
+  est_hours_remaining: number;
+  /** completed / target as a percentage, capped at 100. */
+  percent: number;
+}
+
+/**
+ * A temporary objective. Lists answer "what exists"; projects answer "what am
+ * I trying to accomplish", and they end.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  kind: ProjectKind;
+  target_count?: number | null;
+  rules?: RuleSet;
+  created_at: string;
+  /** Stamped when the target is met, or manually on close. Null = in progress. */
+  completed_at?: string | null;
+  progress: ProjectProgress;
+}
+
+/**
+ * One member of a project view. Done is the manual per-item override; null
+ * means completion derives from the entry's status (played = done).
+ */
+export interface ProjectItem {
+  entry: Entry;
+  done: boolean | null;
+}

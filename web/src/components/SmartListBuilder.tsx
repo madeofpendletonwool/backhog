@@ -1,7 +1,6 @@
-import { Plus, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 
-import { Button, Input, Select } from "./ui/primitives";
+import { Button, Input, Select, Gi } from "./ui/primitives";
 import { useSmartFields } from "@/hooks/useLists";
 import { STATUS_LABELS, type Rule, type RuleSet, type SmartField, type Status } from "@/lib/types";
 
@@ -131,7 +130,7 @@ export function SmartListBuilder({
                 aria-label="Remove condition"
                 className="rounded-lg p-1.5 text-ink-600 transition-colors hover:bg-white/[0.06] hover:text-red-400 focus-visible:focus-ring"
               >
-                <X className="size-4" />
+                <Gi name="x" className="size-4" />
               </button>
             </div>
           );
@@ -152,13 +151,13 @@ export function SmartListBuilder({
           ))}
         </Select>
         <Button size="sm" onClick={addRule} disabled={!newFieldKey}>
-          <Plus className="size-3.5" />
+          <Gi name="plus" className="size-3.5" />
           Add
         </Button>
       </div>
 
       <div className="flex items-center gap-2 border-t border-white/[0.06] pt-3 text-xs text-ink-400">
-        <Sparkles className="size-3.5 shrink-0 text-brand-400" />
+        <Gi name="sparkles" className="size-3.5 shrink-0 text-gold-bright" />
         <span>Sort by</span>
         <Select
           value={value.sort?.field ?? "added"}

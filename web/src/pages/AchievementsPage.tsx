@@ -1,8 +1,8 @@
-import { Lock, Trophy } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { GameCover } from "@/components/GameCover";
 import { achievementIcon } from "@/components/achievementIcons";
+import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useAchievements } from "@/hooks/useAchievements";
 import { formatDate } from "@/lib/format";
@@ -35,7 +35,7 @@ export function AchievementsPage() {
   if (achievements.length === 0) {
     return (
       <EmptyState
-        icon={<Trophy className="size-7" />}
+        icon={<Gi name="trophy" className="size-7" />}
         title="No achievements yet"
         description="The catalogue is empty — that shouldn't happen."
       />
@@ -64,7 +64,6 @@ export function AchievementsPage() {
 }
 
 function AchievementCard({ achievement }: { achievement: AchievementStatus }) {
-  const Icon = achievementIcon(achievement.icon);
   const unlockedAt = achievement.unlocked_at;
 
   return (
@@ -77,12 +76,12 @@ function AchievementCard({ achievement }: { achievement: AchievementStatus }) {
               : "bg-ink-850 text-ink-600 ring-white/[0.06]"
           }`}
         >
-          <Icon className="size-5" />
+          <Gi name={achievementIcon(achievement.icon)} className="size-5" />
         </div>
         {unlockedAt ? (
           <span className="text-[11px] font-medium text-ink-500">{formatDate(unlockedAt)}</span>
         ) : (
-          <Lock className="size-4 text-ink-600" />
+          <Gi name="lock" className="size-4 text-ink-600" />
         )}
       </div>
 

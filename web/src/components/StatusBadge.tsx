@@ -1,8 +1,12 @@
 import { cn } from "@/lib/cn";
-import { Ban, CheckCircle2, CircleDashed, Gift, PlayCircle, XCircle } from "lucide-react";
 
 import { STATUS_LABELS, type Status } from "@/lib/types";
+import { Gi } from "./ui/Gi";
+import type { GiName } from "@/lib/gameicons";
 
+/* Status colour carries meaning — playing is cyan, played is green — and
+   stays constant across every theme, the same way grimoire's corpus accent
+   never re-tints. Only the chrome around it follows the backdrop. */
 const statusStyles: Record<Status, string> = {
   backlog: "bg-slate-500/15 text-slate-300 ring-slate-400/25",
   playing: "bg-cyan-500/15 text-cyan-300 ring-cyan-400/30",
@@ -12,13 +16,13 @@ const statusStyles: Record<Status, string> = {
   wishlist: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
 };
 
-const statusIcons: Record<Status, typeof CircleDashed> = {
-  backlog: CircleDashed,
-  playing: PlayCircle,
-  played: CheckCircle2,
-  dropped: XCircle,
-  ignored: Ban,
-  wishlist: Gift,
+export const STATUS_ICONS: Record<Status, GiName> = {
+  backlog: "circle-dashed",
+  playing: "play",
+  played: "check-circle",
+  dropped: "x-circle",
+  ignored: "ban",
+  wishlist: "gift",
 };
 
 export function StatusBadge({
@@ -30,16 +34,15 @@ export function StatusBadge({
   className?: string;
   showLabel?: boolean;
 }) {
-  const Icon = statusIcons[status];
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+        "inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
         statusStyles[status],
         className,
       )}
     >
-      <Icon className="size-3" />
+      <Gi name={STATUS_ICONS[status]} className="size-3" />
       {showLabel && STATUS_LABELS[status]}
     </span>
   );

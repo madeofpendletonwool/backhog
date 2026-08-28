@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/cn";
-import { Clock, Dices, PlayCircle, RefreshCw, Swords, Trophy, Zap } from "lucide-react";
+import { Gi } from "./ui/Gi";
+import type { GiName } from "@/lib/gameicons";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -15,11 +16,11 @@ import type { Entry, TonightPick } from "@/lib/types";
 const PRESETS = [30, 60, 90, 120, 180];
 
 const CATEGORIES = [
-  { key: "continue", label: "Continue", icon: Swords, blurb: "Something in progress" },
-  { key: "short_win", label: "Short win", icon: Zap, blurb: "Fits in your budget" },
-  { key: "wildcard", label: "Wildcard", icon: Dices, blurb: "Never even started" },
-  { key: "rescue", label: "Backlog rescue", icon: Trophy, blurb: "Owned long, played little" },
-] as const;
+  { key: "continue", label: "Continue", icon: "swords", blurb: "Something in progress" },
+  { key: "short_win", label: "Short win", icon: "zap", blurb: "Fits in your budget" },
+  { key: "wildcard", label: "Wildcard", icon: "dices", blurb: "Never even started" },
+  { key: "rescue", label: "Backlog rescue", icon: "trophy", blurb: "Owned long, played little" },
+] as const satisfies { key: string; label: string; icon: GiName; blurb: string }[];
 
 type CategoryKey = (typeof CATEGORIES)[number]["key"];
 type Excludes = Record<CategoryKey, string[]>;
@@ -80,7 +81,7 @@ export function PickDialog({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Dialog open={open} onClose={onClose} label="What should I play?" className="max-w-2xl">
       <h2 className="flex items-center gap-2 text-lg font-semibold text-ink-100">
-        <Dices className="size-5 text-brand-400" />
+        <Gi name="dices" className="size-5 text-gold-bright" />
         What should I play?
       </h2>
       <p className="mt-1 text-sm text-ink-400">Tonight's picks for {budgetLabel}.</p>
@@ -101,7 +102,7 @@ export function PickDialog({ open, onClose }: { open: boolean; onClose: () => vo
           </button>
         ))}
         <label className="flex h-8 items-center gap-1.5 rounded-lg bg-ink-850 px-3 text-xs text-ink-400">
-          <Clock className="size-3.5" />
+          <Gi name="clock" className="size-3.5" />
           <input
             type="number"
             min={10}
@@ -123,12 +124,12 @@ export function PickDialog({ open, onClose }: { open: boolean; onClose: () => vo
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {picks.isLoading || !picks.data
           ? CATEGORIES.map((category) => <PickCardSkeleton key={category.key} />)
-          : CATEGORIES.map(({ key, label, blurb, icon: Icon }) => (
+          : CATEGORIES.map(({ key, label, blurb, icon }) => (
               <PickCard
                 key={key}
                 label={label}
                 blurb={blurb}
-                icon={<Icon className="size-3.5" />}
+                icon={<Gi name={icon} className="size-3.5" />}
                 pick={picks.data[key]}
                 onReroll={() => reroll(key)}
                 onPlay={play}
@@ -148,7 +149,7 @@ export function PickDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <PickCard
             label="Just rolled"
             blurb="Straight from the whole backlog"
-            icon={<Dices className="size-3.5" />}
+            icon={<Gi name="dices" className="size-3.5" />}
             pick={{ entry: roll.data, score: 0, reason: "Picked at random — no thinking involved." }}
             onPlay={play}
             playing={update.isPending}
@@ -166,7 +167,7 @@ export function PickDialog({ open, onClose }: { open: boolean; onClose: () => vo
           onClick={() => roll.mutate()}
           disabled={roll.data != null}
         >
-          <RefreshCw className="size-4" />
+          <Gi name="refresh" className="size-4" />
           Just roll one
         </Button>
       </div>
@@ -225,12 +226,12 @@ function PickCard({
                   loading={playing}
                   onClick={() => onPlay(pick.entry)}
                 >
-                  <PlayCircle className="size-3.5" />
+                  <Gi name="play" className="size-3.5" />
                   Play it
                 </Button>
                 {onReroll && (
                   <Button size="sm" variant="ghost" onClick={onReroll} aria-label={`Reroll ${label}`}>
-                    <RefreshCw className="size-3.5" />
+                    <Gi name="refresh" className="size-3.5" />
                   </Button>
                 )}
               </div>

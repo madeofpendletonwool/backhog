@@ -1,17 +1,9 @@
 import { cn } from "@/lib/cn";
-import { Ban, CheckCircle2, CircleDashed, Gift, PlayCircle, XCircle } from "lucide-react";
 
 import { useUpdateEntry } from "@/hooks/useLibrary";
 import { QUICK_STATUSES, STATUS_LABELS, type Entry, type Status } from "@/lib/types";
-
-const icons: Record<Status, typeof CircleDashed> = {
-  backlog: CircleDashed,
-  playing: PlayCircle,
-  played: CheckCircle2,
-  dropped: XCircle,
-  ignored: Ban,
-  wishlist: Gift,
-};
+import { STATUS_ICONS } from "./StatusBadge";
+import { Gi } from "./ui/Gi";
 
 const activeStyles: Record<Status, string> = {
   backlog: "bg-slate-500 text-white",
@@ -45,13 +37,12 @@ export function StatusMenu({
       role="group"
       aria-label={`Status for ${entry.game.name}`}
       className={cn(
-        "gap-0.5 rounded-xl bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
+        "gap-0.5 bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
         size === "md" ? "grid grid-cols-3 sm:flex sm:items-center" : "flex items-center",
         update.isPending && "opacity-60",
       )}
     >
       {statuses.map((status) => {
-        const Icon = icons[status];
         const isActive = entry.status === status;
         return (
           <button
@@ -68,7 +59,7 @@ export function StatusMenu({
               update.mutate({ id: entry.id, patch: { status } });
             }}
             className={cn(
-              "flex flex-1 items-center justify-center rounded-lg transition-colors",
+              "flex flex-1 items-center justify-center transition-colors",
               size === "sm" ? "h-7" : "h-8 px-3",
               isActive
                 ? activeStyles[status]
@@ -76,7 +67,7 @@ export function StatusMenu({
               "focus-visible:focus-ring disabled:cursor-not-allowed",
             )}
           >
-            <Icon className="size-3.5" />
+            <Gi name={STATUS_ICONS[status]} className="size-3.5" />
             {size === "md" && <span className="ml-1.5 text-xs font-medium">{STATUS_LABELS[status]}</span>}
           </button>
         );

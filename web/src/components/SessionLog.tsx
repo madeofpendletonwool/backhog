@@ -1,8 +1,7 @@
 import { cn } from "@/lib/cn";
-import { Clock, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
-import { Button, Input, Panel } from "./ui/primitives";
+import { Button, Input, Panel, Gi } from "./ui/primitives";
 import { useAddSession, useDeleteSession, useSessions } from "@/hooks/useSessions";
 import { formatHours } from "@/lib/format";
 import type { Entry } from "@/lib/types";
@@ -91,7 +90,7 @@ export function SessionLog({ entry }: { entry: Entry }) {
         </div>
         {!open && (
           <Button size="sm" onClick={() => setOpen(true)}>
-            <Plus className="size-3.5" />
+            <Gi name="plus" className="size-3.5" />
             Log
           </Button>
         )}
@@ -100,7 +99,7 @@ export function SessionLog({ entry }: { entry: Entry }) {
       {/* Progress against the estimate, when we have one to compare to. */}
       {totalMinutes > 0 && estimate ? (
         <div
-          className="mb-4 h-1.5 overflow-hidden rounded-full bg-ink-800"
+          className="f-bar mb-4 h-3"
           role="progressbar"
           aria-valuenow={Math.min(Math.round((totalMinutes * 60 * 100) / estimate), 100)}
           aria-valuemin={0}
@@ -191,7 +190,7 @@ export function SessionLog({ entry }: { entry: Entry }) {
               key={session.id}
               className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-white/[0.04]"
             >
-              <Clock className="size-3.5 shrink-0 text-ink-600" />
+              <Gi name="clock" className="size-3.5 shrink-0 text-ink-600" />
               <span className="shrink-0 tabular-nums text-ink-200">
                 {formatMinutes(session.minutes)}
               </span>
@@ -206,7 +205,7 @@ export function SessionLog({ entry }: { entry: Entry }) {
                 aria-label="Delete session"
                 className="ml-auto shrink-0 rounded p-1 text-ink-700 opacity-0 transition-opacity hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
               >
-                <Trash2 className="size-3.5" />
+                <Gi name="trash" className="size-3.5" />
               </button>
             </li>
           ))}

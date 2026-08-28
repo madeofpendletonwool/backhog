@@ -1,7 +1,7 @@
 import { cn } from "@/lib/cn";
-import { X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Gi } from "./Gi";
 
 interface DialogProps {
   open: boolean;
@@ -88,9 +88,9 @@ export function Dialog({ open, onClose, children, className, bare, label }: Dial
           <button
             onClick={onClose}
             aria-label="Close"
-            className="absolute right-4 top-4 rounded-lg p-1.5 text-ink-500 transition-colors hover:bg-white/[0.06] hover:text-ink-200 focus-visible:focus-ring"
+            className="absolute right-4 top-4 p-1.5 text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring"
           >
-            <X className="size-4" />
+            <Gi name="x" className="size-4" />
           </button>
         )}
         {children}

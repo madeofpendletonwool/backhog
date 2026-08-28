@@ -1,22 +1,10 @@
 import { cn } from "@/lib/cn";
-import {
-  ArrowLeft,
-  Building2,
-  Calendar,
-  Clock,
-  ExternalLink,
-  Film,
-  Layers,
-  Plus,
-  Star,
-  Trash2,
-  Trophy,
-} from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { GameCover } from "@/components/GameCover";
 import { StatusMenu } from "@/components/StatusMenu";
+import { Gi } from "@/components/ui/Gi";
 import { Button, Panel, Select, Skeleton } from "@/components/ui/primitives";
 import { CreateListDialog } from "@/components/CreateListDialog";
 import { SessionLog } from "@/components/SessionLog";
@@ -98,7 +86,7 @@ export function GameDetailPage() {
             to="/"
             className="mb-6 inline-flex items-center gap-1.5 rounded-lg text-sm text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring"
           >
-            <ArrowLeft className="size-4" />
+            <Gi name="arrow-left" className="size-4" />
             Library
           </Link>
 
@@ -115,37 +103,37 @@ export function GameDetailPage() {
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-ink-300">
                 {(releaseDate(game) || releaseYear(game)) && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Calendar className="size-4 text-ink-500" />
+                    <Gi name="calendar" className="size-4 text-ink-500" />
                     {releaseDate(game) || releaseYear(game)}
                   </span>
                 )}
                 {extras?.developer && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Building2 className="size-4 text-ink-500" />
+                    <Gi name="building" className="size-4 text-ink-500" />
                     {extras.developer}
                   </span>
                 )}
                 {game.time_to_beat_main && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Clock className="size-4 text-ink-500" />
+                    <Gi name="clock" className="size-4 text-ink-500" />
                     {formatDuration(game.time_to_beat_main)} to beat
                   </span>
                 )}
                 {game.time_to_beat_complete && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Clock className="size-4 text-ink-500" />
+                    <Gi name="clock" className="size-4 text-ink-500" />
                     {formatDuration(game.time_to_beat_complete)} to 100%
                   </span>
                 )}
                 {game.igdb_rating != null && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Trophy className="size-4 text-ink-500" />
+                    <Gi name="trophy" className="size-4 text-ink-500" />
                     {Math.round(game.igdb_rating)} on IGDB
                   </span>
                 )}
                 {extras?.aggregated_rating != null && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Star className="size-4 text-ink-500" />
+                    <Gi name="star" className="size-4 text-ink-500" />
                     {Math.round(extras.aggregated_rating)} critics
                   </span>
                 )}
@@ -226,9 +214,9 @@ export function GameDetailPage() {
                     rel="noreferrer"
                     className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-white/[0.05] hover:text-ink-100 focus-visible:focus-ring"
                   >
-                    <Film className="size-4 shrink-0 text-ink-500" />
+                    <Gi name="film" className="size-4 shrink-0 text-ink-500" />
                     <span className="min-w-0 flex-1 truncate">{video.name}</span>
-                    <ExternalLink className="size-3.5 shrink-0 text-ink-600" />
+                    <Gi name="external-link" className="size-3.5 shrink-0 text-ink-600" />
                   </a>
                 ))}
               </div>
@@ -333,7 +321,7 @@ export function GameDetailPage() {
                     className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-white/[0.05] hover:text-ink-100 focus-visible:focus-ring"
                   >
                     <span className="min-w-0 flex-1 truncate">{websiteLabel(site.url)}</span>
-                    <ExternalLink className="size-3.5 shrink-0 text-ink-600" />
+                    <Gi name="external-link" className="size-3.5 shrink-0 text-ink-600" />
                   </a>
                 ))}
               </div>
@@ -345,7 +333,7 @@ export function GameDetailPage() {
             className="w-full text-red-400 hover:bg-red-500/10 hover:text-red-300"
             onClick={() => setConfirmDelete(true)}
           >
-            <Trash2 className="size-4" />
+            <Gi name="trash" className="size-4" />
             Remove from library
           </Button>
         </div>
@@ -392,7 +380,7 @@ function ListMembership({ entry }: { entry: Entry }) {
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-ink-200">Lists</h2>
         <Button size="sm" variant="ghost" onClick={() => setCreating(true)}>
-          <Plus className="size-3.5" />
+          <Gi name="plus" className="size-3.5" />
           New
         </Button>
       </div>
@@ -494,7 +482,7 @@ function GameSeriesChips({ gameId }: { gameId: number }) {
           to={`/series/${s.id}`}
           className="inline-flex items-center gap-1.5 rounded-full bg-brand-600/15 px-2.5 py-1 text-xs font-medium text-brand-300 ring-1 ring-inset ring-brand-500/25 transition-colors hover:bg-brand-600/25 hover:text-brand-200 focus-visible:focus-ring"
         >
-          <Layers className="size-3" />
+          <Gi name="layers" className="size-3" />
           {s.name}
         </Link>
       ))}
@@ -576,8 +564,8 @@ function RelatedGames({ title, games }: { title: string; games: RelatedGame[] })
                 className="aspect-[3/4] w-full rounded-lg object-cover ring-1 ring-white/[0.07]"
               />
             ) : (
-              <div className="flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-ink-800 text-2xl ring-1 ring-white/[0.07]">
-                🐗
+              <div className="flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-ink-800 ring-1 ring-white/[0.07]">
+                <Gi name="gamepad" className="size-6 text-ink-500" />
               </div>
             )}
             <p className="mt-1.5 line-clamp-2 text-[11px] leading-tight text-ink-400">{related.name}</p>
@@ -634,7 +622,7 @@ function RatingPicker({
       <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
         {value != null ? (
           <>
-            <Star className="size-3 fill-amber-300 text-amber-300" />
+            <Gi name="star" className="size-3 text-amber-300" />
             You rated this {value}/10 — click again to clear
           </>
         ) : (

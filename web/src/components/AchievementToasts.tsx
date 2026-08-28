@@ -1,9 +1,9 @@
-import { Trophy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { GameCover } from "@/components/GameCover";
 import { achievementIcon } from "@/components/achievementIcons";
+import { Gi } from "@/components/ui/Gi";
 import { UNLOCK_EVENT } from "@/hooks/useAchievements";
 import type { AchievementStatus } from "@/lib/types";
 
@@ -52,16 +52,14 @@ export function AchievementToasts() {
 }
 
 function ToastCard({ toast }: { toast: Toast }) {
-  const Icon = achievementIcon(toast.icon);
-
   return (
-    <div className="animate-fade-rise pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-2xl border border-brand-400/25 bg-ink-900/95 p-3 shadow-xl shadow-black/40 backdrop-blur-xl">
-      <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand-600/20 text-brand-300 ring-1 ring-brand-400/30">
-        <Icon className="size-5" />
+    <div className="f-panel animate-fade-rise pointer-events-auto flex w-full max-w-sm items-center gap-3 p-3">
+      <div className="f-chip flex size-12 shrink-0 items-center justify-center text-gold-bright">
+        <Gi name={achievementIcon(toast.icon)} className="size-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-brand-300">
-          <Trophy className="size-3" />
+        <p className="flex items-center gap-1.5 font-pixel text-[10px] font-bold uppercase tracking-wider text-gold-bright">
+          <Gi name="trophy" className="size-3" />
           Achievement unlocked
         </p>
         <p className="mt-0.5 truncate text-sm font-semibold text-ink-100">{toast.title}</p>

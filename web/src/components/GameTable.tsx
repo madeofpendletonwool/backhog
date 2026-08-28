@@ -1,8 +1,8 @@
-import { Star } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { GameCover } from "./GameCover";
 import { StatusBadge } from "./StatusBadge";
+import { Gi } from "./ui/Gi";
 import { accentStyle, formatDuration, relativeTime, releaseYear } from "@/lib/format";
 import type { Entry } from "@/lib/types";
 
@@ -53,7 +53,7 @@ export function GameTable({ entries }: { entries: Entry[] }) {
                 <td className="px-4 py-2.5 text-right">
                   {entry.user_rating != null ? (
                     <span className="inline-flex items-center gap-1 tabular-nums text-amber-300">
-                      <Star className="size-3 fill-amber-300" />
+                      <Gi name="star" className="size-3" />
                       {entry.user_rating}
                     </span>
                   ) : entry.game.igdb_rating != null ? (

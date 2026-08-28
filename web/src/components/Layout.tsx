@@ -1,20 +1,4 @@
 import { cn } from "@/lib/cn";
-import {
-  Dices,
-  Download,
-  Hourglass,
-  Layers,
-  ListOrdered,
-  Gauge,
-  LayoutGrid,
-  ListTree,
-  LogOut,
-  Plus,
-  Settings,
-  Sparkles,
-  Target,
-  Trophy,
-} from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
@@ -22,20 +6,22 @@ import { AchievementToasts } from "./AchievementToasts";
 import { AddGameDialog } from "./AddGameDialog";
 import { PickDialog } from "./PickDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
-import { Button } from "./ui/primitives";
+import { Button, Gi } from "./ui/primitives";
+import { Sprite } from "./ui/Sprite";
 import { useAuth } from "@/hooks/useAuth";
 import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
+import type { GiName } from "@/lib/gameicons";
 
-const navItems = [
-  { to: "/", label: "Dashboard", icon: Gauge, end: true },
-  { to: "/library", label: "Library", icon: LayoutGrid, end: true },
-  { to: "/queue", label: "Play Queue", icon: ListOrdered, end: false },
-  { to: "/debt", label: "Backlog Debt", icon: Hourglass, end: false },
-  { to: "/series", label: "Series", icon: Layers, end: false },
-  { to: "/achievements", label: "Achievements", icon: Trophy, end: false },
-  { to: "/lists", label: "Lists", icon: ListTree, end: false },
-  { to: "/projects", label: "Projects", icon: Target, end: false },
+const navItems: { to: string; label: string; icon: GiName; end: boolean }[] = [
+  { to: "/", label: "Dashboard", icon: "gauge", end: true },
+  { to: "/library", label: "Library", icon: "layout-grid", end: true },
+  { to: "/queue", label: "Play Queue", icon: "list-ordered", end: false },
+  { to: "/debt", label: "Backlog Debt", icon: "hourglass", end: false },
+  { to: "/series", label: "Series", icon: "layers", end: false },
+  { to: "/achievements", label: "Achievements", icon: "trophy", end: false },
+  { to: "/lists", label: "Lists", icon: "list-tree", end: false },
+  { to: "/projects", label: "Projects", icon: "target", end: false },
 ];
 
 export function Layout() {
@@ -63,34 +49,36 @@ export function Layout() {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-white/[0.06] bg-ink-900/50 px-3 py-5 backdrop-blur-xl lg:flex">
-        <div className="flex items-center gap-2.5 px-2 pb-6">
-          <span className="text-2xl leading-none">🐗</span>
+      <aside className="f-panel fixed inset-y-2 left-2 z-20 hidden w-60 flex-col px-3 py-5 lg:flex">
+        <div className="flex items-center gap-3 px-2 pb-6">
+          <Sprite name="stick" />
           <div>
-            <p className="text-[15px] font-semibold tracking-tight text-ink-100">Backhog</p>
-            <p className="text-[11px] text-ink-500">
-              {stats ? `${stats.backlog} in the backlog` : " "}
+            <p className="font-pixel text-[13px] font-bold uppercase tracking-widest text-ink-100">
+              Backhog
+            </p>
+            <p className="mt-1 font-pixel text-[9px] uppercase tracking-wider text-ink-400">
+              {stats ? `${stats.backlog} in the backlog` : "\u00a0"}
             </p>
           </div>
         </div>
 
-        <Button variant="primary" className="mb-6 w-full" onClick={() => setAddOpen(true)}>
-          <Plus className="size-4" />
+        <Button variant="primary" className="mb-4 w-full" onClick={() => setAddOpen(true)}>
+          <Gi name="plus" className="size-3.5" />
           Add game
-          <kbd className="ml-auto rounded border border-white/20 px-1.5 py-0.5 font-sans text-[10px] text-white/70">
+          <kbd className="ml-auto rounded-[2px] bg-black/20 px-1.5 py-0.5 font-sans text-[10px] font-normal normal-case tracking-normal text-black/60">
             ⌘K
           </kbd>
         </Button>
 
         <Button variant="secondary" className="mb-6 w-full" onClick={() => setPickOpen(true)}>
-          <Dices className="size-4" />
+          <Gi name="dices" className="size-3.5" />
           What should I play?
         </Button>
 
-        <nav className="space-y-0.5">
-          {navItems.map(({ to, label, icon: Icon, end }) => (
+        <nav className="space-y-1">
+          {navItems.map(({ to, label, icon, end }) => (
             <NavLink key={to} to={to} end={end} className={navLinkClass}>
-              <Icon className="size-4" />
+              <Gi name={icon} className="size-4" />
               {label}
             </NavLink>
           ))}
@@ -98,15 +86,15 @@ export function Layout() {
 
         {smartLists.length > 0 && (
           <div className="mt-7">
-            <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-500">
+            <p className="px-2 pb-2 font-pixel text-[9px] font-bold uppercase tracking-widest text-ink-400">
               Smart lists
             </p>
-            <div className="space-y-0.5">
+            <div className="space-y-1">
               {smartLists.map((list) => (
                 <NavLink key={list.id} to={`/lists/${list.id}`} className={navLinkClass}>
-                  <Sparkles className="size-3.5 shrink-0 text-brand-400" />
+                  <Gi name="sparkles" className="size-3.5 shrink-0 text-gold-bright" />
                   <span className="truncate">{list.name}</span>
-                  <span className="ml-auto shrink-0 text-[11px] tabular-nums text-ink-500">
+                  <span className="ml-auto shrink-0 font-pixel text-[10px] tabular-nums text-ink-400">
                     {list.count}
                   </span>
                 </NavLink>
@@ -115,13 +103,13 @@ export function Layout() {
           </div>
         )}
 
-        <div className="mt-auto space-y-0.5 border-t border-white/[0.06] pt-3">
+        <div className="mt-auto space-y-1 border-t-2 border-line pt-3">
           <button onClick={() => setImportOpen(true)} className={actionLinkClass}>
-            <Download className="size-4" />
+            <Gi name="download" className="size-4" />
             Import from Steam
           </button>
           <NavLink to="/settings" className={navLinkClass}>
-            <Settings className="size-4" />
+            <Gi name="settings" className="size-4" />
             <span className="truncate">{user?.username}</span>
           </NavLink>
           <button
@@ -129,41 +117,41 @@ export function Layout() {
               await logout();
               navigate("/login");
             }}
-            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-ink-400 transition-colors hover:bg-white/[0.05] hover:text-ink-100 focus-visible:focus-ring"
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring"
           >
-            <LogOut className="size-4" />
+            <Gi name="log-out" className="size-4" />
             Sign out
           </button>
         </div>
       </aside>
 
       {/* Mobile top bar; the sidebar collapses away below lg. */}
-      <header className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-white/[0.06] bg-ink-950/85 px-4 py-2.5 backdrop-blur-xl lg:hidden">
-        <span className="text-xl">🐗</span>
+      <header className="f-panel fixed inset-x-2 top-2 z-30 flex items-center gap-1 px-3 py-1.5 lg:hidden">
+        <Sprite name="ball" className="h-8 w-8 shrink-0" />
         <nav className="flex flex-1 items-center gap-1 overflow-x-auto">
-          {navItems.map(({ to, label, icon: Icon, end }) => (
+          {navItems.map(({ to, label, icon, end }) => (
             <NavLink key={to} to={to} end={end} className={mobileLinkClass} title={label}>
-              <Icon className="size-4" />
+              <Gi name={icon} className="size-4" />
             </NavLink>
           ))}
           <NavLink to="/settings" className={mobileLinkClass} title="Settings">
-            <Settings className="size-4" />
+            <Gi name="settings" className="size-4" />
           </NavLink>
         </nav>
         <button
           onClick={() => setPickOpen(true)}
-          className={mobileActionClass}
+          className="p-2 text-ink-400 transition-colors hover:text-ink-100"
           aria-label="What should I play?"
         >
-          <Dices className="size-4" />
+          <Gi name="dices" className="size-4" />
         </button>
         <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>
-          <Plus className="size-4" />
+          <Gi name="plus" className="size-3.5" />
           Add
         </Button>
       </header>
 
-      <main className="min-w-0 flex-1 pt-16 lg:pl-60 lg:pt-0">
+      <main className="min-w-0 flex-1 pt-20 lg:pl-[17rem] lg:pt-0">
         <Outlet context={{ openAddDialog: () => setAddOpen(true) }} />
       </main>
 
@@ -177,19 +165,14 @@ export function Layout() {
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors focus-visible:focus-ring",
+    "flex items-center gap-2.5 px-3 py-2 text-sm transition-colors focus-visible:focus-ring",
     isActive
-      ? "bg-white/[0.08] font-medium text-ink-100"
-      : "text-ink-400 hover:bg-white/[0.05] hover:text-ink-200",
+      ? "f-panel-active font-medium text-ink-100"
+      : "text-ink-400 hover:text-ink-200",
   );
-
-const mobileActionClass = "rounded-lg p-2 text-ink-400 transition-colors hover:text-ink-100";
 
 const actionLinkClass =
-  "flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-ink-400 transition-colors hover:bg-white/[0.05] hover:text-ink-200 focus-visible:focus-ring";
+  "flex w-full items-center gap-2.5 px-3 py-2 text-sm text-ink-400 transition-colors hover:text-ink-200 focus-visible:focus-ring";
 
 const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
-  cn(
-    "rounded-lg p-2 transition-colors",
-    isActive ? "bg-white/[0.08] text-ink-100" : "text-ink-400",
-  );
+  cn("p-2 transition-colors", isActive ? "text-gold-bright" : "text-ink-400");

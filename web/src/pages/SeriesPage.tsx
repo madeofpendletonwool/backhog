@@ -1,6 +1,6 @@
-import { Layers, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import {
   useKickSeriesBackfill,
@@ -45,7 +45,7 @@ export function SeriesPage() {
             onClick={() => kick.mutate()}
             title="Re-link series from IGDB"
           >
-            <RefreshCw className="size-4" />
+            <Gi name="refresh" className="size-4" />
             Refresh
           </Button>
         )}
@@ -65,7 +65,7 @@ export function SeriesPage() {
         </div>
       ) : series.length === 0 ? (
         <EmptyState
-          icon={<Layers className="size-7" />}
+          icon={<Gi name="layers" className="size-7" />}
           title="No series yet"
           description={
             (stats?.total ?? 0) > 0
@@ -75,7 +75,7 @@ export function SeriesPage() {
           action={
             (stats?.total ?? 0) > 0 ? (
               <Button variant="primary" loading={kick.isPending || walking} onClick={() => kick.mutate()}>
-                <RefreshCw className="size-4" />
+                <Gi name="refresh" className="size-4" />
                 Build series data
               </Button>
             ) : undefined
@@ -93,9 +93,9 @@ export function SeriesPage() {
                   </span>
                 </div>
 
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-ink-800">
+                <div className="f-bar mt-3 h-3">
                   <div
-                    className="h-full rounded-full bg-brand-500 transition-[width]"
+                    className="h-full bg-brand-500 transition-[width]"
                     style={{ width: `${Math.min(s.completion, 100)}%` }}
                   />
                 </div>

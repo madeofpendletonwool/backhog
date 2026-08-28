@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, Download, Loader2 } from "lucide-react";
+import { Gi } from "./ui/Gi";
+import { LoadingDot } from "./ui/primitives";
 import { useState } from "react";
 
 import { Button, Input, Select } from "./ui/primitives";
@@ -102,7 +103,7 @@ export function SteamImportDialog({ open, onClose }: { open: boolean; onClose: (
       {runImport.isSuccess ? (
         <div className="py-10 text-center">
           <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-300">
-            <Check className="size-7" />
+            <Gi name="check" className="size-7" />
           </div>
           <p className="text-sm font-medium text-ink-100">
             Added {runImport.data.added} game{runImport.data.added === 1 ? "" : "s"}
@@ -206,7 +207,7 @@ export function SteamImportDialog({ open, onClose }: { open: boolean; onClose: (
                     disabled={selected.size === 0}
                     onClick={() => runImport.mutate()}
                   >
-                    <Download className="size-4" />
+                    <Gi name="download" className="size-4" />
                     Import {selected.size}
                   </Button>
                 </div>
@@ -222,7 +223,7 @@ export function SteamImportDialog({ open, onClose }: { open: boolean; onClose: (
 
           {preview.isPending && (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-ink-500">
-              <Loader2 className="size-4 animate-spin" />
+              <LoadingDot className="size-2.5 bg-ink-500" />
               Reading your Steam library and matching against IGDB…
             </div>
           )}

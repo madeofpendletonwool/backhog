@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/cn";
-import { Check, Clock, Loader2, Plus, Search, Star } from "lucide-react";
+import { Gi } from "./ui/Gi";
+import { LoadingDot } from "./ui/primitives";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "./ui/Dialog";
@@ -74,7 +75,7 @@ export function AddGameDialog({ open, onClose }: { open: boolean; onClose: () =>
     <Dialog open={open} onClose={onClose} bare label="Add a game" className="max-w-2xl">
       <div className="panel overflow-hidden">
         <div className="flex items-center gap-3 border-b border-white/[0.06] px-4">
-          <Search className="size-4 shrink-0 text-ink-500" />
+          <Gi name="search" className="size-4 shrink-0 text-ink-500" />
           <input
             autoFocus
             value={term}
@@ -84,7 +85,7 @@ export function AddGameDialog({ open, onClose }: { open: boolean; onClose: () =>
             aria-label="Search for a game"
             className="h-14 w-full bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-500"
           />
-          {isFetching && <Loader2 className="size-4 shrink-0 animate-spin text-ink-500" />}
+          {isFetching && <LoadingDot className="size-2.5 shrink-0 bg-ink-500" />}
         </div>
 
         <div className="max-h-[55vh] overflow-y-auto">
@@ -174,13 +175,13 @@ function ResultRow({
             {year && <span>{year}</span>}
             {game.igdb_rating != null && (
               <span className="inline-flex items-center gap-1">
-                <Star className="size-3" />
+                <Gi name="star" className="size-3" />
                 {Math.round(game.igdb_rating)}
               </span>
             )}
             {game.time_to_beat_main && (
               <span className="inline-flex items-center gap-1">
-                <Clock className="size-3" />
+                <Gi name="clock" className="size-3" />
                 {formatDuration(game.time_to_beat_main)}
               </span>
             )}
@@ -201,14 +202,14 @@ function ResultRow({
           )}
         >
           {pending ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <LoadingDot className="size-2 bg-current" />
           ) : owned ? (
             <>
-              <Check className="size-3.5" /> In library
+              <Gi name="check" className="size-3.5" /> In library
             </>
           ) : (
             <>
-              <Plus className="size-3.5" /> Add
+              <Gi name="plus" className="size-3.5" /> Add
             </>
           )}
         </span>

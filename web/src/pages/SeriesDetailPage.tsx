@@ -17,12 +17,12 @@ import {
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/cn";
-import { ArrowLeft, Clock, GripVertical, Layers, Star } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { GameCover } from "@/components/GameCover";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Gi } from "@/components/ui/Gi";
 import { Select, Skeleton } from "@/components/ui/primitives";
 import { useReorderSeries, useSeriesDetail, useSetSeriesPlayOrder } from "@/hooks/useSeries";
 import { accentStyle, formatDuration, formatHours, releaseYear } from "@/lib/format";
@@ -80,14 +80,14 @@ export function SeriesDetailPage() {
         to="/series"
         className="mb-5 inline-flex items-center gap-1.5 rounded-lg text-sm text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring"
       >
-        <ArrowLeft className="size-4" />
+        <Gi name="arrow-left" className="size-4" />
         Series
       </Link>
 
       <header className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-ink-100">
-            <Layers className="size-6 text-brand-400" />
+            <Gi name="layers" className="size-6 text-brand-400" />
             {detail.name}
           </h1>
           <p className="mt-1.5 text-sm text-ink-400">
@@ -224,7 +224,7 @@ function SortableMemberRow({ member, index }: { member: SeriesMember; index: num
           aria-label={`Reorder ${member.game.name}`}
           className="cursor-grab touch-none rounded-lg p-1 text-ink-600 transition-colors hover:text-ink-300 focus-visible:focus-ring active:cursor-grabbing"
         >
-          <GripVertical className="size-5" />
+          <Gi name="grab" className="size-5" />
         </button>
       </div>
       <MemberRow member={member} index={index} />
@@ -258,13 +258,13 @@ function MemberRow({ member, index, dimmed = false }: { member: SeriesMember; in
           {releaseYear(game) && <span>{releaseYear(game)}</span>}
           {game.time_to_beat_main != null && (
             <span className="inline-flex items-center gap-1">
-              <Clock className="size-3" />
+              <Gi name="clock" className="size-3" />
               {formatDuration(game.time_to_beat_main)}
             </span>
           )}
           {game.igdb_rating != null && (
             <span className="inline-flex items-center gap-1">
-              <Star className="size-3" />
+              <Gi name="star" className="size-3" />
               {Math.round(game.igdb_rating)}
             </span>
           )}

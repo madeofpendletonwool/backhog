@@ -1,11 +1,11 @@
 import { cn } from "@/lib/cn";
-import { LayoutGrid, Rows3, Search, SlidersHorizontal, X } from "lucide-react";
 import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import { GameCard, GameCardSkeleton } from "@/components/GameCard";
 import { GameTable } from "@/components/GameTable";
 import { StatsStrip } from "@/components/StatsStrip";
+import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Select } from "@/components/ui/primitives";
 import { useDebounced, useFacets, useLibrary } from "@/hooks/useLibrary";
 import { usePersistentState } from "@/hooks/usePersistentState";
@@ -91,7 +91,7 @@ export function LibraryPage() {
 
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-500" />
+            <Gi name="search" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-500" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -108,15 +108,15 @@ export function LibraryPage() {
             aria-label="More filters"
             aria-expanded={filtersOpen}
           >
-            <SlidersHorizontal className="size-4" />
+            <Gi name="sliders" className="size-4" />
           </Button>
 
           <div className="flex rounded-xl border border-white/[0.07] bg-ink-850 p-0.5">
             <ViewToggle active={view === "grid"} onClick={() => setView("grid")} label="Grid view">
-              <LayoutGrid className="size-4" />
+              <Gi name="layout-grid" className="size-4" />
             </ViewToggle>
             <ViewToggle active={view === "table"} onClick={() => setView("table")} label="Table view">
-              <Rows3 className="size-4" />
+              <Gi name="rows" className="size-4" />
             </ViewToggle>
           </div>
         </div>
@@ -146,7 +146,7 @@ export function LibraryPage() {
           />
           {hasFilters && (
             <Button variant="ghost" onClick={clearFilters}>
-              <X className="size-4" />
+              <Gi name="x" className="size-4" />
               Clear
             </Button>
           )}
@@ -162,7 +162,7 @@ export function LibraryPage() {
       ) : entries.length === 0 ? (
         hasFilters ? (
           <EmptyState
-            icon={<Search className="size-7" />}
+            icon={<Gi name="search" className="size-7" />}
             title="No games match"
             description="Try loosening the filters, or search for something new to add."
             action={
@@ -173,7 +173,7 @@ export function LibraryPage() {
           />
         ) : (
           <EmptyState
-            icon={<span className="text-3xl">🐗</span>}
+            icon={<Gi name="gamepad" className="size-7 text-ink-500" />}
             title="Your backlog is empty"
             description="Suspiciously empty. Add the games you own but haven't gotten around to — that's what this is for."
             action={

@@ -1,5 +1,4 @@
-import { Hourglass } from "lucide-react";
-
+import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useDebt } from "@/hooks/useLibrary";
 import { formatHours, formatMonthYear, formatTimespan } from "@/lib/format";
@@ -30,7 +29,7 @@ export function DebtPage() {
 
       {!debt || debt.total_hours <= 0 ? (
         <EmptyState
-          icon={<Hourglass className="size-7" />}
+          icon={<Gi name="hourglass" className="size-7" />}
           title="Nothing owed"
           description="No unplayed hours in the backlog. Add games you mean to finish and the debt math shows up here."
         />

@@ -1,8 +1,8 @@
-import { ListTree, Plus, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { CreateListDialog } from "@/components/CreateListDialog";
+import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useLists } from "@/hooks/useLists";
 
@@ -24,7 +24,7 @@ export function ListsPage() {
           </p>
         </div>
         <Button variant="primary" onClick={() => setCreating(true)}>
-          <Plus className="size-4" />
+          <Gi name="plus" className="size-4" />
           New list
         </Button>
       </header>
@@ -37,7 +37,7 @@ export function ListsPage() {
         </div>
       ) : lists.length === 0 ? (
         <EmptyState
-          icon={<ListTree className="size-7" />}
+          icon={<Gi name="list-tree" className="size-7" />}
           title="No lists yet"
           description="Group games however you like — a manual list you curate, or a smart list defined by rules."
           action={
@@ -92,7 +92,7 @@ function Section({
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 truncate font-medium text-ink-100">
                   {list.kind === "smart" && (
-                    <Sparkles className="size-3.5 shrink-0 text-brand-400" />
+                    <Gi name="sparkles" className="size-3.5 shrink-0 text-brand-400" />
                   )}
                   {list.name}
                 </p>

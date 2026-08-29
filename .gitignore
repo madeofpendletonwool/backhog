@@ -17,3 +17,10 @@ data/
 .DS_Store
 .idea/
 .vscode/
+
+# upstream art packs — see scripts/build-assets.py. What ships is the derived
+# output in web/public/assets, not the packs themselves.
+/icon-packs/
+
+# python bytecode from the asset scripts
+__pycache__/

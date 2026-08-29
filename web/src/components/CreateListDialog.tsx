@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { Hand, Sparkles } from "lucide-react";
+import { Gi } from "./ui/Gi";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -64,14 +64,14 @@ export function CreateListDialog({ open, onClose }: { open: boolean; onClose: ()
           <KindOption
             active={kind === "manual"}
             onClick={() => setKind("manual")}
-            icon={<Hand className="size-4" />}
+            icon={<Gi name="hand" className="size-4" />}
             title="Manual"
             description="You choose what goes in."
           />
           <KindOption
             active={kind === "smart"}
             onClick={() => setKind("smart")}
-            icon={<Sparkles className="size-4" />}
+            icon={<Gi name="sparkles" className="size-4" />}
             title="Smart"
             description="Rules decide, always current."
           />

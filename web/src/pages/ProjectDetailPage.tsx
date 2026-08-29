@@ -16,17 +16,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/cn";
-import {
-  ArrowLeft,
-  Check,
-  GripVertical,
-  ListChecks,
-  Pencil,
-  Sparkles,
-  Target,
-  Trash2,
-  X,
-} from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -35,6 +24,7 @@ import { GameCover } from "@/components/GameCover";
 import { ProgressBar } from "@/components/ProgressBar";
 import { SmartListBuilder } from "@/components/SmartListBuilder";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Panel, Skeleton } from "@/components/ui/primitives";
 import { Dialog } from "@/components/ui/Dialog";
 import {
@@ -54,9 +44,9 @@ import {
 } from "@/lib/types";
 
 const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
-  checklist: <ListChecks className="size-5 shrink-0" />,
-  count_goal: <Target className="size-5 shrink-0" />,
-  rule_goal: <Sparkles className="size-5 shrink-0 text-brand-400" />,
+  checklist: <Gi name="list-checks" className="size-5 shrink-0" />,
+  count_goal: <Gi name="target" className="size-5 shrink-0" />,
+  rule_goal: <Gi name="sparkles" className="size-5 shrink-0 text-brand-400" />,
 };
 
 export function ProjectDetailPage() {
@@ -132,7 +122,7 @@ export function ProjectDetailPage() {
         to="/projects"
         className="mb-5 inline-flex items-center gap-1.5 rounded-lg text-sm text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring"
       >
-        <ArrowLeft className="size-4" />
+        <Gi name="arrow-left" className="size-4" />
         Projects
       </Link>
 
@@ -150,11 +140,11 @@ export function ProjectDetailPage() {
 
         <div className="flex flex-wrap gap-2">
           <Button onClick={toggleComplete} loading={update.isPending}>
-            <Check className="size-4" />
+            <Gi name="check" className="size-4" />
             {complete ? "Reopen" : "Mark done"}
           </Button>
           <Button onClick={() => setEditing(true)}>
-            <Pencil className="size-4" />
+            <Gi name="pencil" className="size-4" />
             Edit
           </Button>
           <Button
@@ -163,7 +153,7 @@ export function ProjectDetailPage() {
             onClick={() => setConfirmDelete(true)}
             aria-label="Delete project"
           >
-            <Trash2 className="size-4" />
+            <Gi name="trash" className="size-4" />
           </Button>
         </div>
       </header>
@@ -173,7 +163,7 @@ export function ProjectDetailPage() {
       {project.kind === "checklist" ? (
         items.length === 0 ? (
           <EmptyState
-            icon={<ListChecks className="size-7" />}
+            icon={<Gi name="list-checks" className="size-7" />}
             title="No games in this project yet"
             description="Open a game's page and check it into this project to start building the list."
             action={
@@ -211,7 +201,7 @@ export function ProjectDetailPage() {
       ) : project.kind === "rule_goal" ? (
         items.length === 0 ? (
           <EmptyState
-            icon={<Sparkles className="size-7" />}
+            icon={<Gi name="sparkles" className="size-7" />}
             title="No games match these rules right now"
             description="Loosen them, or add more games to your library."
             action={
@@ -351,7 +341,7 @@ function ChecklistRow({
         aria-label={`Reorder ${entry.game.name}`}
         className="shrink-0 cursor-grab touch-none rounded-lg p-1 text-ink-600 transition-colors hover:text-ink-300 focus-visible:focus-ring active:cursor-grabbing"
       >
-        <GripVertical className="size-5" />
+        <Gi name="grab" className="size-5" />
       </button>
 
       <button
@@ -375,7 +365,7 @@ function ChecklistRow({
           done === false && "border-white/10",
         )}
       >
-        <Check className="size-3.5" />
+        <Gi name="check" className="size-3.5" />
       </button>
 
       <Link
@@ -407,7 +397,7 @@ function ChecklistRow({
         aria-label={`Remove ${entry.game.name} from this project`}
         className="shrink-0 rounded-lg p-1.5 text-ink-600 opacity-0 transition-all hover:bg-white/[0.06] hover:text-red-400 focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
-        <X className="size-4" />
+        <Gi name="x" className="size-4" />
       </button>
     </li>
   );

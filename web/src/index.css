@@ -1,32 +1,67 @@
 @import "tailwindcss";
+@import "./pixel/fonts.css";
+@import "./pixel/themes.css";
+@import "./pixel/pixel.css";
 
-/* Dark-first palette. Surfaces stay near-black and desaturated so cover art is
-   the only saturated thing on screen. */
-@theme {
-  --color-ink-950: #08080a;
-  --color-ink-900: #0c0c10;
-  --color-ink-850: #121218;
-  --color-ink-800: #17171f;
-  --color-ink-750: #1d1d27;
-  --color-ink-700: #26262f;
-  --color-ink-600: #3a3a46;
-  --color-ink-500: #55555f;
-  --color-ink-400: #7c7c88;
-  --color-ink-300: #a3a3ad;
-  --color-ink-200: #cbcbd2;
-  --color-ink-100: #e8e8ec;
+/* ---------------------------------------------------------------------------
+   Backhog's design system — the grimoire recipe on arcade hardware.
 
+   The interface is made of real pixel art: nine-slice console-plastic
+   frames, a 32px arcade sprite sheet, and four parallax backdrops. The
+   words stay at full resolution; only the chrome wears the art.
+
+   The rules that keep it crisp:
+
+   1. Pixel art scales by whole numbers only. Frames pair a
+      border-image-slice with an integer-multiple border-width. Anything
+      else resamples the pixels and the whole thing goes soft.
+   2. A framed surface carries no background-color and no border-radius —
+      the sprite supplies both. (See the .frame reset.)
+   3. A flat surface that sits next to a framed one uses the same ramp
+      token the sprite was recoloured with, so there is no seam.
+   4. The per-game accent (cover-sampled) tints glows and progress *inside*
+      framed surfaces. Frames themselves stay theme-coloured, and the
+      coin-gold action colour never re-tints.
+--------------------------------------------------------------------------- */
+
+@theme inline {
+  /* The chrome ramp follows the theme (see pixel/themes.css); the old
+     surface names are kept so the component vocabulary is unchanged. */
+  --color-ink-950: var(--c-950);
+  --color-ink-900: var(--c-900);
+  --color-ink-850: var(--c-850);
+  --color-ink-800: var(--c-800);
+  --color-ink-750: var(--c-750);
+  --color-ink-700: var(--c-700);
+  --color-ink-600: var(--c-600);
+  --color-ink-500: var(--c-500);
+  --color-ink-400: var(--c-400);
+  --color-ink-300: var(--c-300);
+  --color-ink-200: var(--c-200);
+  --color-ink-100: var(--c-100);
+  --color-line: var(--c-line);
+
+  /* Brand violet stays fixed: it is the default --accent when a game has
+     no cover to sample, not part of the room. */
   --color-brand-400: #a78bfa;
   --color-brand-500: #8b5cf6;
   --color-brand-600: #7c3aed;
 
-  --color-status-backlog: #64748b;
+  /* Coin gold — the one action colour that never re-tints. */
+  --color-gold-pale: #ffe9a8;
+  --color-gold-bright: #ffd071;
+  --color-gold-mid: #c9a227;
+  --color-gold-dim: #8a7024;
+
+  --color-status-backlog: #94a3b8;
   --color-status-playing: #22d3ee;
   --color-status-played: #34d399;
   --color-status-dropped: #f87171;
 
-  --radius-xl: 0.875rem;
-  --radius-2xl: 1.125rem;
+  --radius-xl: 0.25rem;
+  --radius-2xl: 0.25rem;
+
+  --font-pixel: "Silkscreen", ui-monospace, monospace;
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -35,6 +70,29 @@
   color-scheme: dark;
   /* Per-card accent, overridden inline from the cover's sampled colour. */
   --accent: var(--color-brand-500);
+
+  /* Bare console plastic — the no-backdrop chrome. themes.css overrides
+     these per scene; the frame URLs here are the default set. */
+  --c-950: #090a0d;
+  --c-900: #0f1015;
+  --c-850: #13141a;
+  --c-800: #171921;
+  --c-750: #1b1e28;
+  --c-700: #20242f;
+  --c-600: #2a2f3d;
+  --c-500: #37404f;
+  --c-400: #4d5769;
+  --c-300: #737d92;
+  --c-200: #9da6b8;
+  --c-100: #d3d8e2;
+  --c-line: #2a2f3d;
+  --frame-panel: url("/assets/ui/panel.png");
+  --frame-panel-active: url("/assets/ui/panel-active.png");
+  --frame-field: url("/assets/ui/field.png");
+  --frame-field-focus: url("/assets/ui/field-focus.png");
+  --frame-chip: url("/assets/ui/chip.png");
+  --frame-chip-active: url("/assets/ui/chip-active.png");
+  --frame-bar: url("/assets/ui/bar.png");
 }
 
 html,
@@ -44,60 +102,49 @@ body,
 }
 
 body {
-  background-color: var(--color-ink-950);
-  color: var(--color-ink-100);
+  background-color: var(--c-950);
+  color: var(--c-100);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* A soft aurora behind the app so flat black never reads as dead space. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(60rem 40rem at 15% -10%, rgba(124, 58, 237, 0.13), transparent 70%),
-    radial-gradient(50rem 35rem at 95% 0%, rgba(34, 211, 238, 0.07), transparent 70%);
+/* Everything rides above the fixed scene backdrop. */
+#root {
+  position: relative;
+  z-index: 1;
 }
 
 ::selection {
-  background: var(--color-brand-600);
-  color: white;
+  background: var(--color-gold-mid);
+  color: #100c02;
 }
 
 /* Slim, unobtrusive scrollbars that match the surfaces. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-ink-700) transparent;
+  scrollbar-color: var(--c-600) transparent;
 }
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background-color: var(--color-ink-700);
+  background-color: var(--c-600);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-ink-600);
+  background-color: var(--c-500);
 }
 
+/* Focus is a coin-gold outline — the arcade's "insert coin" colour.
+   Visible on every theme, and it never fights the accent. */
 @utility focus-ring {
-  @apply outline-none ring-2 ring-brand-500/70 ring-offset-2 ring-offset-ink-950;
-}
-
-/* Shared surface treatment: subtle top-lit border, as if lit from above. */
-@utility panel {
-  @apply rounded-2xl border border-white/[0.06] bg-ink-900/70 backdrop-blur-xl;
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
-    0 20px 40px -24px rgba(0, 0, 0, 0.9);
+  outline: 2px solid var(--color-gold-bright);
+  outline-offset: 2px;
 }
 
 @keyframes shimmer {

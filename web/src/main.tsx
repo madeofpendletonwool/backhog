@@ -4,7 +4,9 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
+import { Scene } from "./components/Scene";
 import { AuthProvider } from "./hooks/useAuth";
+import { ThemeProvider } from "./hooks/useTheme";
 import { ApiError } from "./lib/api";
 import "./index.css";
 
@@ -23,11 +25,14 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <Scene />
+            <App />
+          </AuthProvider>
+        </BrowserRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

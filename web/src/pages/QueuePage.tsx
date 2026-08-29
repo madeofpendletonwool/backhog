@@ -14,10 +14,10 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { ListOrdered } from "lucide-react";
 import { useOutletContext } from "react-router-dom";
 
 import { QueueRow } from "@/components/QueueRow";
+import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useQueue, useReorderQueue } from "@/hooks/useLibrary";
 import { formatHours, toHours } from "@/lib/format";
@@ -97,7 +97,7 @@ export function QueuePage() {
         </div>
       ) : entries.length === 0 ? (
         <EmptyState
-          icon={<ListOrdered className="size-7" />}
+          icon={<Gi name="list-ordered" className="size-7" />}
           title="Nothing queued up"
           description="Games in your backlog appear here. Marking one as playing or played takes it out of the queue."
           action={

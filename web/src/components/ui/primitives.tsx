@@ -1,24 +1,26 @@
 import { cn } from "@/lib/cn";
-import { Loader2 } from "lucide-react";
+import { Gi } from "./Gi";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 type ButtonSize = "sm" | "md" | "lg" | "icon";
 
+/* Frames are nine-slice sprites (pixel.css); a framed surface carries no
+   background, radius, or shadow of its own. Height classes account for the
+   frame border so all variants line up. */
 const buttonVariants: Record<ButtonVariant, string> = {
-  primary:
-    "bg-brand-600 text-white hover:bg-brand-500 shadow-lg shadow-brand-600/25 disabled:bg-ink-700 disabled:shadow-none",
+  primary: "f-btn-gold font-pixel text-[11px] uppercase tracking-wider",
   secondary:
-    "bg-ink-800 text-ink-100 border border-white/[0.07] hover:bg-ink-750 hover:border-white/[0.12]",
+    "f-btn-soft font-pixel text-[11px] uppercase tracking-wider",
   ghost: "text-ink-300 hover:text-ink-100 hover:bg-white/[0.06]",
-  danger: "bg-red-600/90 text-white hover:bg-red-600",
+  danger: "f-btn-danger font-pixel text-[11px] uppercase tracking-wider",
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-xs gap-1.5",
-  md: "h-10 px-4 text-sm gap-2",
-  lg: "h-11 px-5 text-sm gap-2",
-  icon: "h-9 w-9",
+  sm: "h-10 px-3 gap-1.5",
+  md: "h-12 px-4 gap-2",
+  lg: "h-14 px-5 gap-2",
+  icon: "h-11 w-11",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -39,10 +41,10 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center rounded-xl font-medium",
+        "inline-flex items-center justify-center font-bold",
         "transition-all duration-150 ease-[var(--ease-spring)]",
-        "focus-visible:focus-ring active:scale-[0.98]",
-        "disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100",
+        "focus-visible:focus-ring active:translate-y-px",
+        "disabled:cursor-not-allowed disabled:opacity-60 disabled:active:translate-y-0",
         buttonVariants[variant],
         buttonSizes[size],
         className,
@@ -50,19 +52,35 @@ export function Button({
       disabled={disabled || loading}
       {...props}
     >
-      {loading && <Loader2 className="size-4 animate-spin" />}
+      {loading && <LoadingDot />}
       {children}
     </button>
   );
+}
+
+/** The arcade mark of "working on it": a blinking coin light. */
+export function LoadingDot({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "sprite-loading inline-block size-2 rounded-[2px] bg-current",
+        className,
+      )}
+    />
+  );
+}
+
+export function Spinner({ className }: { className?: string }) {
+  return <LoadingDot className={cn("size-2.5 bg-ink-400", className)} />;
 }
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       className={cn(
-        "h-10 w-full rounded-xl border border-white/[0.07] bg-ink-850 px-3.5 text-sm",
-        "text-ink-100 placeholder:text-ink-500",
-        "transition-colors focus:border-brand-500/50 focus-visible:focus-ring",
+        "f-field h-12 w-full px-3 text-sm",
+        "transition-[border-image-source] focus:outline-none focus-visible:focus-ring",
         className,
       )}
       {...props}
@@ -74,8 +92,8 @@ export function Select({ className, children, ...props }: SelectHTMLAttributes<H
   return (
     <select
       className={cn(
-        "h-10 w-full appearance-none rounded-xl border border-white/[0.07] bg-ink-850 px-3 text-sm",
-        "text-ink-100 transition-colors focus:border-brand-500/50 focus-visible:focus-ring",
+        "f-field h-12 w-full appearance-none px-3 text-sm",
+        "focus:outline-none focus-visible:focus-ring",
         className,
       )}
       {...props}
@@ -87,10 +105,6 @@ export function Select({ className, children, ...props }: SelectHTMLAttributes<H
 
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={cn("panel", className)}>{children}</div>;
-}
-
-export function Spinner({ className }: { className?: string }) {
-  return <Loader2 className={cn("size-5 animate-spin text-ink-400", className)} />;
 }
 
 /** A centred message for empty collections, with an optional call to action. */
@@ -107,10 +121,10 @@ export function EmptyState({
 }) {
   return (
     <div className="animate-fade-rise flex flex-col items-center justify-center px-6 py-20 text-center">
-      <div className="mb-5 flex size-16 items-center justify-center rounded-2xl bg-ink-850 text-ink-500 ring-1 ring-white/[0.06]">
+      <div className="f-chip mb-5 flex size-16 items-center justify-center text-ink-400">
         {icon}
       </div>
-      <h3 className="text-lg font-semibold text-ink-100">{title}</h3>
+      <h3 className="font-pixel text-sm uppercase tracking-wider text-ink-100">{title}</h3>
       <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-ink-400">{description}</p>
       {action && <div className="mt-6">{action}</div>}
     </div>
@@ -118,5 +132,21 @@ export function EmptyState({
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("skeleton rounded-xl", className)} />;
+  return <div className={cn("skeleton", className)} />;
 }
+
+/** Section label — the console's little uppercase placard. */
+export function Label({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <p
+      className={cn(
+        "font-pixel text-[10px] font-bold uppercase tracking-widest text-ink-400",
+        className,
+      )}
+    >
+      {children}
+    </p>
+  );
+}
+
+export { Gi };

@@ -1,15 +1,8 @@
-import {
-  CalendarDays,
-  Gauge,
-  History,
-  MonitorSmartphone,
-  Mountain,
-  Tags,
-} from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { GameCover } from "@/components/GameCover";
 import { SeasonCard } from "@/components/SeasonCard";
+import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useInsights } from "@/hooks/useLibrary";
 import { accentStyle, formatHours } from "@/lib/format";
@@ -48,7 +41,7 @@ export function DashboardPage() {
 
       {!hasLibrary ? (
         <EmptyState
-          icon={<Gauge className="size-7" />}
+          icon={<Gi name="gauge" className="size-7" />}
           title="Nothing to confess yet"
           description="Add games to your library and the embarrassing numbers will find you on their own."
         />
@@ -168,27 +161,27 @@ const SUPERLATIVE_META: Record<
   oldest_untouched: {
     eyebrow: "Longest-serving resident",
     quip: "Bought, shelved, never once opened.",
-    icon: <History className="size-5" />,
+    icon: <Gi name="history" className="size-5" />,
   },
   longest_unplayed: {
     eyebrow: "The biggest one",
     quip: "The game you keep meaning to start. Someday.",
-    icon: <Mountain className="size-5" />,
+    icon: <Gi name="mountain" className="size-5" />,
   },
   neglected_genre: {
     eyebrow: "Genre you keep buying",
     quip: "You keep buying them. They keep not getting played.",
-    icon: <Tags className="size-5" />,
+    icon: <Gi name="tags" className="size-5" />,
   },
   worst_platform: {
     eyebrow: "Where the pile lives",
     quip: "Every platform has a backlog. This one has the backlog.",
-    icon: <MonitorSmartphone className="size-5" />,
+    icon: <Gi name="monitor" className="size-5" />,
   },
   neglected_year: {
     eyebrow: "Best vintage, least opened",
     quip: "Collected religiously. Played rarely.",
-    icon: <CalendarDays className="size-5" />,
+    icon: <Gi name="calendar" className="size-5" />,
   },
 };
 

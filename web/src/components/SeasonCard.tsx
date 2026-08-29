@@ -1,7 +1,6 @@
-import { Flag, Layers, LifeBuoy, Timer, Trophy } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { Panel } from "@/components/ui/primitives";
+import { Panel, Gi } from "@/components/ui/primitives";
 import { useSeason } from "@/hooks/useAchievements";
 import { formatHours } from "@/lib/format";
 
@@ -26,18 +25,18 @@ export function SeasonCard() {
         </div>
         <Link
           to="/achievements"
-          className="flex size-10 items-center justify-center rounded-xl bg-brand-600/20 text-brand-300 ring-1 ring-brand-400/30 transition-colors hover:bg-brand-600/30 focus-visible:focus-ring"
+          className="f-btn-soft flex size-11 items-center justify-center text-gold-bright focus-visible:focus-ring"
           aria-label="View achievements"
         >
-          <Trophy className="size-5" />
+          <Gi name="trophy" className="size-5" />
         </Link>
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-x-8 gap-y-3 border-t border-white/[0.06] pt-4">
-        <Stat icon={<Flag className="size-3.5" />} label="Games completed" value={String(season.games_completed)} />
-        <Stat icon={<Timer className="size-3.5" />} label="Hours played" value={formatHours(season.hours_played)} />
-        <Stat icon={<Layers className="size-3.5" />} label="Franchises cleared" value={String(season.franchises_cleared)} />
-        <Stat icon={<LifeBuoy className="size-3.5" />} label="Backlog rescues" value={String(season.rescues)} />
+      <div className="mt-5 flex flex-wrap gap-x-8 gap-y-3 border-t-2 border-line pt-4">
+        <Stat icon={<Gi name="flag" className="size-3.5" />} label="Games completed" value={String(season.games_completed)} />
+        <Stat icon={<Gi name="timer" className="size-3.5" />} label="Hours played" value={formatHours(season.hours_played)} />
+        <Stat icon={<Gi name="layers" className="size-3.5" />} label="Franchises cleared" value={String(season.franchises_cleared)} />
+        <Stat icon={<Gi name="lifebuoy" className="size-3.5" />} label="Backlog rescues" value={String(season.rescues)} />
       </div>
     </Panel>
   );

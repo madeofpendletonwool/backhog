@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { ListChecks, Sparkles, Target } from "lucide-react";
+import { Gi } from "./ui/Gi";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -82,21 +82,21 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
           <KindOption
             active={kind === "checklist"}
             onClick={() => setKind("checklist")}
-            icon={<ListChecks className="size-4" />}
+            icon={<Gi name="list-checks" className="size-4" />}
             title="Checklist"
             description="Finish these games."
           />
           <KindOption
             active={kind === "count_goal"}
             onClick={() => setKind("count_goal")}
-            icon={<Target className="size-4" />}
+            icon={<Gi name="target" className="size-4" />}
             title="Count goal"
             description="Finish N games."
           />
           <KindOption
             active={kind === "rule_goal"}
             onClick={() => setKind("rule_goal")}
-            icon={<Sparkles className="size-4" />}
+            icon={<Gi name="sparkles" className="size-4" />}
             title="Rule goal"
             description="Clear a rule-defined set."
           />

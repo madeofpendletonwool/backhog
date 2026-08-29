@@ -15,7 +15,6 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ArrowLeft, GripVertical, ListTree, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -23,6 +22,7 @@ import { cn } from "@/lib/cn";
 
 import { GameCard, GameCardSkeleton } from "@/components/GameCard";
 import { SmartListBuilder } from "@/components/SmartListBuilder";
+import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input } from "@/components/ui/primitives";
 import { Dialog } from "@/components/ui/Dialog";
 import { useDeleteList, useList, useReorderListItem, useUpdateList } from "@/hooks/useLists";
@@ -51,7 +51,7 @@ function SortableGameCard({ entry }: { entry: Entry }) {
         aria-label={`Reorder ${entry.game.name}`}
         className="absolute right-1.5 top-1.5 cursor-grab touch-none rounded-lg bg-ink-950/75 p-1 text-ink-300 opacity-0 backdrop-blur-sm transition-opacity hover:text-white focus-visible:opacity-100 focus-visible:focus-ring active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
-        <GripVertical className="size-4" />
+        <Gi name="grab" className="size-4" />
       </button>
     </div>
   );
@@ -146,14 +146,14 @@ export function ListDetailPage() {
         to="/lists"
         className="mb-5 inline-flex items-center gap-1.5 rounded-lg text-sm text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring"
       >
-        <ArrowLeft className="size-4" />
+        <Gi name="arrow-left" className="size-4" />
         Lists
       </Link>
 
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-ink-100">
-            {list.kind === "smart" && <Sparkles className="size-5 shrink-0 text-brand-400" />}
+            {list.kind === "smart" && <Gi name="sparkles" className="size-5 shrink-0 text-brand-400" />}
             {list.name}
           </h1>
           <p className="mt-1 text-sm text-ink-400">
@@ -165,7 +165,7 @@ export function ListDetailPage() {
 
         <div className="flex gap-2">
           <Button onClick={openEditor}>
-            <Pencil className="size-4" />
+            <Gi name="pencil" className="size-4" />
             Edit
           </Button>
           <Button
@@ -174,14 +174,14 @@ export function ListDetailPage() {
             onClick={() => setConfirmDelete(true)}
             aria-label="Delete list"
           >
-            <Trash2 className="size-4" />
+            <Gi name="trash" className="size-4" />
           </Button>
         </div>
       </header>
 
       {entries.length === 0 ? (
         <EmptyState
-          icon={<ListTree className="size-7" />}
+          icon={<Gi name="list-tree" className="size-7" />}
           title="Nothing here yet"
           description={
             list.kind === "smart"

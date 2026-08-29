@@ -1,7 +1,6 @@
-import { Clock, Gamepad2, Trophy } from "lucide-react";
-
 import { formatHours } from "@/lib/format";
 import { useStats } from "@/hooks/useLibrary";
+import { Gi } from "./ui/Gi";
 import { Skeleton } from "./ui/primitives";
 
 /**
@@ -29,7 +28,7 @@ export function StatsStrip() {
         label="In the backlog"
         value={String(stats.backlog)}
         hint={`${formatHours(stats.backlog_hours)} of playing`}
-        icon={<Gamepad2 className="size-4" />}
+        icon={<Gi name="gamepad" className="size-4" />}
       />
       <Tile
         label="Playing now"
@@ -43,14 +42,14 @@ export function StatsStrip() {
               ? "Nothing in progress"
               : "Keep going"
         }
-        icon={<Clock className="size-4" />}
+        icon={<Gi name="clock" className="size-4" />}
         accent="text-cyan-300"
       />
       <Tile
         label="Completed"
         value={String(stats.played)}
         hint={`${formatHours(stats.played_hours)} of games beaten`}
-        icon={<Trophy className="size-4" />}
+        icon={<Gi name="trophy" className="size-4" />}
         accent="text-emerald-300"
       />
       <div className="panel p-4">
@@ -71,7 +70,7 @@ export function StatsStrip() {
           {stats.completion}%
         </p>
         <div
-          className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-ink-800"
+          className="f-bar mt-2.5 h-3"
           role="progressbar"
           aria-valuenow={stats.completion}
           aria-valuemin={0}
@@ -79,7 +78,7 @@ export function StatsStrip() {
           aria-label="Library completion"
         >
           <div
-            className="h-full rounded-full bg-gradient-to-r from-brand-500 to-emerald-400 transition-[width] duration-700 ease-[var(--ease-spring)]"
+            className="h-full bg-gradient-to-r from-brand-500 to-emerald-400 transition-[width] duration-700 ease-[var(--ease-spring)]"
             style={{ width: `${Math.min(stats.completion, 100)}%` }}
           />
         </div>

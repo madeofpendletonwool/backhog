@@ -1,21 +1,11 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/cn";
-import {
-  ChevronDown,
-  ChevronUp,
-  ChevronsDown,
-  ChevronsUp,
-  Clock,
-  GripVertical,
-  PlayCircle,
-  Star,
-} from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { GameCover } from "./GameCover";
-import { Button } from "./ui/primitives";
+import { Button, Gi } from "./ui/primitives";
 import { useUpdateEntry } from "@/hooks/useLibrary";
 import { accentStyle, formatDuration, formatHours, releaseYear } from "@/lib/format";
 import type { Entry } from "@/lib/types";
@@ -66,9 +56,9 @@ export function QueueRow({
         {...attributes}
         {...listeners}
         aria-label={`Reorder ${game.name}`}
-        className="shrink-0 cursor-grab touch-none rounded-lg p-1 text-ink-600 transition-colors hover:text-ink-300 focus-visible:focus-ring active:cursor-grabbing"
+        className="shrink-0 cursor-grab touch-none p-1 text-ink-500 transition-colors hover:text-ink-300 focus-visible:focus-ring active:cursor-grabbing"
       >
-        <GripVertical className="size-5" />
+        <Gi name="grab" className="size-5" />
       </button>
 
       <span className="w-6 shrink-0 text-center text-sm font-semibold tabular-nums text-ink-500">
@@ -85,12 +75,12 @@ export function QueueRow({
           <div className="mt-0.5 flex items-center gap-2.5 text-xs text-ink-500">
             {releaseYear(game) && <span>{releaseYear(game)}</span>}
             <span className="inline-flex items-center gap-1">
-              <Clock className="size-3" />
+              <Gi name="clock" className="size-3" />
               {formatDuration(game.time_to_beat_main)}
             </span>
             {game.igdb_rating != null && (
               <span className="inline-flex items-center gap-1">
-                <Star className="size-3" />
+                <Gi name="star" className="size-3" />
                 {Math.round(game.igdb_rating)}
               </span>
             )}
@@ -109,16 +99,16 @@ export function QueueRow({
       {/* Quick moves — dragging a 200-item queue by hand is unbearable. */}
       <div className="flex shrink-0 items-center gap-0.5">
         <MoveButton label={`Move ${game.name} to top`} disabled={isFirst} onClick={() => onMove("top")}>
-          <ChevronsUp className="size-4" />
+          <Gi name="chevrons-up" className="size-4" />
         </MoveButton>
         <MoveButton label={`Move ${game.name} up`} disabled={isFirst} onClick={() => onMove("up")}>
-          <ChevronUp className="size-4" />
+          <Gi name="chevron-up" className="size-4" />
         </MoveButton>
         <MoveButton label={`Move ${game.name} down`} disabled={isLast} onClick={() => onMove("down")}>
-          <ChevronDown className="size-4" />
+          <Gi name="chevron-down" className="size-4" />
         </MoveButton>
         <MoveButton label={`Move ${game.name} to bottom`} disabled={isLast} onClick={() => onMove("bottom")}>
-          <ChevronsDown className="size-4" />
+          <Gi name="chevrons-down" className="size-4" />
         </MoveButton>
       </div>
 
@@ -130,7 +120,7 @@ export function QueueRow({
         onClick={() => update.mutate({ id: entry.id, patch: { status: "playing" } })}
         className="shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
-        <PlayCircle className="size-3.5" />
+        <Gi name="play" className="size-3.5" />
         <span className="hidden sm:inline">Start</span>
       </Button>
     </li>

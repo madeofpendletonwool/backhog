@@ -1,18 +1,18 @@
-import { ListChecks, Plus, Sparkles, Target } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import { ProgressBar } from "@/components/ProgressBar";
+import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useProjects } from "@/hooks/useProjects";
 import { formatDate, formatHours } from "@/lib/format";
 import { PROJECT_KIND_LABELS, type Project, type ProjectKind } from "@/lib/types";
 
 const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
-  checklist: <ListChecks className="size-3.5" />,
-  count_goal: <Target className="size-3.5" />,
-  rule_goal: <Sparkles className="size-3.5" />,
+  checklist: <Gi name="list-checks" className="size-3.5" />,
+  count_goal: <Gi name="target" className="size-3.5" />,
+  rule_goal: <Gi name="sparkles" className="size-3.5" />,
 };
 
 export function ProjectsPage() {
@@ -33,7 +33,7 @@ export function ProjectsPage() {
           </p>
         </div>
         <Button variant="primary" onClick={() => setCreating(true)}>
-          <Plus className="size-4" />
+          <Gi name="plus" className="size-4" />
           New project
         </Button>
       </header>
@@ -46,7 +46,7 @@ export function ProjectsPage() {
         </div>
       ) : projects.length === 0 ? (
         <EmptyState
-          icon={<Target className="size-7" />}
+          icon={<Gi name="target" className="size-7" />}
           title="No projects yet"
           description="Lists are what exists. Projects are what you're trying to accomplish — give one a target and go."
           action={

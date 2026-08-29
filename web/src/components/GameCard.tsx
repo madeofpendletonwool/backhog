@@ -1,10 +1,10 @@
 import { cn } from "@/lib/cn";
-import { Clock, Star } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { GameCover } from "./GameCover";
 import { StatusMenu } from "./StatusMenu";
 import { StatusBadge } from "./StatusBadge";
+import { Gi } from "./ui/Gi";
 import { accentStyle, formatDuration, releaseYear } from "@/lib/format";
 import type { Entry } from "@/lib/types";
 
@@ -48,7 +48,7 @@ export function GameCard({ entry }: { entry: Entry }) {
               {year && <span>{year}</span>}
               {game.time_to_beat_main && (
                 <span className="inline-flex items-center gap-1">
-                  <Clock className="size-3" />
+                  <Gi name="clock" className="size-3" />
                   {formatDuration(game.time_to_beat_main)}
                 </span>
               )}
@@ -57,7 +57,7 @@ export function GameCard({ entry }: { entry: Entry }) {
 
           {entry.user_rating != null && (
             <div className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-lg bg-ink-950/80 px-1.5 py-1 text-[11px] font-semibold text-amber-300 backdrop-blur-sm">
-              <Star className="size-3 fill-amber-300" />
+              <Gi name="star" className="size-3" />
               {entry.user_rating}
             </div>
           )}

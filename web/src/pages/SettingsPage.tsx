@@ -1,17 +1,20 @@
-import { Download, LogOut } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Field } from "./LoginPage";
 import { StatsStrip } from "@/components/StatsStrip";
 import { SteamImportDialog } from "@/components/SteamImportDialog";
+import { Gi } from "@/components/ui/Gi";
 import { Button, Input, Panel } from "@/components/ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
+import { THEMES, useTheme, type Theme } from "@/hooks/useTheme";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/format";
 
 export function SettingsPage() {
   const { user, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const [importOpen, setImportOpen] = useState(false);
 
@@ -57,6 +60,32 @@ export function SettingsPage() {
       </div>
 
       <div className="space-y-5">
+        <Panel className="p-5">
+          <h2 className="mb-1 text-sm font-semibold text-ink-200">Theme</h2>
+          <p className="mb-4 text-xs text-ink-500">
+            Picks a backdrop and retints the whole chrome to match — your accent colours stay put.
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {(Object.keys(THEMES) as Theme[]).map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTheme(key)}
+                aria-pressed={theme === key}
+                className={cn(
+                  "flex flex-col items-center gap-1 p-3 text-center transition-colors focus-visible:focus-ring",
+                  theme === key ? "f-panel-active" : "f-panel",
+                )}
+              >
+                <span className="font-pixel text-[10px] uppercase tracking-wider text-ink-100">
+                  {THEMES[key].label}
+                </span>
+                <span className="text-[10px] leading-snug text-ink-400">{THEMES[key].note}</span>
+              </button>
+            ))}
+          </div>
+        </Panel>
+
         <Panel className="p-5">
           <h2 className="mb-4 text-sm font-semibold text-ink-200">Account</h2>
           <dl className="space-y-2.5 text-sm">
@@ -128,7 +157,7 @@ export function SettingsPage() {
           <h2 className="mb-4 text-sm font-semibold text-ink-200">More</h2>
           <div className="flex flex-col gap-2">
             <Button onClick={() => setImportOpen(true)}>
-              <Download className="size-4" />
+              <Gi name="download" className="size-4" />
               Import from Steam
             </Button>
             <Button
@@ -139,7 +168,7 @@ export function SettingsPage() {
                 navigate("/login");
               }}
             >
-              <LogOut className="size-4" />
+              <Gi name="log-out" className="size-4" />
               Sign out
             </Button>
           </div>

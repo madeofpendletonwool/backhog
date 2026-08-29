@@ -204,7 +204,7 @@ type ProjectProgress struct {
 	TargetCount int `json:"target_count"`
 	// CompletedCount is how many entries currently count as done. May exceed
 	// TargetCount for count goals set below the library's played total.
-	CompletedCount int `json:"completed_count"`
+	CompletedCount int     `json:"completed_count"`
 	EstHoursTotal  float64 `json:"est_hours_total"`
 	EstHoursDone   float64 `json:"est_hours_done"`
 	// EstHoursRemaining is the estimated playtime left in the target set,
@@ -217,16 +217,16 @@ type ProjectProgress struct {
 // Project is a temporary objective. Lists answer "what exists"; projects
 // answer "what am I trying to accomplish", and they end.
 type Project struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Kind        string     `json:"kind"`
-	TargetCount *int       `json:"target_count,omitempty"`
-	Rules       *RuleSet   `json:"rules,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Kind        string    `json:"kind"`
+	TargetCount *int      `json:"target_count,omitempty"`
+	Rules       *RuleSet  `json:"rules,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 	// CompletedAt is stamped when the target is met (automatically on the next
 	// read) or manually when the user closes the project. Null = in progress.
-	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 	Progress    ProjectProgress `json:"progress"`
 }
 
@@ -234,8 +234,8 @@ type Project struct {
 // done override. Done is null when completion is derived from the entry's
 // status; it is only ever set for checklist members.
 type ProjectItem struct {
-	Entry Entry  `json:"entry"`
-	Done  *bool  `json:"done"`
+	Entry Entry `json:"entry"`
+	Done  *bool `json:"done"`
 }
 
 // Play orders for a series journey.
@@ -389,6 +389,27 @@ type Insights struct {
 	Superlatives []Superlative    `json:"superlatives"`
 }
 
+// Achievement tiers, in ascending order of prestige.
+const (
+	TierBronze    = "bronze"
+	TierSilver    = "silver"
+	TierGold      = "gold"
+	TierLegendary = "legendary"
+)
+
+// AllTiers lists every achievement tier, in display order.
+var AllTiers = []string{TierBronze, TierSilver, TierGold, TierLegendary}
+
+// ValidTier reports whether t is a known achievement tier.
+func ValidTier(t string) bool {
+	for _, tier := range AllTiers {
+		if tier == t {
+			return true
+		}
+	}
+	return false
+}
+
 // Achievement is one catalogue entry, defined in code (internal/achievements).
 type Achievement struct {
 	ID          string `json:"id"`
@@ -396,6 +417,11 @@ type Achievement struct {
 	Description string `json:"description"`
 	// Icon is a code key the client maps to an actual icon glyph.
 	Icon string `json:"icon"`
+	// Tier is the achievement's rarity band; one of the Tier constants.
+	Tier string `json:"tier"`
+	// Hidden keeps an achievement's identity masked while locked — the
+	// reveal lives in the unlock toast and the gallery.
+	Hidden bool `json:"hidden"`
 }
 
 // AchievementStatus is an achievement plus the user's unlock state: locked

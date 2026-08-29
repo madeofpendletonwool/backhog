@@ -25,6 +25,13 @@
   --color-status-played: #34d399;
   --color-status-dropped: #f87171;
 
+  /* Achievement tiers — muted medal tones so cover art stays the loudest
+     saturated thing on screen. */
+  --color-tier-bronze: #d9a06b;
+  --color-tier-silver: #c4ccd8;
+  --color-tier-gold: #e6c35c;
+  --color-tier-legendary: #82e6ff;
+
   --radius-xl: 0.875rem;
   --radius-2xl: 1.125rem;
 

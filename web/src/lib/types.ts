@@ -331,6 +331,11 @@ export interface Insights {
   superlatives: Superlative[];
 }
 
+/** Achievement rarity bands, in ascending order of prestige. */
+export type AchievementTier = "bronze" | "silver" | "gold" | "legendary";
+
+export const ACHIEVEMENT_TIERS: AchievementTier[] = ["bronze", "silver", "gold", "legendary"];
+
 /** One achievement from the code-defined catalogue. */
 export interface Achievement {
   id: string;
@@ -338,6 +343,9 @@ export interface Achievement {
   description: string;
   /** Code key the client maps to an icon glyph. */
   icon: string;
+  tier: AchievementTier;
+  /** Hidden achievements are served masked while locked: ??? / "Hidden achievement". */
+  hidden: boolean;
 }
 
 /** An achievement plus the user's unlock state: no date and no game = locked. */

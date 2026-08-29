@@ -5,6 +5,7 @@ import {
   DoorOpen,
   Droplet,
   Hourglass,
+  Lock,
   Mountain,
   Shovel,
   Target,
@@ -24,6 +25,8 @@ const ICONS: Record<string, LucideIcon> = {
   target: Target,
   "door-open": DoorOpen,
   hourglass: Hourglass,
+  // The generic glyph a locked hidden achievement is masked with.
+  lock: Lock,
 };
 
 export function achievementIcon(key: string): LucideIcon {

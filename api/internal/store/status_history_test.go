@@ -365,15 +365,28 @@ func TestLazyTimeWindowEvaluation(t *testing.T) {
 		return tx.Commit()
 	}
 
-	// u1's newest entry (a2) is 40 days old: restraint yes, discipline no.
-	if err := run("u1", restraint, forever); err != nil {
+	// u3 owns exactly one entry, added 40 days ago: restraint yes,
+	// discipline no — the window is measured from MAX(created_at).
+	if _, err := database.ExecContext(ctx,
+		`INSERT INTO users (id, email, username, password_hash) VALUES
+			('u3', 'u3@example.com', 'u3', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := database.ExecContext(ctx,
+		`INSERT INTO library_entries (id, user_id, game_id, status, created_at)
+		 VALUES ('w1', 'u3', 1, 'backlog', ?)`,
+		now.AddDate(0, 0, -40).Format("2006-01-02 15:04:05")); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("u3", restraint, forever); err != nil {
 		t.Fatalf("lazy eval: %v", err)
 	}
 	var n int
 	var entryID *string
 	if err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*), (SELECT entry_id FROM achievement_unlocks WHERE user_id = 'u1' AND achievement_id = 'test_restraint')
-		 FROM achievement_unlocks WHERE user_id = 'u1' AND achievement_id = 'test_restraint'`).Scan(&n, &entryID); err != nil {
+		`SELECT COUNT(*), (SELECT entry_id FROM achievement_unlocks WHERE user_id = 'u3' AND achievement_id = 'test_restraint')
+		 FROM achievement_unlocks WHERE user_id = 'u3' AND achievement_id = 'test_restraint'`).Scan(&n, &entryID); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -384,11 +397,11 @@ func TestLazyTimeWindowEvaluation(t *testing.T) {
 	}
 
 	// Idempotent: re-running fills no gaps.
-	if err := run("u1", restraint, forever); err != nil {
+	if err := run("u3", restraint, forever); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM achievement_unlocks WHERE user_id = 'u1'`).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM achievement_unlocks WHERE user_id = 'u3'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {

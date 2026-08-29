@@ -33,6 +33,20 @@ const (
 const (
 	// cleanupCrewCount is how many finished games earn Cleanup Crew.
 	cleanupCrewCount = 5
+	// The volume ladder: finishes at large round numbers.
+	springCleaningCount = 10
+	deepCleanCount      = 25
+	hazmatSuitCount     = 50
+	thePurgeCount       = 100
+	// oneDownUnplayed is how many games must still be unplayed when a
+	// finish lands for One Down.
+	oneDownUnplayed = 10
+	// The backlog-reduction ladder: how far the unplayed count must sit
+	// below its all-time peak.
+	makingADentReduction      = 10
+	dentistAppointmentDrop    = 25
+	massExtinctionReduction   = 50
+	emptyTheClosetPeakUnowned = 10
 	// archaeologistWindow is how long a game must have been owned at finish.
 	archaeologistWindow = 5 * 365 * 24 * time.Hour
 	// abandonmentWindow is how long a dropped game must have been owned.
@@ -74,6 +88,15 @@ type Entry struct {
 	// UnplayedCount is how many owned games are still unplayed
 	// (backlog + playing) at evaluation time.
 	UnplayedCount int
+	// PeakUnplayedCount is the highest the unplayed count has ever been
+	// up to At — the all-time peak a reduction is measured against.
+	PeakUnplayedCount int
+	// YearFinishes is how many games were finished in At's calendar year,
+	// including this one.
+	YearFinishes int
+	// YearAdditions is how many non-wishlist games were added in At's
+	// calendar year, up to At.
+	YearAdditions int
 	// CreatedAtRank is the entry's position by created_at among the owned,
 	// finishable entries (oldest = 1). Generalizes IsOldestOwned to "oldest
 	// N" predicates; ties share a rank.
@@ -180,6 +203,128 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			ID:          "spring_cleaning",
+			Title:       "Spring Cleaning",
+			Description: "Finish 10 backlog games.",
+			Icon:        "broom",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.PlayedCount >= springCleaningCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "deep_clean",
+			Title:       "Deep Clean",
+			Description: "Finish 25 backlog games.",
+			Icon:        "bubbles",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.PlayedCount >= deepCleanCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "hazmat_suit",
+			Title:       "Hazmat Suit",
+			Description: "Finish 50 backlog games.",
+			Icon:        "gas-mask",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.PlayedCount >= hazmatSuitCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "the_purge",
+			Title:       "The Purge",
+			Description: "Finish 100 backlog games.",
+			Icon:        "small-fire",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.PlayedCount >= thePurgeCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "one_down",
+			Title:       "One Down",
+			Description: "Finish a game while 10+ sit unplayed.",
+			Icon:        "chevrons-down",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.UnplayedCount >= oneDownUnplayed
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "making_a_dent",
+			Title:       "Making a Dent",
+			Description: "Shrink your unplayed backlog by 10 from its peak.",
+			Icon:        "hammer-drop",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return (e.finished() || e.dropped()) && unplayedReduction(e.Entry) >= makingADentReduction
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "dentist_appointment",
+			Title:       "Dentist Appointment",
+			Description: "Shrink your unplayed backlog by 25 from its peak.",
+			Icon:        "tooth",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return (e.finished() || e.dropped()) && unplayedReduction(e.Entry) >= dentistAppointmentDrop
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "mass_extinction",
+			Title:       "Mass Extinction",
+			Description: "Shrink your unplayed backlog by 50 from its peak.",
+			Icon:        "meteor-impact",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return (e.finished() || e.dropped()) && unplayedReduction(e.Entry) >= massExtinctionReduction
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "empty_the_closet",
+			Title:       "Empty the Closet",
+			Description: "Reach zero unplayed games after hoarding 10+.",
+			Icon:        "wooden-door",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return (e.finished() || e.dropped()) &&
+				e.Entry.UnplayedCount == 0 &&
+				e.Entry.PeakUnplayedCount >= emptyTheClosetPeakUnowned
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "backlog_negative",
+			Title:       "Backlog Negative",
+			Description: "Finish more games in a year than you add.",
+			Icon:        "minus",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.YearFinishes > e.Entry.YearAdditions
+		},
+	},
+	{
+		Achievement: models.Achievement{
 			ID:          "archaeologist",
 			Title:       "Archaeologist",
 			Description: "Finish a game you owned for 5+ years.",
@@ -267,6 +412,12 @@ func ByID(id string) *models.Achievement {
 // ownedFor is how long the entry had been in the library at the event.
 func ownedFor(e Entry) time.Duration {
 	return e.At.Sub(e.CreatedAt)
+}
+
+// unplayedReduction is how far the unplayed backlog sits below its all-time
+// peak — finishes and drops both count as shrinking it, honesty included.
+func unplayedReduction(e Entry) int {
+	return e.PeakUnplayedCount - e.UnplayedCount
 }
 
 // Placeholders a locked hidden achievement is served with. The identity is

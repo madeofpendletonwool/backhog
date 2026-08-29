@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/achievements"
@@ -110,6 +111,33 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 		return err
 	}
 
+	// The peak-unplayed sweep: one pass over every owned entry's
+	// contribution interval, evaluated in Go. Libraries are hundreds of
+	// rows, not millions.
+	timeline, err := loadUnplayedTimelineTx(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	_, e.PeakUnplayedCount = timeline.stateAt(e.At)
+
+	// Backlog Negative compares this calendar year's finishes and
+	// acquisitions at the event's moment.
+	year := fmt.Sprintf("%04d", e.At.Year())
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM library_entries
+		WHERE user_id = ? AND status = 'played'
+		  AND finished_at IS NOT NULL AND strftime('%Y', finished_at) = ?`,
+		userID, year).Scan(&e.YearFinishes); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM library_entries
+		WHERE user_id = ? AND status <> 'wishlist'
+		  AND strftime('%Y', created_at) = ?`,
+		userID, year).Scan(&e.YearAdditions); err != nil {
+		return err
+	}
+
 	// Rank among owned, finishable entries — same population as IsOldestOwned.
 	// Timestamps are TEXT, so the comparison is lexicographic = chronological.
 	if err := tx.QueryRowContext(ctx, `
@@ -153,6 +181,119 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 
 	e.FinishYear, e.FinishMonth = e.At.Year(), int(e.At.Month())
 	return nil
+}
+
+// timelineEvent is one endpoint of an entry's unplayed-contribution
+// interval: +1 at acquisition, -1 when it stops being unplayed.
+type timelineEvent struct {
+	at    time.Time
+	delta int
+}
+
+// unplayedTimeline answers peak/current unplayed-count queries by sweeping
+// the contribution intervals of every owned entry. An entry contributes
+// from created_at until finished_at — which is the finish stamp on a played
+// game and the drop stamp on a dropped one — or until now when it is still
+// backlog or playing. Wishlist and ignored entries never contribute. Known
+// approximation, accepted by design: a wishlist→backlog promotion keeps its
+// original created_at, so it counts as unplayed from acquisition.
+type unplayedTimeline struct {
+	events []timelineEvent // sorted by (at, delta): interval ends before starts
+}
+
+// loadUnplayedTimelineTx reads every owned entry's interval endpoints.
+// Pre-feature played/dropped rows without finished_at collapse to an empty
+// interval at created_at, mirroring the backfill's timestamp fallback.
+func loadUnplayedTimelineTx(ctx context.Context, tx *sql.Tx, userID string) (*unplayedTimeline, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT status, created_at, finished_at FROM library_entries
+		WHERE user_id = ? AND status NOT IN ('wishlist','ignored')`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tl := &unplayedTimeline{}
+	for rows.Next() {
+		var status, createdRaw string
+		var finishedRaw sql.NullString
+		if err := rows.Scan(&status, &createdRaw, &finishedRaw); err != nil {
+			return nil, err
+		}
+		created, ok := parseDBTime(createdRaw)
+		if !ok {
+			continue
+		}
+		tl.events = append(tl.events, timelineEvent{at: created, delta: 1})
+		switch status {
+		case models.StatusBacklog, models.StatusPlaying:
+			// Still unplayed: the interval runs to now, no end event.
+		default:
+			endRaw := finishedRaw.String
+			if !finishedRaw.Valid {
+				endRaw = createdRaw
+			}
+			if end, ok := parseDBTime(endRaw); ok {
+				tl.events = append(tl.events, timelineEvent{at: end, delta: -1})
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(tl.events, func(i, j int) bool {
+		if !tl.events[i].at.Equal(tl.events[j].at) {
+			return tl.events[i].at.Before(tl.events[j].at)
+		}
+		return tl.events[i].delta < tl.events[j].delta
+	})
+	return tl, nil
+}
+
+// stateAt returns the unplayed count at t and the peak count up to t, in
+// one pass over the sorted events.
+func (tl *unplayedTimeline) stateAt(t time.Time) (current, peak int) {
+	count := 0
+	for _, ev := range tl.events {
+		if ev.at.After(t) {
+			break
+		}
+		count += ev.delta
+		if count > peak {
+			peak = count
+		}
+	}
+	return count, peak
+}
+
+// additions returns every non-wishlist acquisition timestamp in order —
+// ignored entries included, an acquisition is an acquisition — for the
+// backfill's running same-year addition counts.
+func additionsTx(ctx context.Context, tx *sql.Tx, userID string) ([]time.Time, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT created_at FROM library_entries
+		WHERE user_id = ? AND status <> 'wishlist'`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []time.Time
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if t, ok := parseDBTime(raw); ok {
+			out = append(out, t)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out, nil
 }
 
 // lastDroppedAtTx returns when the entry was last dropped: the newest
@@ -290,9 +431,34 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		return err
 	}
 
+	// The sweep backs the peak-reduction predicates, and the additions
+	// walk keeps same-year acquisition counts honest at each historical
+	// finish — a game added in March must not count against a February
+	// finish. Finishes replay in ascending At order, so one pointer
+	// serves the whole pass.
+	timeline, err := loadUnplayedTimelineTx(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	additions, err := additionsTx(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	yearFinishes, yearAdditions := map[int]int{}, map[int]int{}
+	ai := 0
+
 	for i := range played {
 		played[i].PlayedCount = i + 1
 		played[i].IsOldestOwned = oldest != nil && !played[i].CreatedAt.After(*oldest)
+		for ai < len(additions) && !additions[ai].After(played[i].At) {
+			yearAdditions[additions[ai].Year()]++
+			ai++
+		}
+		year := played[i].At.Year()
+		yearFinishes[year]++
+		played[i].YearFinishes = yearFinishes[year]
+		played[i].YearAdditions = yearAdditions[year]
+		played[i].UnplayedCount, played[i].PeakUnplayedCount = timeline.stateAt(played[i].At)
 		ev := achievements.Event{Kind: achievements.EventFinished, Entry: played[i]}
 		for _, def := range achievements.Catalogue {
 			if !def.Predicate(ev) {
@@ -334,6 +500,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	}
 
 	for _, e := range dropped {
+		e.UnplayedCount, e.PeakUnplayedCount = timeline.stateAt(e.At)
 		ev := achievements.Event{Kind: achievements.EventDropped, Entry: e}
 		for _, def := range achievements.Catalogue {
 			if !def.Predicate(ev) {

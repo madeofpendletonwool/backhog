@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,7 +14,8 @@ import (
 // newAchievementsStore opens a migrated SQLite database in a temp dir seeded
 // with u1's mixed history — four finished games across the ownership ages, one
 // drop, one backlog straggler — and u2 with nothing, for scoping checks.
-// Dates are relative to now so the suite holds whenever it runs.
+// Dates are anchored to calendar years (relative to whenever the suite runs)
+// because the year-scoped predicates compare calendar-year buckets.
 func newAchievementsStore(t *testing.T) *Store {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "achievements.db"))
@@ -53,32 +55,41 @@ func newAchievementsStore(t *testing.T) *Store {
 			g.id, "Game "+string(rune('A'+g.id-1)), g.main*3600, g.complete*3600)
 	}
 
-	now := time.Now().UTC()
-	ago := func(days int) time.Time { return now.AddDate(0, 0, -days) }
-	stamp := func(t time.Time) string { return t.Format("2006-01-02 15:04:05") }
+	// ymd builds an explicit UTC calendar stamp: the year comparisons
+	// (Backlog Negative) need dates that sit in known buckets no matter
+	// when the suite runs.
+	year := time.Now().UTC().Year()
+	ymd := func(offsetYears int, monthDay string) string {
+		return time.Date(year+offsetYears, 1, 1, 12, 0, 0, 0, time.UTC).
+			Format("2006") + "-" + monthDay + " 12:00:00"
+	}
 
-	addEntry := func(id string, userID string, gameID int64, status string, createdDaysAgo int, finishedDaysAgo int, sessionMinutes []int) {
+	addEntry := func(id string, userID string, gameID int64, status string, created string, finished string, sessionMinutes []int) {
 		t.Helper()
 		var fin any
-		if finishedDaysAgo > 0 {
-			fin = stamp(ago(finishedDaysAgo))
+		if finished != "" {
+			fin = finished
 		}
 		exec(`INSERT INTO library_entries (id, user_id, game_id, status, created_at, finished_at)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-			id, userID, gameID, status, stamp(ago(createdDaysAgo)), fin)
+			id, userID, gameID, status, created, fin)
 		for i, minutes := range sessionMinutes {
 			exec(`INSERT INTO play_sessions (id, user_id, entry_id, played_on, minutes)
 				VALUES (?, ?, ?, ?, ?)`,
-				"ps-"+id+string(rune('a'+i)), userID, id, stamp(ago(35))[:10], minutes)
+				"ps-"+id+string(rune('a'+i)), userID, id, created[:10], minutes)
 		}
 	}
 
-	addEntry("a1", "u1", 1, models.StatusPlayed, 8*365, 120, []int{120, 60})
-	addEntry("a2", "u1", 2, models.StatusPlayed, 40, 90, []int{300})
-	addEntry("a3", "u1", 3, models.StatusPlayed, 500, 60, []int{1440, 1440, 1440, 1440, 60})
-	addEntry("a4", "u1", 4, models.StatusPlayed, 200, 30, []int{960})
-	addEntry("a5", "u1", 5, models.StatusDropped, 800, 100, nil)
-	addEntry("a6", "u1", 6, models.StatusBacklog, 2200, 0, nil)
+	// u1's history: an 8-year-old dig finished first, three more finishes
+	// spaced through last year, a drop after ~21 months, and an ancient
+	// backlog straggler. Two of the entries were added last year, so the
+	// third finish of the year is where finishes overtake additions.
+	addEntry("a1", "u1", 1, models.StatusPlayed, ymd(-8, "03-01"), ymd(-1, "06-10"), []int{120, 60})
+	addEntry("a2", "u1", 2, models.StatusPlayed, ymd(-1, "01-05"), ymd(-1, "06-20"), []int{300})
+	addEntry("a3", "u1", 3, models.StatusPlayed, ymd(-2, "09-15"), ymd(-1, "06-25"), []int{1440, 1440, 1440, 1440, 60})
+	addEntry("a4", "u1", 4, models.StatusPlayed, ymd(-1, "02-01"), ymd(-1, "07-05"), []int{960})
+	addEntry("a5", "u1", 5, models.StatusDropped, ymd(-3, "05-01"), ymd(-1, "02-20"), nil)
+	addEntry("a6", "u1", 6, models.StatusBacklog, ymd(-6, "01-10"), "", nil)
 
 	return s
 }
@@ -111,16 +122,19 @@ func TestAchievementsBackfill(t *testing.T) {
 	want := map[string]string{
 		// a1 is the first finish, the oldest-owned game, an 8-year dig with
 		// 3h logged — four achievements off one game.
-		"first_blood":        "a1",
-		"archaeologist":      "a1",
-		"speedrun":           "a1",
-		"the_ancient_one":    "a1",
+		"first_blood":     "a1",
+		"archaeologist":   "a1",
+		"speedrun":        "a1",
+		"the_ancient_one": "a1",
 		// a3 is the 60h main-estimate game.
-		"long_haul":          "a3",
+		"long_haul": "a3",
 		// a4 logged exactly its 16h completion estimate.
-		"completionist":      "a4",
-		// a5 was dropped after ~2.2 years of ownership.
+		"completionist": "a4",
+		// a5 was dropped after ~21 months of ownership.
 		"abandonment_issues": "a5",
+		// The third finish of last year overtakes that year's two
+		// additions.
+		"backlog_negative": "a3",
 		// Four finished games: cleanup_crew needs five.
 	}
 	got := unlockedIDs(achievements)
@@ -169,17 +183,20 @@ func TestUpdateEntryUnlocksAchievements(t *testing.T) {
 	ctx := context.Background()
 
 	// Finishing the fifth game crosses the cleanup_crew line; a6 is a ~6
-	// year dig with nothing logged, so archaeologist and speedrun ride along.
+	// year dig with nothing logged, so archaeologist and speedrun ride
+	// along, and this year's finishes (one) already outnumber this year's
+	// additions (none).
 	_, unlocks, err := s.UpdateEntry(ctx, "u1", "a6", EntryUpdate{Status: strptr(models.StatusPlayed)})
 	if err != nil {
 		t.Fatalf("UpdateEntry: %v", err)
 	}
 	got := unlockedIDs(unlocks)
 	want := map[string]string{
-		"first_blood":   "a6",
-		"cleanup_crew":  "a6",
-		"speedrun":      "a6",
-		"archaeologist": "a6",
+		"first_blood":      "a6",
+		"cleanup_crew":     "a6",
+		"speedrun":         "a6",
+		"archaeologist":    "a6",
+		"backlog_negative": "a6",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("live unlocks = %v, want %v", got, want)
@@ -331,5 +348,249 @@ func TestSeason(t *testing.T) {
 	if prevSeason.GamesCompleted != 1 || prevSeason.HoursPlayed != 1.5 ||
 		prevSeason.Rescues != 0 || prevSeason.FranchisesCleared != 0 {
 		t.Errorf("prev season = %+v, want 1 completion / 1.5h / 0 rescues / 0 franchises", prevSeason)
+	}
+}
+
+// volumeFixture is the shared scaffolding for the volume/reduction tests: a
+// fresh user u3, a batch of game rows, and entries stamped with explicit
+// calendar dates so year-scoped predicates sit in known buckets.
+type volumeFixture struct {
+	s  *Store
+	tx func(query string, args ...any)
+}
+
+func newVolumeFixture(t *testing.T, gameCount int) *volumeFixture {
+	t.Helper()
+	s := newAchievementsStore(t)
+	ctx := context.Background()
+	database := s.DB()
+	f := &volumeFixture{s: s}
+	f.tx = func(query string, args ...any) {
+		t.Helper()
+		if _, err := database.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	f.tx(`INSERT INTO users (id, email, username, password_hash) VALUES ('u3', 'u3@example.com', 'u3', 'x')`)
+	for i := 0; i < gameCount; i++ {
+		f.tx(`INSERT INTO games (id, name) VALUES (?, ?)`, 100+i, "Volume Game "+string(rune('A'+i)))
+	}
+	return f
+}
+
+// add inserts one library entry against game i of the fixture's batch;
+// finished empty means never.
+func (f *volumeFixture) add(id string, game int, status, created, finished string) {
+	var fin any
+	if finished != "" {
+		fin = finished
+	}
+	f.tx(`INSERT INTO library_entries (id, user_id, game_id, status, created_at, finished_at)
+		VALUES (?, ?, ?, ?, ?, ?)`, id, "u3", 100+game, status, created, fin)
+}
+
+// ymdStamp formats an explicit calendar stamp — offsetYears back from the
+// current year plus month-day — at a fixed hour so ties never collide.
+func ymdStamp(offsetYears int, monthDay string) string {
+	year := time.Now().UTC().Year()
+	return time.Date(year+offsetYears, 1, 1, 12, 0, 0, 0, time.UTC).
+		Format("2006") + "-" + monthDay + " 12:00:00"
+}
+
+// TestBackfillVolumeLadderAttach pins the count ladder to the game that
+// crossed the line, One Down's ten-unplayed boundary, the peak-reduction
+// crossing, and the running year counts behind Backlog Negative — all
+// through the gallery's completion-order replay.
+func TestBackfillVolumeLadderAttach(t *testing.T) {
+	f := newVolumeFixture(t, 12)
+	ctx := context.Background()
+
+	// Ten games bought two years ago, finished monthly through last year
+	// (entry i in month i+1). One straggler is added five days before the
+	// first finish, so the peak hits eleven and the year's finishes
+	// overtake its additions only at the second finish.
+	for i := 0; i < 10; i++ {
+		f.add(fmt.Sprintf("c%d", i), i, models.StatusPlayed,
+			ymdStamp(-2, fmt.Sprintf("01-%02d", i+1)),
+			ymdStamp(-1, fmt.Sprintf("%02d-15", i+1)))
+	}
+	f.add("straggler", 10, models.StatusBacklog, ymdStamp(-1, "01-05"), "")
+
+	statuses, err := f.s.Achievements(ctx, "u3")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	want := map[string]string{
+		// The first finish is also the oldest owned game, unlogged, and
+		// leaves exactly ten unplayed behind.
+		"first_blood":     "c0",
+		"speedrun":        "c0",
+		"the_ancient_one": "c0",
+		"one_down":        "c0",
+		// Two finishes vs one same-year addition at the second finish.
+		"backlog_negative": "c1",
+		// The count ladder attaches to its crossing game.
+		"cleanup_crew":    "c4",
+		"spring_cleaning": "c9",
+		// Peak eleven, one left after the tenth finish: reduction ten.
+		"making_a_dent": "c9",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unlocked %v, want exactly %v", got, want)
+	}
+	for id, entryID := range want {
+		if got[id] != entryID {
+			t.Errorf("%s attached to %q, want %q", id, got[id], entryID)
+		}
+	}
+
+	// Idempotent: the gallery's backfill re-runs on every load.
+	database := f.s.DB()
+	var count int
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM achievement_unlocks WHERE user_id = 'u3'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Achievements(ctx, "u3"); err != nil {
+		t.Fatal(err)
+	}
+	var again int
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM achievement_unlocks WHERE user_id = 'u3'`).Scan(&again); err != nil {
+		t.Fatal(err)
+	}
+	if again != count {
+		t.Errorf("second backfill changed unlock count %d → %d", count, again)
+	}
+}
+
+// TestBackfillPeakReductionAndCloset drives the peak sweep through mixed
+// acquisition and finish times: the peak sits mid-history above both the
+// starting and ending counts, and Empty the Closet needs both a zero count
+// and a ten-plus peak.
+func TestBackfillPeakReductionAndCloset(t *testing.T) {
+	f := newVolumeFixture(t, 12)
+	ctx := context.Background()
+
+	// Five games three years ago; the first finishes that July (count 4,
+	// peak 5). Six more arrive two years ago, lifting the peak to ten.
+	// Last year the remaining ten finish monthly: the tenth empties the
+	// library — reduction ten and a closed closet on the same game.
+	f.add("p0", 0, models.StatusPlayed, ymdStamp(-3, "01-01"), ymdStamp(-3, "07-01"))
+	for i := 1; i <= 4; i++ {
+		f.add(fmt.Sprintf("p%d", i), i, models.StatusPlayed,
+			ymdStamp(-3, fmt.Sprintf("01-%02d", i+1)), ymdStamp(-1, fmt.Sprintf("%02d-15", i)))
+	}
+	for i := 5; i <= 10; i++ {
+		f.add(fmt.Sprintf("p%d", i), i, models.StatusPlayed,
+			ymdStamp(-2, "01-15"), ymdStamp(-1, fmt.Sprintf("%02d-15", i)))
+	}
+
+	statuses, err := f.s.Achievements(ctx, "u3")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	want := map[string]string{
+		// The Y-3 finish: first, unlogged, oldest, four left unplayed.
+		"first_blood":     "p0",
+		"speedrun":        "p0",
+		"the_ancient_one": "p0",
+		// No additions last year: the first finish of the year tips the
+		// year negative.
+		"backlog_negative": "p1",
+		// Fifth total finish p4, tenth p9.
+		"cleanup_crew":    "p4",
+		"spring_cleaning": "p9",
+		// Peak ten, zero left after the eleventh total finish: the dent
+		// ladder crosses exactly as the closet closes.
+		"making_a_dent":    "p10",
+		"empty_the_closet": "p10",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unlocked %v, want exactly %v", got, want)
+	}
+	for id, entryID := range want {
+		if got[id] != entryID {
+			t.Errorf("%s attached to %q, want %q", id, got[id], entryID)
+		}
+	}
+}
+
+// TestBacklogNegativeYearBoundaries checks the calendar-year semantics:
+// additions after a finish never count against it, prior-year additions
+// never count, and equality is not negative.
+func TestBacklogNegativeYearBoundaries(t *testing.T) {
+	f := newVolumeFixture(t, 3)
+	ctx := context.Background()
+
+	// m1 finishes five days after its own addition. m2 is added after
+	// m1's finish, so at m2's finish the year holds two additions and two
+	// finishes. m3 was added last December — a different bucket — and its
+	// March finish makes the count three against two.
+	f.add("m1", 0, models.StatusPlayed, ymdStamp(-1, "01-10"), ymdStamp(-1, "01-15"))
+	f.add("m2", 1, models.StatusPlayed, ymdStamp(-1, "01-20"), ymdStamp(-1, "02-01"))
+	f.add("m3", 2, models.StatusPlayed, ymdStamp(-2, "12-01"), ymdStamp(-1, "03-01"))
+
+	statuses, err := f.s.Achievements(ctx, "u3")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	want := map[string]string{
+		"first_blood":      "m1",
+		"speedrun":         "m1",
+		"the_ancient_one":  "m3", // added last December, the oldest owned
+		"backlog_negative": "m3",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unlocked %v, want exactly %v", got, want)
+	}
+	for id, entryID := range want {
+		if got[id] != entryID {
+			t.Errorf("%s attached to %q, want %q", id, got[id], entryID)
+		}
+	}
+}
+
+// TestLiveDropsReduceBacklog covers the live drop path: honesty shrinks the
+// unplayed count too, so the dent ladder and the closed closet both unlock
+// through UpdateEntry drops.
+func TestLiveDropsReduceBacklog(t *testing.T) {
+	f := newVolumeFixture(t, 12)
+	ctx := context.Background()
+
+	for i := 0; i < 12; i++ {
+		f.add(fmt.Sprintf("d%d", i), i, models.StatusBacklog, ymdStamp(-1, "01-01"), "")
+	}
+
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("d%d", i)
+		_, unlocks, err := f.s.UpdateEntry(ctx, "u3", id, EntryUpdate{Status: strptr(models.StatusDropped)})
+		if err != nil {
+			t.Fatalf("drop %s: %v", id, err)
+		}
+		got := unlockedIDs(unlocks)
+		switch i {
+		case 9: // tenth drop: reduction exactly ten
+			if got["making_a_dent"] != id {
+				t.Errorf("after 10 drops, making_a_dent = %q, want %q", got["making_a_dent"], id)
+			}
+		case 10: // eleventh: nothing new on the dent ladder
+			if _, ok := got["making_a_dent"]; ok {
+				t.Errorf("making_a_dent unlocked again at %s", id)
+			}
+		case 11: // twelfth: the closet closes
+			if got["empty_the_closet"] != id {
+				t.Errorf("after 12 drops, empty_the_closet = %q, want %q", got["empty_the_closet"], id)
+			}
+			if got["mass_extinction"] != "" {
+				t.Errorf("mass_extinction unlocked at %s, want still locked (reduction 12 < 50)", id)
+			}
+		}
+		if got["one_down"] != "" {
+			t.Errorf("one_down unlocked on a drop, want finish-only")
+		}
 	}
 }

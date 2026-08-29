@@ -56,6 +56,123 @@ func TestPredicates(t *testing.T) {
 			want: []string{"first_blood", "cleanup_crew"},
 		},
 		{
+			name: "tenth finish unlocks spring cleaning",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 10,
+			}},
+			want: []string{"first_blood", "cleanup_crew", "spring_cleaning"},
+		},
+		{
+			name: "hundredth finish fires the whole volume ladder",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 100,
+			}},
+			want: []string{"first_blood", "cleanup_crew", "spring_cleaning",
+				"deep_clean", "hazmat_suit", "the_purge"},
+		},
+		{
+			name: "finish with exactly ten unplayed earns one down",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2, UnplayedCount: 10,
+			}},
+			want: []string{"first_blood", "one_down"},
+		},
+		{
+			name: "nine unplayed is not one down",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2, UnplayedCount: 9,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "peak shrunk by ten earns making a dent",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				PeakUnplayedCount: 20, UnplayedCount: 10,
+			}},
+			want: []string{"first_blood", "one_down", "making_a_dent"},
+		},
+		{
+			name: "drop counts as backlog reduction too",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:            models.StatusDropped,
+				CreatedAt:         time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:                time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				PeakUnplayedCount: 60, UnplayedCount: 10,
+			}},
+			want: []string{"making_a_dent", "dentist_appointment", "mass_extinction"},
+		},
+		{
+			name: "reduction of nine earns nothing on the dent ladder",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				PeakUnplayedCount: 20, UnplayedCount: 11,
+			}},
+			want: []string{"first_blood", "one_down"},
+		},
+		{
+			name: "zero unplayed after a ten-plus peak empties the closet",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				PeakUnplayedCount: 10, UnplayedCount: 0,
+			}},
+			want: []string{"first_blood", "making_a_dent", "empty_the_closet"},
+		},
+		{
+			name: "empty library from day one does not empty the closet",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				PeakUnplayedCount: 3, UnplayedCount: 0,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "finishing more than added in the year goes negative",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				YearFinishes: 3, YearAdditions: 2,
+			}},
+			want: []string{"first_blood", "backlog_negative"},
+		},
+		{
+			name: "finishing exactly as many as added is not negative",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				YearFinishes: 2, YearAdditions: 2,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
 			name: "finish after five years of ownership",
 			event: Event{Kind: EventFinished, Entry: Entry{
 				Status:        models.StatusPlayed,

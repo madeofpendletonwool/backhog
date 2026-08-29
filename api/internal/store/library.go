@@ -171,10 +171,11 @@ type EntryUpdate struct {
 }
 
 // UpdateEntry applies a partial update. Status transitions stamp started_at and
-// finished_at, and moving in or out of 'backlog' adds or removes the entry from
-// the play queue, so the queue always reflects exactly what is still unplayed.
-// Finishing or dropping a game evaluates achievements inside the same
-// transaction; any newly unlocked ones are returned for the UI toast.
+// finished_at, append a row to the status history, and move the entry in or out
+// of the play queue as it leaves or re-enters 'backlog', so the queue always
+// reflects exactly what is still unplayed. Finishing, dropping, or resuming a
+// dropped game evaluates achievements inside the same transaction; any newly
+// unlocked ones are returned for the UI toast.
 func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u EntryUpdate) (models.Entry, []models.AchievementStatus, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -183,10 +184,10 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 	defer tx.Rollback()
 
 	var currentStatus string
-	var startedAt sql.NullTime
+	var startedAt, finishedAt sql.NullTime
 	err = tx.QueryRowContext(ctx,
-		`SELECT status, started_at FROM library_entries WHERE user_id = ? AND id = ?`,
-		userID, entryID).Scan(&currentStatus, &startedAt)
+		`SELECT status, started_at, finished_at FROM library_entries WHERE user_id = ? AND id = ?`,
+		userID, entryID).Scan(&currentStatus, &startedAt, &finishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Entry{}, nil, ErrNotFound
 	}
@@ -197,6 +198,9 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 	sets := []string{"updated_at = CURRENT_TIMESTAMP"}
 	var args []any
 	evalKind := ""
+	// For a resumed entry whose drop predates the status history table, the
+	// pre-update finished_at is the only record of when it was dropped.
+	var droppedAtFallback *time.Time
 
 	if u.Status != nil && *u.Status != currentStatus {
 		if !models.ValidStatus(*u.Status) {
@@ -205,6 +209,10 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 		newStatus := *u.Status
 		sets = append(sets, "status = ?")
 		args = append(args, newStatus)
+
+		if err := recordStatusChangeTx(ctx, tx, userID, entryID, currentStatus, newStatus); err != nil {
+			return models.Entry{}, nil, err
+		}
 
 		switch newStatus {
 		case models.StatusPlaying:
@@ -223,6 +231,18 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 			evalKind = achievements.EventDropped
 		case models.StatusBacklog, models.StatusWishlist:
 			sets = append(sets, "started_at = NULL", "finished_at = NULL")
+		}
+
+		// A dropped game coming back is a resume — the comeback
+		// achievements key off it. Going to wishlist is leaving, not
+		// returning; finishing a dropped game is just a finish.
+		if currentStatus == models.StatusDropped &&
+			(newStatus == models.StatusPlaying || newStatus == models.StatusBacklog) {
+			evalKind = achievements.EventResumed
+			if finishedAt.Valid {
+				t := finishedAt.Time
+				droppedAtFallback = &t
+			}
 		}
 
 		if newStatus == models.StatusBacklog {
@@ -270,7 +290,7 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 
 	var newly []unlockStub
 	if evalKind != "" {
-		newly, err = evaluateAchievementsTx(ctx, tx, userID, entryID, evalKind)
+		newly, err = evaluateAchievementsTx(ctx, tx, userID, entryID, evalKind, droppedAtFallback)
 		if err != nil {
 			return models.Entry{}, nil, err
 		}
@@ -284,6 +304,17 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 		return models.Entry{}, nil, err
 	}
 	return entry, s.hydrateUnlocks(ctx, userID, newly), nil
+}
+
+// recordStatusChangeTx appends one row to the entry's status history, inside
+// the caller's transaction. Every transition writes a row — it is the only
+// record of when a game was dropped or resumed once finished_at is wiped.
+func recordStatusChangeTx(ctx context.Context, tx *sql.Tx, userID, entryID, fromStatus, toStatus string) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO entry_status_history (id, entry_id, user_id, from_status, to_status)
+		VALUES (?, ?, ?, ?, ?)`,
+		newID(), entryID, userID, fromStatus, toStatus)
+	return err
 }
 
 // DeleteEntry removes a game from a user's library.

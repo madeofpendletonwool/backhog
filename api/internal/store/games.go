@@ -60,7 +60,7 @@ func (s *Store) UpsertGame(ctx context.Context, g metadata.Game, accentHex strin
 	if err := replaceRefs(ctx, tx, "genres", "game_genres", "genre_id", g.ID, g.Genres); err != nil {
 		return err
 	}
-	if err := replaceRefs(ctx, tx, "platforms", "game_platforms", "platform_id", g.ID, g.Platforms); err != nil {
+	if err := replacePlatforms(ctx, tx, g.ID, g.Platforms); err != nil {
 		return err
 	}
 
@@ -75,8 +75,8 @@ func (s *Store) UpsertGame(ctx context.Context, g metadata.Game, accentHex strin
 	return tx.Commit()
 }
 
-// replaceRefs upserts the lookup rows (genres/platforms) and rewrites the join
-// table for one game.
+// replaceRefs upserts the genre lookup rows and rewrites the join table for
+// one game.
 func replaceRefs(ctx context.Context, tx *sql.Tx, lookupTable, joinTable, joinCol string, gameID int64, refs []metadata.Ref) error {
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM `+joinTable+` WHERE game_id = ?`, gameID); err != nil {
@@ -93,6 +93,46 @@ func replaceRefs(ctx context.Context, tx *sql.Tx, lookupTable, joinTable, joinCo
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO `+joinTable+` (game_id, `+joinCol+`) VALUES (?, ?)
+			 ON CONFLICT DO NOTHING`, gameID, ref.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replacePlatforms rewrites the game's platform links. Unlike genres, the
+// platform lookup rows carry the curated classification from the metadata
+// catalog, written in the same upsert so a platform is never visible
+// unclassified once the catalog knows it.
+func replacePlatforms(ctx context.Context, tx *sql.Tx, gameID int64, refs []metadata.Ref) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM game_platforms WHERE game_id = ?`, gameID); err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref.ID == 0 || ref.Name == "" {
+			continue
+		}
+		meta, known := metadata.PlatformCatalog[ref.ID]
+		var generation any // NULL when the catalog has no entry for the id
+		if known {
+			generation = meta.Generation
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO platforms (id, name, generation, family, manufacturer, handheld)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				name        = excluded.name,
+				generation  = excluded.generation,
+				family      = excluded.family,
+				manufacturer = excluded.manufacturer,
+				handheld    = excluded.handheld`,
+			ref.ID, ref.Name, generation,
+			meta.Family, meta.Manufacturer, meta.Handheld); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_platforms (game_id, platform_id) VALUES (?, ?)
 			 ON CONFLICT DO NOTHING`, gameID, ref.ID); err != nil {
 			return err
 		}
@@ -195,24 +235,63 @@ func (s *Store) gamesByID(ctx context.Context, ids []int64) (map[int64]models.Ga
 			g.Extras = json.RawMessage(extras)
 		}
 		g.Genres = []models.NamedRef{}
-		g.Platforms = []models.NamedRef{}
+		g.Platforms = []models.Platform{}
 		out[g.ID] = g
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	if err := s.attachRefs(ctx, out, ids, "game_genres", "genres", "genre_id", true); err != nil {
+	if err := s.attachRefs(ctx, out, ids, "game_genres", "genres", "genre_id"); err != nil {
 		return nil, err
 	}
-	if err := s.attachRefs(ctx, out, ids, "game_platforms", "platforms", "platform_id", false); err != nil {
+	if err := s.attachPlatforms(ctx, out, ids); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
+// attachPlatforms loads platform links with the curated classification.
+// Unclassified platforms degrade to family "other" / manufacturer "Other"
+// and a NULL generation rather than failing the read.
+func (s *Store) attachPlatforms(ctx context.Context, games map[int64]models.Game, ids []int64) error {
+	placeholders, args := inClause(ids)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT j.game_id, l.id, l.name,
+		       COALESCE(NULLIF(l.manufacturer, ''), 'Other'),
+		       COALESCE(NULLIF(l.family, ''), 'other'),
+		       l.generation, l.handheld
+		FROM game_platforms j JOIN platforms l ON l.id = j.platform_id
+		WHERE j.game_id IN (`+placeholders+`)
+		ORDER BY l.name`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gameID int64
+		var p models.Platform
+		var generation sql.NullInt64
+		if err := rows.Scan(&gameID, &p.ID, &p.Name, &p.Manufacturer, &p.Family, &generation, &p.Handheld); err != nil {
+			return err
+		}
+		if generation.Valid {
+			g := int(generation.Int64)
+			p.Generation = &g
+		}
+		g, ok := games[gameID]
+		if !ok {
+			continue
+		}
+		g.Platforms = append(g.Platforms, p)
+		games[gameID] = g
+	}
+	return rows.Err()
+}
+
 func (s *Store) attachRefs(ctx context.Context, games map[int64]models.Game, ids []int64,
-	joinTable, lookupTable, joinCol string, isGenre bool) error {
+	joinTable, lookupTable, joinCol string) error {
 
 	placeholders, args := inClause(ids)
 	rows, err := s.db.QueryContext(ctx, `
@@ -235,11 +314,7 @@ func (s *Store) attachRefs(ctx context.Context, games map[int64]models.Game, ids
 		if !ok {
 			continue
 		}
-		if isGenre {
-			g.Genres = append(g.Genres, ref)
-		} else {
-			g.Platforms = append(g.Platforms, ref)
-		}
+		g.Genres = append(g.Genres, ref)
 		games[gameID] = g
 	}
 	return rows.Err()

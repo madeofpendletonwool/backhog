@@ -38,7 +38,7 @@ func newFixtureStore(t *testing.T) *Store {
 		('u3', 'u3@example.com', 'u3', 'x')`)
 
 	exec(`INSERT INTO genres (id, name) VALUES (31, 'JRPG'), (32, 'Adventure'), (33, 'Puzzle')`)
-	exec(`INSERT INTO platforms (id, name) VALUES (6, 'PC (Microsoft Windows)'), (130, 'Steam Deck')`)
+	exec(`INSERT INTO platforms (id, name) VALUES (6, 'PC (Microsoft Windows)'), (130, 'Nintendo Switch')`)
 
 	// day truncates to a DATE string for played_on / created_at columns.
 	day := func(t time.Time) string { return t.Format("2006-01-02") }

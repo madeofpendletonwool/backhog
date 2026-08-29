@@ -24,6 +24,17 @@ export interface NamedRef {
   name: string;
 }
 
+/**
+ * A platform with its curated classification. Unclassified platforms come
+ * back as family "other" with a null generation.
+ */
+export interface Platform extends NamedRef {
+  manufacturer: string;
+  family: string;
+  generation: number | null;
+  handheld: boolean;
+}
+
 export interface Game {
   id: number;
   name: string;
@@ -36,7 +47,7 @@ export interface Game {
   time_to_beat_main: number | null;
   time_to_beat_complete: number | null;
   genres: NamedRef[];
-  platforms: NamedRef[];
+  platforms: Platform[];
   extras: GameExtras | null;
 }
 

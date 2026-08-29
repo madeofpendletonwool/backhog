@@ -8,6 +8,7 @@ import type {
   NamedRef,
   PlayOrder,
   PlaySession,
+  Platform,
   Project,
   ProjectItem,
   ProjectKind,
@@ -191,7 +192,7 @@ export const api = {
 
   health: () => request<{ status: string; metadata: boolean; steam: boolean }>("/healthz"),
 
-  facets: () => request<{ platforms: NamedRef[]; genres: NamedRef[] }>("/library/facets"),
+  facets: () => request<{ platforms: Platform[]; genres: NamedRef[] }>("/library/facets"),
 
   queue: () => request<{ entries: Entry[] }>("/library/queue"),
 

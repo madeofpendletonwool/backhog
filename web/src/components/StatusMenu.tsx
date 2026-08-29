@@ -1,9 +1,11 @@
 import { cn } from "@/lib/cn";
+import { useState } from "react";
 
 import { useUpdateEntry } from "@/hooks/useLibrary";
 import { QUICK_STATUSES, STATUS_LABELS, type Entry, type Status } from "@/lib/types";
 import { STATUS_ICONS } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
+import { Dialog } from "./ui/Dialog";
 
 const activeStyles: Record<Status, string> = {
   backlog: "bg-slate-500 text-white",
@@ -20,6 +22,10 @@ const activeStyles: Record<Status, string> = {
  *
  * `statuses` defaults to the quick-access set (no wishlist). The detail page
  * passes the full list so wishlist can be set there.
+ *
+ * Marking a game finished without a "playing on" platform first asks which
+ * platform it was finished on: platform progress counts the platform you
+ * actually played, not the ones the game shipped for.
  */
 export function StatusMenu({
   entry,
@@ -31,47 +37,125 @@ export function StatusMenu({
   statuses?: Status[];
 }) {
   const update = useUpdateEntry();
+  const [askPlatform, setAskPlatform] = useState(false);
+
+  const markPlayed = (platformId: number | null) =>
+    update.mutate({
+      id: entry.id,
+      patch: platformId == null ? { status: "played" } : { status: "played", platform_id: platformId },
+    });
+
+  const shouldAsk =
+    statuses.includes("played") && entry.platform_id == null && entry.game.platforms.length > 0;
 
   return (
-    <div
-      role="group"
-      aria-label={`Status for ${entry.game.name}`}
-      className={cn(
-        "gap-0.5 bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
-        size === "md" ? "grid grid-cols-3 sm:flex sm:items-center" : "flex items-center",
-        update.isPending && "opacity-60",
-      )}
-    >
-      {statuses.map((status) => {
-        const isActive = entry.status === status;
-        return (
+    <>
+      <div
+        role="group"
+        aria-label={`Status for ${entry.game.name}`}
+        className={cn(
+          "gap-0.5 bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
+          size === "md" ? "grid grid-cols-3 sm:flex sm:items-center" : "flex items-center",
+          update.isPending && "opacity-60",
+        )}
+      >
+        {statuses.map((status) => {
+          const isActive = entry.status === status;
+          return (
+            <button
+              key={status}
+              type="button"
+              title={STATUS_LABELS[status]}
+              aria-label={STATUS_LABELS[status]}
+              aria-pressed={isActive}
+              disabled={update.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (isActive) return;
+                if (status === "played" && shouldAsk) {
+                  setAskPlatform(true);
+                  return;
+                }
+                update.mutate({ id: entry.id, patch: { status } });
+              }}
+              className={cn(
+                "flex flex-1 items-center justify-center transition-colors",
+                size === "sm" ? "h-7" : "h-8 px-3",
+                isActive
+                  ? activeStyles[status]
+                  : "text-ink-400 hover:bg-white/[0.08] hover:text-ink-100",
+                "focus-visible:focus-ring disabled:cursor-not-allowed",
+              )}
+            >
+              <Gi name={STATUS_ICONS[status]} className="size-3.5" />
+              {size === "md" && <span className="ml-1.5 text-xs font-medium">{STATUS_LABELS[status]}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      <PlatformPrompt
+        open={askPlatform}
+        entry={entry}
+        pending={update.isPending}
+        onPick={(platformId) => {
+          setAskPlatform(false);
+          markPlayed(platformId);
+        }}
+      />
+    </>
+  );
+}
+
+/** The "which platform did you finish it on?" nudge for platformless finishes. */
+function PlatformPrompt({
+  open,
+  entry,
+  pending,
+  onPick,
+}: {
+  open: boolean;
+  entry: Entry;
+  pending: boolean;
+  onPick: (platformId: number | null) => void;
+}) {
+  // Closing the prompt still applies the status — the click already said
+  // "played"; the question only decides whether a platform rides along.
+  const close = () => onPick(null);
+
+  return (
+    <Dialog open={open} onClose={close} label="Finished platform">
+      <h2 className="text-lg font-semibold text-ink-100">
+        Which platform did you play {entry.game.name} on?
+      </h2>
+      <p className="mt-1 text-sm text-ink-400">
+        Platform trophies count the system you actually finished on, not every system the game
+        released for.
+      </p>
+      <div className="mt-4 max-h-64 space-y-1 overflow-y-auto pr-1">
+        {entry.game.platforms.map((platform) => (
           <button
-            key={status}
+            key={platform.id}
             type="button"
-            title={STATUS_LABELS[status]}
-            aria-label={STATUS_LABELS[status]}
-            aria-pressed={isActive}
-            disabled={update.isPending}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              if (isActive) return;
-              update.mutate({ id: entry.id, patch: { status } });
-            }}
-            className={cn(
-              "flex flex-1 items-center justify-center transition-colors",
-              size === "sm" ? "h-7" : "h-8 px-3",
-              isActive
-                ? activeStyles[status]
-                : "text-ink-400 hover:bg-white/[0.08] hover:text-ink-100",
-              "focus-visible:focus-ring disabled:cursor-not-allowed",
-            )}
+            disabled={pending}
+            onClick={() => onPick(platform.id)}
+            className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-200 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:focus-ring disabled:cursor-not-allowed"
           >
-            <Gi name={STATUS_ICONS[status]} className="size-3.5" />
-            {size === "md" && <span className="ml-1.5 text-xs font-medium">{STATUS_LABELS[status]}</span>}
+            {platform.name}
           </button>
-        );
-      })}
-    </div>
+        ))}
+      </div>
+      <div className="mt-4 flex justify-end">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={close}
+          className="rounded-lg px-3 py-1.5 text-sm text-ink-500 transition-colors hover:bg-white/[0.05] hover:text-ink-200 focus-visible:focus-ring disabled:cursor-not-allowed"
+        >
+          Skip for now
+        </button>
+      </div>
+    </Dialog>
   );
 }

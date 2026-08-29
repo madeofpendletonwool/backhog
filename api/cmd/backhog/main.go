@@ -87,6 +87,14 @@ func run() error {
 
 	st := store.New(database)
 
+	// Heal the curated platform classification on rows cached by an older
+	// binary; fresh rows get it from the platform upsert.
+	metaCtx, cancelMeta := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := st.SyncPlatformMeta(metaCtx); err != nil {
+		slog.Warn("platform meta sync", "error", err)
+	}
+	cancelMeta()
+
 	covers, err := metadata.NewCoverCache(cfg.CoverDir)
 	if err != nil {
 		return err

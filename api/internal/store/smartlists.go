@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
 
@@ -39,6 +40,20 @@ var smartFields = map[string]smartField{
 	"genre":              {Column: "genre", Type: "ref", Label: "Genre", Ops: []string{"in", "not_in"}},
 	"platform":           {Column: "platform", Type: "ref", Label: "Platform", Ops: []string{"in", "not_in"}},
 	"series":             {Column: "series", Type: "ref", Label: "Series", Ops: []string{"in", "not_in"}},
+	// Platform family and generation read the "playing on" platform on the
+	// entry itself — the honest signal for what someone actually finished on —
+	// via the curated classification on the platforms row.
+	"platform_family": {
+		Column: "(SELECT COALESCE(NULLIF(p.family, ''), 'other') FROM platforms p WHERE p.id = e.platform_id)",
+		Type:   "enum", Label: "Platform family",
+		Ops:  []string{"eq", "neq", "in"},
+		Enum: metadata.PlatformFamilies,
+	},
+	"platform_generation": {
+		Column: "(SELECT p.generation FROM platforms p WHERE p.id = e.platform_id)",
+		Type:   "number", Label: "Console generation",
+		Ops: []string{"eq", "gt", "lt", "gte", "lte", "is_null", "not_null"},
+	},
 }
 
 // smartSorts whitelists sort keys for smart lists.

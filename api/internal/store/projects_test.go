@@ -30,7 +30,7 @@ func newProjectsStore(t *testing.T) (*Store, string) {
 		}
 	}
 	exec(`INSERT INTO users (id, email, username, password_hash) VALUES ('u1', 'u1@example.com', 'u1', 'x')`)
-	exec(`INSERT INTO platforms (id, name) VALUES (38, 'PlayStation 2')`)
+	exec(`INSERT INTO platforms (id, name) VALUES (38, 'PlayStation Portable')`)
 
 	// hours: 20 + 40 + 45 + 60 + 100 + 135 = 400 estimated for the set.
 	souls := []struct {
@@ -343,7 +343,7 @@ func TestRuleGoalEvaluation(t *testing.T) {
 
 	ps2Rule := models.RuleSet{
 		Match: "all",
-		Rules: []models.Rule{{Field: "platform", Op: "in", Value: []any{"PlayStation 2"}}},
+		Rules: []models.Rule{{Field: "platform", Op: "in", Value: []any{"PlayStation Portable"}}},
 	}
 
 	// No explicit target: the goal is the whole pool (2 PS2 games, 155h).

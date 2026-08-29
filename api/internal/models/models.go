@@ -46,6 +46,18 @@ type NamedRef struct {
 	Name string `json:"name"`
 }
 
+// Platform is an IGDB platform with its curated classification. Family
+// degrades to "other" and Manufacturer to "Other" for platforms the catalog
+// does not classify; Generation is null for platforms that do not map to a
+// home-console generation (PC, mobile) or that are unclassified.
+type Platform struct {
+	NamedRef
+	Manufacturer string `json:"manufacturer"`
+	Family       string `json:"family"`
+	Generation   *int   `json:"generation"`
+	Handheld     bool   `json:"handheld"`
+}
+
 // Game is the shared, IGDB-sourced metadata record. Times to beat are seconds.
 type Game struct {
 	ID                 int64      `json:"id"`
@@ -59,7 +71,7 @@ type Game struct {
 	TimeToBeatMain     *int64     `json:"time_to_beat_main"`
 	TimeToBeatComplete *int64     `json:"time_to_beat_complete"`
 	Genres             []NamedRef `json:"genres"`
-	Platforms          []NamedRef `json:"platforms"`
+	Platforms          []Platform `json:"platforms"`
 	// Extras is the rich, display-only IGDB metadata, stored and served as an
 	// opaque JSON document (see metadata.GameExtras for its shape). A null value
 	// means it hasn't been fetched yet, which the detail handler uses to trigger
@@ -204,7 +216,7 @@ type ProjectProgress struct {
 	TargetCount int `json:"target_count"`
 	// CompletedCount is how many entries currently count as done. May exceed
 	// TargetCount for count goals set below the library's played total.
-	CompletedCount int `json:"completed_count"`
+	CompletedCount int     `json:"completed_count"`
 	EstHoursTotal  float64 `json:"est_hours_total"`
 	EstHoursDone   float64 `json:"est_hours_done"`
 	// EstHoursRemaining is the estimated playtime left in the target set,
@@ -217,16 +229,16 @@ type ProjectProgress struct {
 // Project is a temporary objective. Lists answer "what exists"; projects
 // answer "what am I trying to accomplish", and they end.
 type Project struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Kind        string     `json:"kind"`
-	TargetCount *int       `json:"target_count,omitempty"`
-	Rules       *RuleSet   `json:"rules,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Kind        string    `json:"kind"`
+	TargetCount *int      `json:"target_count,omitempty"`
+	Rules       *RuleSet  `json:"rules,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 	// CompletedAt is stamped when the target is met (automatically on the next
 	// read) or manually when the user closes the project. Null = in progress.
-	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 	Progress    ProjectProgress `json:"progress"`
 }
 
@@ -234,8 +246,8 @@ type Project struct {
 // done override. Done is null when completion is derived from the entry's
 // status; it is only ever set for checklist members.
 type ProjectItem struct {
-	Entry Entry  `json:"entry"`
-	Done  *bool  `json:"done"`
+	Entry Entry `json:"entry"`
+	Done  *bool `json:"done"`
 }
 
 // Play orders for a series journey.

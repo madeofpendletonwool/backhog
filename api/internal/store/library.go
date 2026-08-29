@@ -162,12 +162,12 @@ func (s *Store) CountEntries(ctx context.Context, userID string, f LibraryFilter
 
 // EntryUpdate carries the mutable fields of an entry. Nil means "leave alone".
 type EntryUpdate struct {
-	Status     *string
-	PlatformID *int64
+	Status        *string
+	PlatformID    *int64
 	ClearPlatform bool
-	UserRating *int
-	ClearRating bool
-	Notes      *string
+	UserRating    *int
+	ClearRating   bool
+	Notes         *string
 }
 
 // UpdateEntry applies a partial update. Status transitions stamp started_at and
@@ -345,16 +345,40 @@ func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) 
 
 // Facets returns the platforms and genres present in a user's library, for the
 // filter rail. Only values that would actually match anything are returned.
-func (s *Store) Facets(ctx context.Context, userID string) (platforms, genres []models.NamedRef, err error) {
-	platforms, err = s.facet(ctx, userID, `
-		SELECT DISTINCT p.id, p.name
+// Platforms carry their curated classification, degrading to family "other"
+// for unclassified rows.
+func (s *Store) Facets(ctx context.Context, userID string) (platforms []models.Platform, genres []models.NamedRef, err error) {
+	prows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT p.id, p.name,
+		       COALESCE(NULLIF(p.manufacturer, ''), 'Other'),
+		       COALESCE(NULLIF(p.family, ''), 'other'),
+		       p.generation, p.handheld
 		FROM library_entries e
 		JOIN game_platforms gp ON gp.game_id = e.game_id
 		JOIN platforms p ON p.id = gp.platform_id
-		WHERE e.user_id = ? ORDER BY p.name`)
+		WHERE e.user_id = ? ORDER BY p.name`, userID)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer prows.Close()
+
+	platforms = []models.Platform{}
+	for prows.Next() {
+		var p models.Platform
+		var generation sql.NullInt64
+		if err := prows.Scan(&p.ID, &p.Name, &p.Manufacturer, &p.Family, &generation, &p.Handheld); err != nil {
+			return nil, nil, err
+		}
+		if generation.Valid {
+			g := int(generation.Int64)
+			p.Generation = &g
+		}
+		platforms = append(platforms, p)
+	}
+	if err := prows.Err(); err != nil {
+		return nil, nil, err
+	}
+
 	genres, err = s.facet(ctx, userID, `
 		SELECT DISTINCT gn.id, gn.name
 		FROM library_entries e

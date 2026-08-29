@@ -61,6 +61,9 @@ func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string
 	}
 
 	if status == models.StatusBacklog || status == models.StatusWishlist {
+		if err := recordStatusChangeTx(ctx, tx, userID, entryID, status, models.StatusPlaying); err != nil {
+			return models.Session{}, nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE library_entries
 			SET status = 'playing',
@@ -72,7 +75,7 @@ func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string
 		}
 	}
 
-	newly, err := evaluateAchievementsTx(ctx, tx, userID, entryID, achievements.EventSession)
+	newly, err := evaluateAchievementsTx(ctx, tx, userID, entryID, achievements.EventSession, nil)
 	if err != nil {
 		return models.Session{}, nil, err
 	}

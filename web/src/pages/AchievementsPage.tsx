@@ -6,12 +6,37 @@ import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useAchievements } from "@/hooks/useAchievements";
 import { formatDate } from "@/lib/format";
-import type { AchievementStatus } from "@/lib/types";
+import { ACHIEVEMENT_TIERS, type AchievementStatus, type AchievementTier } from "@/lib/types";
+import { cn } from "@/lib/cn";
+
+/** The medal each tier section is headlined with. */
+const TIER_META: Record<AchievementTier, { label: string; emoji: string }> = {
+  bronze: { label: "Bronze", emoji: "🥉" },
+  silver: { label: "Silver", emoji: "🥈" },
+  gold: { label: "Gold", emoji: "🥇" },
+  legendary: { label: "Legendary", emoji: "💎" },
+};
+
+/** Unlocked icon chips wear their tier; locked ones stay quiet gray. */
+const TIER_CHIP: Record<AchievementTier, string> = {
+  bronze: "bg-tier-bronze/10 text-tier-bronze ring-tier-bronze/30",
+  silver: "bg-tier-silver/10 text-tier-silver ring-tier-silver/30",
+  gold: "bg-tier-gold/10 text-tier-gold ring-tier-gold/30",
+  legendary: "bg-tier-legendary/10 text-tier-legendary ring-tier-legendary/30",
+};
+
+const TIER_TEXT: Record<AchievementTier, string> = {
+  bronze: "text-tier-bronze",
+  silver: "text-tier-silver",
+  gold: "text-tier-gold",
+  legendary: "text-tier-legendary",
+};
 
 /**
- * The trophy wall: every achievement in the catalogue with its unlock state.
- * Locked cards show what's still owed; unlocked ones carry the date and the
- * game that tipped them over.
+ * The trophy wall: every achievement in the catalogue with its unlock state,
+ * grouped by tier. Locked cards show what's still owed; unlocked ones carry
+ * the date and the game that tipped them over. Hidden achievements arrive
+ * masked from the API and reveal on unlock.
  */
 export function AchievementsPage() {
   const { data, isLoading } = useAchievements();
@@ -42,6 +67,9 @@ export function AchievementsPage() {
     );
   }
 
+  const tierOf = (a: AchievementStatus): AchievementTier =>
+    ACHIEVEMENT_TIERS.includes(a.tier) ? a.tier : "bronze";
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="mb-6">
@@ -54,10 +82,32 @@ export function AchievementsPage() {
         </p>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {achievements.map((achievement) => (
-          <AchievementCard key={achievement.id} achievement={achievement} />
-        ))}
+      <div className="space-y-8">
+        {ACHIEVEMENT_TIERS.map((tier) => {
+          const group = achievements.filter((a) => tierOf(a) === tier);
+          if (group.length === 0) return null;
+          const earned = group.filter((a) => a.unlocked_at).length;
+          return (
+            <section key={tier}>
+              <div className="mb-3 flex items-baseline gap-2">
+                <span className="text-base leading-none" aria-hidden>
+                  {TIER_META[tier].emoji}
+                </span>
+                <h2 className={cn("text-sm font-semibold uppercase tracking-wider", TIER_TEXT[tier])}>
+                  {TIER_META[tier].label}
+                </h2>
+                <span className="text-xs text-ink-500 tabular-nums">
+                  {earned} of {group.length}
+                </span>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {group.map((achievement) => (
+                  <AchievementCard key={achievement.id} achievement={achievement} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </div>
   );
@@ -70,11 +120,10 @@ function AchievementCard({ achievement }: { achievement: AchievementStatus }) {
     <Panel className={`animate-fade-rise p-4 ${unlockedAt ? "" : "opacity-60"}`}>
       <div className="flex items-start justify-between gap-3">
         <div
-          className={`flex size-10 items-center justify-center rounded-xl ring-1 ${
-            unlockedAt
-              ? "bg-brand-600/20 text-brand-300 ring-brand-400/30"
-              : "bg-ink-850 text-ink-600 ring-white/[0.06]"
-          }`}
+          className={cn(
+            "flex size-10 items-center justify-center rounded-xl ring-1",
+            unlockedAt ? TIER_CHIP[achievement.tier] : "bg-ink-850 text-ink-600 ring-white/[0.06]",
+          )}
         >
           <Gi name={achievementIcon(achievement.icon)} className="size-5" />
         </div>

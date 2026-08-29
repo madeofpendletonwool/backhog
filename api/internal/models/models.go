@@ -401,6 +401,27 @@ type Insights struct {
 	Superlatives []Superlative    `json:"superlatives"`
 }
 
+// Achievement tiers, in ascending order of prestige.
+const (
+	TierBronze    = "bronze"
+	TierSilver    = "silver"
+	TierGold      = "gold"
+	TierLegendary = "legendary"
+)
+
+// AllTiers lists every achievement tier, in display order.
+var AllTiers = []string{TierBronze, TierSilver, TierGold, TierLegendary}
+
+// ValidTier reports whether t is a known achievement tier.
+func ValidTier(t string) bool {
+	for _, tier := range AllTiers {
+		if tier == t {
+			return true
+		}
+	}
+	return false
+}
+
 // Achievement is one catalogue entry, defined in code (internal/achievements).
 type Achievement struct {
 	ID          string `json:"id"`
@@ -408,6 +429,11 @@ type Achievement struct {
 	Description string `json:"description"`
 	// Icon is a code key the client maps to an actual icon glyph.
 	Icon string `json:"icon"`
+	// Tier is the achievement's rarity band; one of the Tier constants.
+	Tier string `json:"tier"`
+	// Hidden keeps an achievement's identity masked while locked — the
+	// reveal lives in the unlock toast and the gallery.
+	Hidden bool `json:"hidden"`
 }
 
 // AchievementStatus is an achievement plus the user's unlock state: locked

@@ -1,7 +1,7 @@
 import type { GiName } from "@/lib/gameicons";
 
 /**
- * Icon keys come from the backend catalogue (internal/achievements); unknown
+ * Icon key come from the backend catalogue (internal/achievements); unknown
  * keys fall back to the trophy so a new achievement still renders.
  */
 const ICONS: Record<string, GiName> = {
@@ -13,6 +13,8 @@ const ICONS: Record<string, GiName> = {
   target: "target",
   "door-open": "door-open",
   hourglass: "hourglass",
+  // The generic glyph a locked hidden achievement is masked with.
+  lock: "lock",
 };
 
 export function achievementIcon(key: string): GiName {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
 
@@ -18,6 +19,8 @@ var base = Entry{
 func i64(v int64) *int64 { return &v }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+func boolPtr(b bool) *bool { return &b }
 
 // unlockIDs runs an event against the catalogue and returns the ids of every
 // achievement whose predicate fired. Lazy (time-window) entries have no
@@ -1041,6 +1044,236 @@ func TestPredicates(t *testing.T) {
 			}},
 			want: []string{"first_blood", "trilogy", "closing_the_loop", "full_set"},
 		},
+		{
+			name: "the fifth distinct genre of the year is the sampler",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				YearGenres: 5,
+			}},
+			want: []string{"first_blood", "cleanup_crew", "sampler"},
+		},
+		{
+			name: "four genres in the year is not the sampler",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				YearGenres: 4,
+			}},
+			want: []string{"first_blood", "cleanup_crew"},
+		},
+		{
+			name: "the fifth distinct platform is the world tour",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				DistinctPlatforms: 5, PlatformID: i64(130),
+			}},
+			want: []string{"first_blood", "cleanup_crew", "world_tour"},
+		},
+		{
+			name: "four platforms is not the world tour",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				DistinctPlatforms: 4, PlatformID: i64(130),
+			}},
+			want: []string{"first_blood", "cleanup_crew"},
+		},
+		{
+			name: "finishing on a dormant platform is retroactive",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:          models.StatusPlayed,
+				CreatedAt:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:              time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes:   600, PlayedCount: 2,
+				PlatformID:      i64(18), PlatformDormant: boolPtr(true),
+			}},
+			want: []string{"first_blood", "retroactive"},
+		},
+		{
+			name: "an active platform is not retroactive",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:          models.StatusPlayed,
+				CreatedAt:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:              time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes:   600, PlayedCount: 2,
+				PlatformID:      i64(18), PlatformDormant: boolPtr(false),
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "a finish with no platform set is never retroactive",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:           time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "five console generations bridge the generation gap",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				DistinctGenerations: 5, PlatformID: i64(18),
+			}},
+			want: []string{"first_blood", "cleanup_crew", "generation_gap"},
+		},
+		{
+			name: "four generations leave the gap uncrossed",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				DistinctGenerations: 4, PlatformID: i64(18),
+			}},
+			want: []string{"first_blood", "cleanup_crew"},
+		},
+		{
+			name: "the fifth Nintendo console runs the time machine",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				NintendoConsoles: 5, PlatformID: i64(5),
+			}},
+			want: []string{"first_blood", "cleanup_crew", "nintendo_time_machine"},
+		},
+		{
+			name: "four Nintendo consoles stall the time machine",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				NintendoConsoles: 4, PlatformID: i64(5),
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "the seventh Big N console completes the set",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 7,
+				BigNConsoles: 7, PlatformID: i64(130),
+			}},
+			want: []string{"first_blood", "cleanup_crew", "the_big_n"},
+		},
+		{
+			name: "six of seven is not The Big N",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 6,
+				BigNConsoles: 6, PlatformID: i64(41),
+			}},
+			want: []string{"first_blood", "cleanup_crew"},
+		},
+		{
+			name: "the third Game Boy system completes the generation",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 3,
+				GameBoySystems: 3, PlatformID: i64(24),
+			}},
+			want: []string{"first_blood", "game_boy_generation"},
+		},
+		{
+			name: "two Game Boy systems leave the generation short",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				GameBoySystems: 2, PlatformID: i64(22),
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "the fourth handheld generation crowns the historian",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				HandheldGenerations: 4, PlatformID: i64(20),
+			}},
+			want: []string{"first_blood", "handheld_historian"},
+		},
+		{
+			name: "three handheld generations are not history yet",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 3,
+				HandheldGenerations: 3, PlatformID: i64(20),
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "the fifth station completes the pilgrimage",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 5,
+				PilgrimConsoles: 5, PlatformID: i64(167),
+			}},
+			want: []string{"first_blood", "cleanup_crew", "playstation_pilgrim"},
+		},
+		{
+			name: "four stations leave the pilgrimage unfinished",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				PilgrimConsoles: 4, PlatformID: i64(48),
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "the fourth Xbox generation stays green across the ages",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				XboxGenerations: 4, PlatformID: i64(169),
+			}},
+			want: []string{"first_blood", "green_across_the_ages"},
+		},
+		{
+			name: "three Xbox generations are not green enough",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 3,
+				XboxGenerations: 3, PlatformID: i64(49),
+			}},
+			want: []string{"first_blood"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1055,6 +1288,67 @@ func TestPredicates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPlatformMasterySets pins the curated sets and thresholds against
+// the platform catalog: the sizes the predicates compare must match the
+// hardware the metadata package actually classifies, and every set member
+// must sit in the family the predicate's family-based cousins read.
+func TestPlatformMasterySets(t *testing.T) {
+	if bigNConsoles != len(metadata.BigNPlatformIDs) {
+		t.Errorf("bigNConsoles = %d, want the %d curated consoles",
+			bigNConsoles, len(metadata.BigNPlatformIDs))
+	}
+	if pilgrimConsoles != len(metadata.PilgrimPlatformIDs) {
+		t.Errorf("pilgrimConsoles = %d, want the %d curated consoles",
+			pilgrimConsoles, len(metadata.PilgrimPlatformIDs))
+	}
+	if gameBoySystems != metadata.FamilySize(metadata.FamilyGameBoy) {
+		t.Errorf("gameBoySystems = %d, want the family's %d systems",
+			gameBoySystems, metadata.FamilySize(metadata.FamilyGameBoy))
+	}
+	if n := metadata.FamilySize(metadata.FamilyGameBoy); n != 3 {
+		t.Errorf("game boy family has %d systems, want exactly GB/GBC/GBA", n)
+	}
+	for _, id := range metadata.BigNPlatformIDs {
+		meta, ok := metadata.PlatformCatalog[id]
+		if !ok || meta.Family != metadata.FamilyNintendoConsole {
+			t.Errorf("Big N member %d is not a classified Nintendo console", id)
+		}
+	}
+	for _, id := range metadata.PilgrimPlatformIDs {
+		meta, ok := metadata.PlatformCatalog[id]
+		if !ok || meta.Family != metadata.FamilyPlayStation || meta.Handheld {
+			t.Errorf("pilgrim station %d is not a PlayStation home console", id)
+		}
+	}
+	// The handheld and Xbox generation runs must be reachable from what
+	// the catalog classifies, and the generation gap's five generations
+	// must exist across families.
+	handheldGens, xboxGens, allGens := map[int]bool{}, map[int]bool{}, map[int]bool{}
+	for _, meta := range metadata.PlatformCatalog {
+		if meta.Generation <= 0 {
+			continue
+		}
+		allGens[meta.Generation] = true
+		if meta.Handheld {
+			handheldGens[meta.Generation] = true
+		}
+		if meta.Family == metadata.FamilyXbox {
+			xboxGens[meta.Generation] = true
+		}
+	}
+	if len(handheldGens) < handheldHistorianGenerations {
+		t.Errorf("catalog covers %d handheld generations, need %d",
+			len(handheldGens), handheldHistorianGenerations)
+	}
+	if len(xboxGens) != xboxGenerations {
+		t.Errorf("catalog covers %d Xbox generations, want exactly %d",
+			len(xboxGens), xboxGenerations)
+	}
+	if len(allGens) < generationGapGenerations {
+		t.Errorf("catalog covers %d generations, need %d", len(allGens), generationGapGenerations)
 	}
 }
 

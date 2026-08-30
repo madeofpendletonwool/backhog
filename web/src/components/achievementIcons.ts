@@ -61,6 +61,17 @@ const ICONS: Record<string, GiName> = {
   sprint: "sprint",
   cycle: "cycle",
   "full-folder": "full-folder",
+  // The diversity and platform mastery ladder.
+  "pizza-slice": "pizza-slice",
+  compass: "compass",
+  "dust-cloud": "dust-cloud",
+  "family-tree": "family-tree",
+  "cuckoo-clock": "cuckoo-clock",
+  "mushroom-gills": "mushroom-gills",
+  gamepad: "gamepad",
+  knapsack: "knapsack",
+  footprint: "footprint",
+  clover: "clover",
   // The generic glyph a locked hidden achievement is masked with.
   lock: "lock",
 };

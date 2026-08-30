@@ -1545,3 +1545,340 @@ func TestLiveSeriesFinishes(t *testing.T) {
 		t.Errorf("a foreign finish in between unlocked back_to_back on %q", got["back_to_back"])
 	}
 }
+
+// platformMasteryFixture seeds a platform-flavoured library on top of the
+// base achievements store: the catalog platforms classified through the
+// real startup sync (plus one unknown platform that must degrade), and
+// users whose finishes cross each diversity and platform-mastery line at a
+// deterministic game. u10 walks the Nintendo breadth, u11 the PlayStation,
+// Xbox, and handheld runs, u12/u13 bracket the genre-year window, u14 pins
+// the retroactive boundaries, and u15 holds backlog rows to finish live.
+func platformMasteryFixture(t *testing.T) *Store {
+	t.Helper()
+	s := newAchievementsStore(t)
+	ctx := context.Background()
+	database := s.DB()
+
+	seed := func(query string, args ...any) {
+		t.Helper()
+		if _, err := database.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	addFinish := func(id, user string, game int64, platform any, created, finished string) {
+		t.Helper()
+		var fin any
+		if finished != "" {
+			fin = finished
+		}
+		seed(`INSERT INTO library_entries (id, user_id, game_id, status, platform_id, created_at, finished_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, user, game, models.StatusPlayed, platform, created, fin)
+	}
+	addBacklog := func(id, user string, game int64, platform int64, created string) {
+		t.Helper()
+		seed(`INSERT INTO library_entries (id, user_id, game_id, status, platform_id, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			id, user, game, models.StatusBacklog, platform, created)
+	}
+
+	// The classified platform rows, healed through the real startup sync
+	// so classification matches production; 9999 stays unknown on purpose.
+	seed(`INSERT INTO platforms (id, name) VALUES
+		(18, 'NES'), (99, 'Famicom'), (19, 'SNES'), (4, 'Nintendo 64'),
+		(21, 'GameCube'), (5, 'Wii'), (41, 'Wii U'), (130, 'Switch'),
+		(33, 'Game Boy'), (22, 'Game Boy Color'), (24, 'Game Boy Advance'),
+		(87, 'Virtual Boy'), (20, 'DS'), (37, '3DS'),
+		(7, 'PS1'), (8, 'PS2'), (9, 'PS3'), (48, 'PS4'), (167, 'PS5'),
+		(11, 'Xbox'), (12, 'Xbox 360'), (49, 'Xbox One'), (169, 'Xbox Series X|S'),
+		(6, 'PC'), (9999, 'WeirdOS')`)
+	if err := s.SyncPlatformMeta(ctx); err != nil {
+		t.Fatalf("SyncPlatformMeta: %v", err)
+	}
+
+	seed(`INSERT INTO users (id, email, username, password_hash) VALUES
+		('u10', 'u10@example.com', 'u10', 'x'),
+		('u11', 'u11@example.com', 'u11', 'x'),
+		('u12', 'u12@example.com', 'u12', 'x'),
+		('u13', 'u13@example.com', 'u13', 'x'),
+		('u14', 'u14@example.com', 'u14', 'x'),
+		('u15', 'u15@example.com', 'u15', 'x')`)
+
+	// u10's walk: four Nintendo consoles first, then the fifth distinct
+	// platform (a Game Boy, family-switching) crosses World Tour, the GB
+	// line completes two finishes later, the Wii's generation 7 crosses
+	// Generation Gap and the fifth Nintendo console in one finish, and
+	// the Switch seals The Big N. Famicom, PC, and the unknown platform
+	// come after every line and must move nothing.
+	for i := int64(0); i < 13; i++ {
+		seed(`INSERT INTO games (id, name) VALUES (?, ?)`, 700+i, fmt.Sprintf("Mastery A %d", i))
+	}
+	addFinish("ma1", "u10", 700, 18, ymdStamp(-3, "02-10"), ymdStamp(-3, "02-20"))
+	addFinish("ma2", "u10", 701, 19, ymdStamp(-3, "03-01"), ymdStamp(-3, "03-10"))
+	addFinish("ma3", "u10", 702, 4, ymdStamp(-3, "04-01"), ymdStamp(-3, "04-10"))
+	addFinish("ma4", "u10", 703, 21, ymdStamp(-3, "05-01"), ymdStamp(-3, "05-10"))
+	addFinish("ma5", "u10", 704, 33, ymdStamp(-3, "06-01"), ymdStamp(-3, "06-10"))
+	addFinish("ma6", "u10", 705, 22, ymdStamp(-2, "01-01"), ymdStamp(-2, "01-10"))
+	addFinish("ma7", "u10", 706, 24, ymdStamp(-2, "02-01"), ymdStamp(-2, "02-10"))
+	addFinish("ma8", "u10", 707, 5, ymdStamp(-2, "03-01"), ymdStamp(-2, "03-10"))
+	addFinish("ma9", "u10", 708, 41, ymdStamp(-2, "04-01"), ymdStamp(-2, "04-10"))
+	addFinish("ma10", "u10", 709, 130, ymdStamp(-2, "05-01"), ymdStamp(-2, "05-10"))
+	addFinish("ma11", "u10", 710, 99, ymdStamp(-1, "01-01"), ymdStamp(-1, "01-10"))
+	addFinish("ma12", "u10", 711, 6, ymdStamp(-1, "02-01"), ymdStamp(-1, "02-10"))
+	addFinish("ma13", "u10", 712, 9999, ymdStamp(-1, "03-01"), ymdStamp(-1, "03-10"))
+
+	// u11's run: the five PlayStation stations complete the pilgrimage,
+	// the four Xbox generations go green, and four handheld generations
+	// make the historian.
+	for i := int64(0); i < 13; i++ {
+		seed(`INSERT INTO games (id, name) VALUES (?, ?)`, 713+i, fmt.Sprintf("Mastery B %d", i))
+	}
+	addFinish("mb1", "u11", 713, 7, ymdStamp(-3, "01-01"), ymdStamp(-3, "01-05"))
+	addFinish("mb2", "u11", 714, 8, ymdStamp(-3, "02-01"), ymdStamp(-3, "02-05"))
+	addFinish("mb3", "u11", 715, 9, ymdStamp(-3, "03-01"), ymdStamp(-3, "03-05"))
+	addFinish("mb4", "u11", 716, 48, ymdStamp(-3, "04-01"), ymdStamp(-3, "04-05"))
+	addFinish("mb5", "u11", 717, 167, ymdStamp(-3, "05-01"), ymdStamp(-3, "05-05"))
+	addFinish("mb6", "u11", 718, 11, ymdStamp(-2, "01-01"), ymdStamp(-2, "01-05"))
+	addFinish("mb7", "u11", 719, 12, ymdStamp(-2, "02-01"), ymdStamp(-2, "02-05"))
+	addFinish("mb8", "u11", 720, 49, ymdStamp(-2, "03-01"), ymdStamp(-2, "03-05"))
+	addFinish("mb9", "u11", 721, 169, ymdStamp(-2, "04-01"), ymdStamp(-2, "04-05"))
+	addFinish("mb10", "u11", 722, 33, ymdStamp(-2, "05-01"), ymdStamp(-2, "05-05"))
+	addFinish("mb11", "u11", 723, 87, ymdStamp(-2, "06-01"), ymdStamp(-2, "06-05"))
+	addFinish("mb12", "u11", 724, 24, ymdStamp(-2, "07-01"), ymdStamp(-2, "07-05"))
+	addFinish("mb13", "u11", 725, 20, ymdStamp(-2, "08-01"), ymdStamp(-2, "08-05"))
+
+	// u12/u13's genre fixtures: five distinct genres in one calendar year
+	// unlock the sampler; the same five split across two years do not.
+	seed(`INSERT INTO genres (id, name) VALUES
+		(1, 'RPG'), (2, 'Platformer'), (3, 'Shooter'), (4, 'Puzzle'), (5, 'Racing'),
+		(6, 'Fighting'), (7, 'Strategy'), (8, 'Sim'), (9, 'Adventure'), (10, 'Horror')`)
+	for i := int64(0); i < 10; i++ {
+		seed(`INSERT INTO games (id, name) VALUES (?, ?)`, 730+i, fmt.Sprintf("Genre Game %d", i))
+		seed(`INSERT INTO game_genres (game_id, genre_id) VALUES (?, ?)`, 730+i, i+1)
+	}
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("sa%d", i+1)
+		addFinish(id, "u12", 730+int64(i), nil, ymdStamp(-1, "05-01"), ymdStamp(-1, fmt.Sprintf("05-%02d", i+1)))
+	}
+	for i := 0; i < 4; i++ {
+		id := fmt.Sprintf("sb%d", i+1)
+		addFinish(id, "u13", 735+int64(i), nil, ymdStamp(-1, "06-01"), ymdStamp(-1, fmt.Sprintf("06-%02d", i+1)))
+	}
+	addFinish("sb5", "u13", 739, nil, ymdStamp(0, "01-01"), ymdStamp(0, "01-15"))
+
+	// u14's retroactive boundaries, all finishing the same day so the
+	// unlock attaches to the first dormant replay: no session at all, a
+	// session exactly five years back (blocks), one day earlier (dormant),
+	// one on the finish day (blocks), and one the day after (dormant).
+	for i := int64(0); i < 5; i++ {
+		seed(`INSERT INTO games (id, name) VALUES (?, ?)`, 740+i, fmt.Sprintf("Retro Game %d", i))
+	}
+	session := func(entry string, platform int64, playedOn string) {
+		seed(`INSERT INTO play_sessions (id, user_id, entry_id, played_on, minutes)
+			VALUES (?, 'u14', ?, ?, 60)`, "ps-"+entry, entry, playedOn)
+	}
+	addFinish("ra1", "u14", 740, 167, "2019-01-01 12:00:00", "2024-06-15 12:00:00")
+	addFinish("ra2", "u14", 741, 18, "2019-01-01 12:00:00", "2024-06-15 12:00:00")
+	session("ra2", 18, "2019-06-15")
+	addFinish("ra3", "u14", 742, 19, "2019-01-01 12:00:00", "2024-06-15 12:00:00")
+	session("ra3", 19, "2019-06-14")
+	addFinish("ra4", "u14", 743, 4, "2019-01-01 12:00:00", "2024-06-15 12:00:00")
+	session("ra4", 4, "2024-06-15")
+	addFinish("ra5", "u14", 744, 5, "2019-01-01 12:00:00", "2024-06-15 12:00:00")
+	session("ra5", 5, "2024-06-16")
+
+	// u15's live stage: four platforms finished already, one Game Boy and
+	// one PS5 game waiting in the backlog.
+	for i := int64(0); i < 6; i++ {
+		seed(`INSERT INTO games (id, name) VALUES (?, ?)`, 750+i, fmt.Sprintf("Live Game %d", i))
+	}
+	now := time.Now().UTC()
+	stamp := func(t time.Time) string { return t.Format("2006-01-02 15:04:05") }
+	addFinish("lm1", "u15", 750, 18, stamp(now.AddDate(0, 0, -60)), stamp(now.AddDate(0, 0, -50)))
+	addFinish("lm2", "u15", 751, 19, stamp(now.AddDate(0, 0, -59)), stamp(now.AddDate(0, 0, -40)))
+	addFinish("lm3", "u15", 752, 4, stamp(now.AddDate(0, 0, -58)), stamp(now.AddDate(0, 0, -30)))
+	addFinish("lm4", "u15", 753, 21, stamp(now.AddDate(0, 0, -57)), stamp(now.AddDate(0, 0, -20)))
+	addBacklog("lb1", "u15", 754, 33, stamp(now.AddDate(0, 0, -56)))
+	addBacklog("lb2", "u15", 755, 167, stamp(now.AddDate(0, 0, -55)))
+
+	return s
+}
+
+// platformAchievements is the diversity and platform-mastery batch's id
+// set, so tests can assert a complete picture of what fired and what
+// stayed locked.
+var platformAchievements = []string{
+	"sampler", "world_tour", "retroactive", "generation_gap",
+	"nintendo_time_machine", "the_big_n", "game_boy_generation",
+	"handheld_historian", "playstation_pilgrim", "green_across_the_ages",
+}
+
+// assertPlatformMastery checks every platform achievement's unlock state
+// against want (entry id = unlocked and attached there; "" = locked).
+func assertPlatformMastery(t *testing.T, got map[string]string, want map[string]string) {
+	t.Helper()
+	for _, id := range platformAchievements {
+		if got[id] != want[id] {
+			t.Errorf("%s = %q, want %q", id, got[id], want[id])
+		}
+	}
+}
+
+// TestBackfillNintendoBreadth replays u10's walk: World Tour crosses on
+// the fifth distinct platform even though the Game Boy adds no new
+// generation, the Game Boy line completes on its third system, the Wii
+// crosses Generation Gap and Nintendo Time Machine together, The Big N
+// seals on the Switch, and the trailing Famicom, PC, and unknown-platform
+// finishes move nothing — the unknown hardware counts as a platform but
+// never as a generation or family member.
+func TestBackfillNintendoBreadth(t *testing.T) {
+	s := platformMasteryFixture(t)
+	ctx := context.Background()
+
+	statuses, err := s.Achievements(ctx, "u10")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	assertPlatformMastery(t, unlockedIDs(statuses), map[string]string{
+		"world_tour":            "ma5",  // NES, SNES, N64, GC, GB — five distinct platforms
+		"game_boy_generation":   "ma7",  // GB, GBC, GBA
+		"generation_gap":        "ma8",  // generations 3, 4, 5, 6, 7
+		"nintendo_time_machine": "ma8",  // NES, SNES, N64, GC, Wii
+		"the_big_n":             "ma10", // all seven curated consoles
+		"handheld_historian":    "ma10", // GB(4), GBC(5), GBA(6), Switch(8) — the hybrid is handheld
+		"retroactive":           "ma1",  // no sessions exist, so the first platform finish is dormant
+		"playstation_pilgrim":   "",
+		"green_across_the_ages": "",
+		"sampler":               "", // no genres seeded
+	})
+
+	// Idempotent across gallery loads.
+	if _, err := s.Achievements(ctx, "u10"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBackfillPlaystationXboxHandheld replays u11's run: the pilgrimage
+// completes at PS5, Xbox goes green at the Series finish, and the fourth
+// handheld generation makes the historian at the DS.
+func TestBackfillPlaystationXboxHandheld(t *testing.T) {
+	s := platformMasteryFixture(t)
+	ctx := context.Background()
+
+	statuses, err := s.Achievements(ctx, "u11")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	assertPlatformMastery(t, unlockedIDs(statuses), map[string]string{
+		"playstation_pilgrim":   "mb5",
+		"green_across_the_ages": "mb9",
+		"handheld_historian":    "mb13", // GB(4), Virtual Boy(5), GBA(6), DS(7)
+		"world_tour":            "mb5",  // five distinct platforms at PS5
+		"generation_gap":        "mb5",  // PS1–PS5 span generations 5–9
+		"retroactive":           "mb1",  // no sessions exist
+		"the_big_n":             "",
+		"nintendo_time_machine": "",
+		"game_boy_generation":   "", // GB and GBA, no GBC
+		"sampler":               "",
+	})
+}
+
+// TestBackfillGenreYearWindow brackets Sampler: five distinct genres in
+// one calendar year unlock on the fifth finish; the same spread split
+// across two years stays locked.
+func TestBackfillGenreYearWindow(t *testing.T) {
+	s := platformMasteryFixture(t)
+	ctx := context.Background()
+
+	statuses, err := s.Achievements(ctx, "u12")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	if got["sampler"] != "sa5" {
+		t.Errorf("u12 sampler = %q, want sa5", got["sampler"])
+	}
+
+	statuses, err = s.Achievements(ctx, "u13")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	if got := unlockedIDs(statuses); got["sampler"] != "" {
+		t.Errorf("u13 sampler unlocked on %q, want locked", got["sampler"])
+	}
+}
+
+// TestBackfillRetroactiveBoundaries pins the five-year lookback: a session
+// exactly five years before the finish blocks, one day earlier does not,
+// a session on the finish day blocks, one the day after does not, and a
+// platform with no session at all unlocks on the first finish.
+func TestBackfillRetroactiveBoundaries(t *testing.T) {
+	s := platformMasteryFixture(t)
+	ctx := context.Background()
+
+	statuses, err := s.Achievements(ctx, "u14")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	if got := unlockedIDs(statuses); got["retroactive"] != "ra1" {
+		t.Errorf("retroactive = %q, want ra1 (first dormant replay)", got["retroactive"])
+	}
+}
+
+// TestLivePlatformFinishes drives the platform batch through the live
+// update path: the fifth distinct platform crosses World Tour live, a
+// finish on a platform Backhog has never seen a session on fires
+// Retroactive, and the locked curated sets carry their progress onto the
+// gallery cards.
+func TestLivePlatformFinishes(t *testing.T) {
+	s := platformMasteryFixture(t)
+	ctx := context.Background()
+
+	_, unlocks, err := s.UpdateEntry(ctx, "u15", "lb1", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish lb1: %v", err)
+	}
+	got := unlockedIDs(unlocks)
+	if got["world_tour"] != "lb1" {
+		t.Errorf("lb1 unlocks = %v, want world_tour on lb1", got)
+	}
+	if got["retroactive"] != "lb1" {
+		t.Errorf("lb1 unlocks = %v, want retroactive on lb1 (GB never played in Backhog)", got)
+	}
+
+	// The gallery shows the locked curated sets' progress in their
+	// descriptions, served server-side like the tonight picks' reasons.
+	statuses, err := s.Achievements(ctx, "u15")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	for _, st := range statuses {
+		switch st.ID {
+		case "the_big_n":
+			want := "Finish a game on NES, SNES, N64, GameCube, Wii, Wii U, and Switch. 4/7 consoles so far."
+			if st.UnlockedAt == nil && st.Description != want {
+				t.Errorf("locked the_big_n description = %q, want %q", st.Description, want)
+			}
+		case "game_boy_generation":
+			want := "Finish a game on Game Boy, Game Boy Color, and Game Boy Advance. 1/3 systems so far."
+			if st.UnlockedAt == nil && st.Description != want {
+				t.Errorf("locked game_boy_generation description = %q, want %q", st.Description, want)
+			}
+		case "playstation_pilgrim":
+			want := "Finish a game on PS1, PS2, PS3, PS4, and PS5."
+			if st.UnlockedAt == nil && st.Description != want {
+				t.Errorf("locked playstation_pilgrim description = %q, want the plain text (0/5 says nothing)", st.Description)
+			}
+		}
+	}
+
+	// The PS5 finish rides a platform with no session either, but
+	// Retroactive is idempotent — nothing new fires for the set lines.
+	_, unlocks, err = s.UpdateEntry(ctx, "u15", "lb2", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish lb2: %v", err)
+	}
+	if got := unlockedIDs(unlocks); got["retroactive"] != "" || got["playstation_pilgrim"] != "" {
+		t.Errorf("lb2 unlocks = %v, want no retroactive refire and no pilgrim", got)
+	}
+}

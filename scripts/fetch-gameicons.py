@@ -114,6 +114,16 @@ ICONS = {
     "sprint":          "lorc/sprint",
     "cycle":           "lorc/cycle",
     "full-folder":     "delapouite/full-folder",
+    # diversity and platform mastery
+    "pizza-slice":   "delapouite/pizza-slice",
+    "compass":       "lorc/compass",
+    "dust-cloud":    "lorc/dust-cloud",
+    "family-tree":   "delapouite/family-tree",
+    "cuckoo-clock":  "delapouite/cuckoo-clock",
+    "mushroom-gills": "lorc/mushroom-gills",
+    "knapsack":      "lorc/knapsack",
+    "footprint":     "lorc/footprint",
+    "clover":        "lorc/clover",
     # statuses
     "ban":           "lorc/interdiction",
     "x-circle":      "lorc/interdiction",

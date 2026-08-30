@@ -123,3 +123,29 @@ var PlatformCatalog = map[int64]PlatformMeta{
 	34: {ManufacturerOther, FamilyOther, 0, false}, // Android
 	39: {ManufacturerOther, FamilyOther, 0, false}, // iOS
 }
+
+// The curated platform-mastery sets: the exact hardware a set achievement
+// demands, as IGDB ids. Nintendo Time Machine and the generation counters
+// read family and generation straight off the classified platform rows
+// instead; these sets pick specific members a family predicate can't.
+var (
+	// BigNPlatformIDs is The Big N's seven home consoles. Famicom and
+	// Super Famicom are regional variants, and Switch 2 came after the
+	// set was coined — none of them count.
+	BigNPlatformIDs = []int64{18, 19, 4, 21, 5, 41, 130} // NES, SNES, N64, GameCube, Wii, Wii U, Switch
+	// PilgrimPlatformIDs is the PlayStation pilgrim's five stations: the
+	// home consoles only, PSP and Vita don't count.
+	PilgrimPlatformIDs = []int64{7, 8, 9, 48, 167} // PS1, PS2, PS3, PS4, PS5
+)
+
+// FamilySize returns how many catalog platforms belong to family — the
+// finish line for family-wide set achievements like the Game Boy line.
+func FamilySize(family string) int {
+	n := 0
+	for _, meta := range PlatformCatalog {
+		if meta.Family == family {
+			n++
+		}
+	}
+	return n
+}

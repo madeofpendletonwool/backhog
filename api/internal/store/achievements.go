@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/achievements"
+	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
 
@@ -286,8 +287,115 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 		return err
 	}
 
+	// The diversity aggregate: how many distinct genres this calendar
+	// year's finishes cover, this finish included.
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT gg.genre_id)
+		FROM library_entries e JOIN game_genres gg ON gg.game_id = e.game_id
+		WHERE e.user_id = ? AND e.status = 'played'
+		  AND e.finished_at IS NOT NULL AND strftime('%Y', e.finished_at) = ?`,
+		userID, year).Scan(&e.YearGenres); err != nil {
+		return err
+	}
+
+	// The platform-mastery aggregates over the user's finished platforms:
+	// the distinct-platform count for World Tour, distinct generations for
+	// Generation Gap, the handheld and Xbox generation runs, and the
+	// Nintendo-console and Game Boy family counts. Platforms the catalog
+	// does not classify keep a NULL generation, so they never count
+	// toward a generation.
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			COUNT(DISTINCT e.platform_id),
+			COUNT(DISTINCT CASE WHEN p.generation > 0 THEN p.generation END),
+			COUNT(DISTINCT CASE WHEN p.handheld AND p.generation > 0 THEN p.generation END),
+			COUNT(DISTINCT CASE WHEN p.family = ? AND p.generation > 0 THEN p.generation END),
+			COUNT(DISTINCT CASE WHEN p.family = ? THEN e.platform_id END),
+			COUNT(DISTINCT CASE WHEN p.family = ? THEN e.platform_id END)
+		FROM library_entries e JOIN platforms p ON p.id = e.platform_id
+		WHERE e.user_id = ? AND e.status = 'played'`,
+		metadata.FamilyXbox, metadata.FamilyNintendoConsole, metadata.FamilyGameBoy,
+		userID).Scan(&e.DistinctPlatforms, &e.DistinctGenerations, &e.HandheldGenerations,
+		&e.XboxGenerations, &e.NintendoConsoles, &e.GameBoySystems); err != nil {
+		return err
+	}
+
+	// The curated hardware sets: how many of The Big N's consoles and the
+	// pilgrim's stations carry a finish.
+	bigN, err := countFinishedPlatforms(ctx, tx, userID, metadata.BigNPlatformIDs)
+	if err != nil {
+		return err
+	}
+	e.BigNConsoles = bigN
+	pilgrim, err := countFinishedPlatforms(ctx, tx, userID, metadata.PilgrimPlatformIDs)
+	if err != nil {
+		return err
+	}
+	e.PilgrimConsoles = pilgrim
+
+	// Retroactive's lookback: whether the entry's platform has seen no
+	// logged session in the RetroactiveYears up to and including the
+	// finish date — played_on is a date, so the whole finish day blocks.
+	// Sessions only exist from Backhog usage, so a platform never touched
+	// here reads as dormant on the first finish: honest, per the design.
+	if e.PlatformID != nil {
+		stamp := e.At.UTC().Format("2006-01-02 15:04:05")
+		dormant := false
+		if err := tx.QueryRowContext(ctx, `
+			SELECT NOT EXISTS (
+				SELECT 1 FROM play_sessions ps
+				JOIN library_entries le ON le.id = ps.entry_id
+				WHERE ps.user_id = ? AND le.platform_id = ?
+				  AND ps.played_on BETWEEN date(?, ?) AND date(?))`,
+			userID, *e.PlatformID, stamp,
+			fmt.Sprintf("-%d years", achievements.RetroactiveYears), stamp).Scan(&dormant); err != nil {
+			return err
+		}
+		e.PlatformDormant = &dormant
+	}
+
 	e.FinishYear, e.FinishMonth = e.At.Year(), int(e.At.Month())
 	return nil
+}
+
+// rowQuerier is the slice of the database handle the shared helpers need:
+// satisfied by both *sql.DB and *sql.Tx.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// countFinishedPlatforms counts how many of the curated platforms carry
+// at least one of the user's finishes.
+func countFinishedPlatforms(ctx context.Context, q rowQuerier, userID string, ids []int64) (int, error) {
+	placeholders := strings.Repeat(",?", len(ids))[1:]
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, userID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	var n int
+	if err := q.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT platform_id) FROM library_entries
+		WHERE user_id = ? AND status = 'played'
+		  AND platform_id IN (`+placeholders+`)`, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// countFinishedFamilyPlatforms counts how many distinct platforms of one
+// classification family carry a finish — the family-wide sets, whose
+// membership is the catalog itself.
+func countFinishedFamilyPlatforms(ctx context.Context, q rowQuerier, userID, family string) (int, error) {
+	var n int
+	if err := q.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT e.platform_id)
+		FROM library_entries e JOIN platforms p ON p.id = e.platform_id
+		WHERE e.user_id = ? AND e.status = 'played' AND p.family = ?`,
+		userID, family).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // prevFinishSharesSeriesTx reports whether the user's previous finish —
@@ -693,6 +801,103 @@ func seriesSet(ids []string) map[string]bool {
 	return set
 }
 
+// platformClass is the slice of a platforms row the backfill replay needs.
+type platformClass struct {
+	family     string
+	generation sql.NullInt64
+	handheld   bool
+}
+
+// loadPlatformMetaTx reads every platform row's classification. Rows the
+// catalog does not know ride along unclassified and degrade exactly the
+// way the live snapshot's SQL degrades them.
+func loadPlatformMetaTx(ctx context.Context, tx *sql.Tx) (map[int64]platformClass, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, family, generation, handheld FROM platforms`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[int64]platformClass{}
+	for rows.Next() {
+		var id int64
+		var cls platformClass
+		if err := rows.Scan(&id, &cls.family, &cls.generation, &cls.handheld); err != nil {
+			return nil, err
+		}
+		out[id] = cls
+	}
+	return out, rows.Err()
+}
+
+// loadGameGenresTx maps each cached game to its genre ids, sorted, for the
+// running per-year genre set behind Sampler.
+func loadGameGenresTx(ctx context.Context, tx *sql.Tx) (map[int64][]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT game_id, genre_id FROM game_genres ORDER BY game_id, genre_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[int64][]int64{}
+	for rows.Next() {
+		var gameID, genreID int64
+		if err := rows.Scan(&gameID, &genreID); err != nil {
+			return nil, err
+		}
+		out[gameID] = append(out[gameID], genreID)
+	}
+	return out, rows.Err()
+}
+
+// platformSession is one logged play session reduced to what Retroactive's
+// replay needs: the platform of the entry it was logged against, and the
+// day it happened.
+type platformSession struct {
+	platformID int64
+	playedOn   time.Time
+}
+
+// loadUserPlatformSessionsTx reads the user's sessions joined to their
+// entry's platform. Sessions against entries with no platform set cannot
+// speak to any platform's dormancy and are skipped.
+func loadUserPlatformSessionsTx(ctx context.Context, tx *sql.Tx, userID string) ([]platformSession, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT le.platform_id, ps.played_on
+		FROM play_sessions ps JOIN library_entries le ON le.id = ps.entry_id
+		WHERE ps.user_id = ? AND le.platform_id IS NOT NULL`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []platformSession{}
+	for rows.Next() {
+		var sess platformSession
+		var raw string
+		if err := rows.Scan(&sess.platformID, &raw); err != nil {
+			return nil, err
+		}
+		if at, ok := parseDBTime(raw); ok {
+			sess.playedOn = at
+			out = append(out, sess)
+		}
+	}
+	return out, rows.Err()
+}
+
+// platformIDSet turns a curated platform id list into the set lookups the
+// backfill replay does per finish.
+func platformIDSet(ids []int64) map[int64]bool {
+	set := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
 // sharesAnySeries reports whether any id is in prev.
 func sharesAnySeries(prev map[string]bool, ids []string) bool {
 	for _, id := range ids {
@@ -763,7 +968,8 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	rows, err := tx.QueryContext(ctx, `
 		SELECT e.id, e.game_id, e.created_at, COALESCE(e.finished_at, e.created_at),
 		       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0),
-		       g.time_to_beat_main, g.time_to_beat_complete, g.first_release_date
+		       g.time_to_beat_main, g.time_to_beat_complete, g.first_release_date,
+		       e.platform_id
 		FROM library_entries e JOIN games g ON g.id = e.game_id
 		WHERE e.user_id = ? AND e.status = 'played'
 		ORDER BY COALESCE(e.finished_at, e.created_at) ASC, e.id`, userID)
@@ -772,16 +978,22 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	}
 	played := []achievements.Entry{}
 	gameIDs := []int64{}
+	platformIDs := []sql.NullInt64{}
 	for rows.Next() {
 		var e achievements.Entry
 		var gameID int64
+		var platformID sql.NullInt64
 		var finishedAt string
 		if err := rows.Scan(&e.ID, &gameID, &e.CreatedAt, &finishedAt, &e.LoggedMinutes,
-			&e.TimeToBeatMain, &e.TimeToBeatComplete, &e.FirstReleaseDate); err != nil {
+			&e.TimeToBeatMain, &e.TimeToBeatComplete, &e.FirstReleaseDate, &platformID); err != nil {
 			rows.Close()
 			return err
 		}
 		e.Status = models.StatusPlayed
+		if platformID.Valid {
+			pid := platformID.Int64
+			e.PlatformID = &pid
+		}
 		if at, ok := parseDBTime(finishedAt); ok {
 			e.At = at
 		} else {
@@ -789,6 +1001,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		}
 		played = append(played, e)
 		gameIDs = append(gameIDs, gameID)
+		platformIDs = append(platformIDs, platformID)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -836,6 +1049,25 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	if err != nil {
 		return err
 	}
+	// The platform replay: every platform row's classification, the
+	// genres each cached game carries, and the user's sessions joined to
+	// the platform they were logged against — so the diversity and
+	// platform-mastery aggregates grow exactly as they did live, and
+	// Retroactive's lookback replays against the historical session dates.
+	platformMeta, err := loadPlatformMetaTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	genresOf, err := loadGameGenresTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	userSessions, err := loadUserPlatformSessionsTx(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	bigNSet := platformIDSet(metadata.BigNPlatformIDs)
+	pilgrimSet := platformIDSet(metadata.PilgrimPlatformIDs)
 	prevSeries := map[string]bool{}
 	yearFinishes, yearAdditions := map[int]int{}, map[int]int{}
 	ai := 0
@@ -844,6 +1076,13 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	// perfect season, the summer window, and the 50h+ count.
 	monthCounts, yearMonths, summerCounts := map[string]int{}, map[int]int{}, map[int]int{}
 	longHauls := 0
+	// The diversity and platform-mastery aggregates grow the same way:
+	// the year's genre set, and the distinct platforms, generations, and
+	// family members the finishes have covered so far.
+	yearGenres := map[int]map[int64]bool{}
+	platformsSeen, nintendoSeen := map[int64]bool{}, map[int64]bool{}
+	gameBoySeen, bigNSeen, pilgrimSeen := map[int64]bool{}, map[int64]bool{}, map[int64]bool{}
+	generationsSeen, handheldGens, xboxGens := map[int]bool{}, map[int]bool{}, map[int]bool{}
 
 	for i := range played {
 		played[i].PlayedCount = i + 1
@@ -873,6 +1112,72 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		}
 		played[i].PrevFinishSharesSeries = sharesAnySeries(prevSeries, seriesIDs)
 		prevSeries = seriesSet(seriesIDs)
+
+		// The diversity aggregate: this year's genre set, this finish's
+		// genres folded in.
+		genreSet := yearGenres[year]
+		if genreSet == nil {
+			genreSet = map[int64]bool{}
+		}
+		for _, gid := range genresOf[gameIDs[i]] {
+			genreSet[gid] = true
+		}
+		yearGenres[year] = genreSet
+		played[i].YearGenres = len(genreSet)
+
+		// The platform-mastery aggregates, and Retroactive's lookback
+		// against the historical session dates. Platform assignments are
+		// judged from what the library knows today — the same
+		// approximation the series standings make.
+		if platformIDs[i].Valid {
+			pid := platformIDs[i].Int64
+			platformsSeen[pid] = true
+			cls := platformMeta[pid]
+			gen := 0
+			if cls.generation.Valid && cls.generation.Int64 > 0 {
+				gen = int(cls.generation.Int64)
+				generationsSeen[gen] = true
+				if cls.handheld {
+					handheldGens[gen] = true
+				}
+			}
+			switch cls.family {
+			case metadata.FamilyNintendoConsole:
+				nintendoSeen[pid] = true
+			case metadata.FamilyGameBoy:
+				gameBoySeen[pid] = true
+			case metadata.FamilyXbox:
+				if gen > 0 {
+					xboxGens[gen] = true
+				}
+			}
+			if bigNSet[pid] {
+				bigNSeen[pid] = true
+			}
+			if pilgrimSet[pid] {
+				pilgrimSeen[pid] = true
+			}
+			played[i].DistinctPlatforms = len(platformsSeen)
+			played[i].DistinctGenerations = len(generationsSeen)
+			played[i].HandheldGenerations = len(handheldGens)
+			played[i].XboxGenerations = len(xboxGens)
+			played[i].NintendoConsoles = len(nintendoSeen)
+			played[i].GameBoySystems = len(gameBoySeen)
+			played[i].BigNConsoles = len(bigNSeen)
+			played[i].PilgrimConsoles = len(pilgrimSeen)
+
+			finishDay := played[i].At.UTC()
+			finishDay = time.Date(finishDay.Year(), finishDay.Month(), finishDay.Day(), 0, 0, 0, 0, time.UTC)
+			start := finishDay.AddDate(-achievements.RetroactiveYears, 0, 0)
+			dormant := true
+			for _, sess := range userSessions {
+				if sess.platformID == pid && !sess.playedOn.Before(start) && !sess.playedOn.After(finishDay) {
+					dormant = false
+					break
+				}
+			}
+			played[i].PlatformDormant = &dormant
+		}
 
 		month := monthKeyOf(played[i].At)
 		if monthCounts[month] == 0 {
@@ -1138,11 +1443,25 @@ func (s *Store) Achievements(ctx context.Context, userID string) ([]models.Achie
 		return nil, err
 	}
 
+	// The curated platform sets carry their progress onto the locked
+	// gallery cards ("3/5 consoles so far") — served server-side, the
+	// same pattern the tonight picks' reasons use.
+	progress, err := s.curatedSetProgress(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]models.AchievementStatus, 0, len(achievements.Catalogue))
 	for _, def := range achievements.Catalogue {
 		u, unlocked := byAchievement[def.Achievement.ID]
 		locked := !unlocked
 		status := models.AchievementStatus{Achievement: achievements.Present(def.Achievement, locked)}
+		if locked {
+			if p, ok := progress[def.Achievement.ID]; ok && p.have > 0 && p.have < p.want {
+				status.Description = fmt.Sprintf("%s %d/%d %s so far.",
+					status.Description, p.have, p.want, p.unit)
+			}
+		}
 		if unlocked {
 			at := u.at
 			status.UnlockedAt = &at
@@ -1155,6 +1474,36 @@ func (s *Store) Achievements(ctx context.Context, userID string) ([]models.Achie
 		out = append(out, status)
 	}
 	return out, nil
+}
+
+// curatedProgress is the user's standing in one curated platform set:
+// how many members carry a finish, out of how many, and the noun the
+// locked gallery card reads ("4/7 consoles so far").
+type curatedProgress struct {
+	have, want int
+	unit       string
+}
+
+// curatedSetProgress measures the user's standing in each curated
+// platform set, for the locked gallery cards' progress strings.
+func (s *Store) curatedSetProgress(ctx context.Context, userID string) (map[string]curatedProgress, error) {
+	bigN, err := countFinishedPlatforms(ctx, s.db, userID, metadata.BigNPlatformIDs)
+	if err != nil {
+		return nil, err
+	}
+	pilgrim, err := countFinishedPlatforms(ctx, s.db, userID, metadata.PilgrimPlatformIDs)
+	if err != nil {
+		return nil, err
+	}
+	gameBoy, err := countFinishedFamilyPlatforms(ctx, s.db, userID, metadata.FamilyGameBoy)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]curatedProgress{
+		"the_big_n":           {have: bigN, want: len(metadata.BigNPlatformIDs), unit: "consoles"},
+		"playstation_pilgrim": {have: pilgrim, want: len(metadata.PilgrimPlatformIDs), unit: "consoles"},
+		"game_boy_generation": {have: gameBoy, want: metadata.FamilySize(metadata.FamilyGameBoy), unit: "systems"},
+	}, nil
 }
 
 // hydrateUnlocks turns freshly inserted unlock stubs into toast-ready

@@ -113,6 +113,26 @@ const (
 	sagaEntries         = 5
 	marathonSeriesGames = 3
 	fullSetMinOwned     = 2
+	// The diversity ladder: distinct genres in one calendar year and
+	// distinct platforms finished on.
+	samplerGenres      = 5
+	worldTourPlatforms = 5
+	// RetroactiveYears is how long a platform must sit without a logged
+	// session for a finish on it to count as coming out of retirement.
+	// Exported because the store's snapshot evaluates the lookback
+	// against session dates, in SQL and in the backfill replay.
+	RetroactiveYears = 5
+	// The platform-mastery sets: how many console generations, Nintendo
+	// consoles, and handheld generations the finishes must span, and the
+	// sizes of the curated hardware sets. Cross-checked against the
+	// platform catalog by the tests.
+	generationGapGenerations     = 5
+	nintendoTimeMachineConsoles  = 5
+	bigNConsoles                 = 7
+	gameBoySystems               = 3
+	handheldHistorianGenerations = 4
+	pilgrimConsoles              = 5
+	xboxGenerations              = 4
 )
 
 // Entry is the snapshot of the triggering library entry, plus the user-level
@@ -210,6 +230,42 @@ type Entry struct {
 	// Drops that predate the history table appear only through the
 	// resume-time fallback the store passes in. Comeback predicates read it.
 	DropHistory []DropCycle
+
+	// YearGenres is how many distinct genres the user's finishes in At's
+	// calendar year cover, this finish included — Sampler's variety count.
+	YearGenres int
+	// DistinctPlatforms is how many distinct platforms the user has
+	// finished games on, this finish included. The "where you actually
+	// played it" signal: entry.platform_id.
+	DistinctPlatforms int
+	// PlatformDormant reports whether the entry's platform has seen no
+	// logged session in the RetroactiveYears up to and including the
+	// finish. Nil when no platform is set, in which case Retroactive
+	// cannot fire. Sessions only exist from Backhog usage, so a platform
+	// never touched here reads as dormant.
+	PlatformDormant *bool
+	// DistinctGenerations is how many distinct console generations the
+	// user's finishes span. Platforms without a real generation (PC,
+	// unknown hardware) never count.
+	DistinctGenerations int
+	// NintendoConsoles is how many distinct Nintendo home consoles the
+	// finishes cover — Switch hybrids included, handhelds excluded.
+	NintendoConsoles int
+	// BigNConsoles is how many of The Big N's seven curated consoles
+	// carry a finish.
+	BigNConsoles int
+	// GameBoySystems is how many of the three Game Boy systems carry a
+	// finish.
+	GameBoySystems int
+	// HandheldGenerations is how many distinct generations of handhelds
+	// the finishes span.
+	HandheldGenerations int
+	// PilgrimConsoles is how many of the five curated PlayStation home
+	// consoles carry a finish.
+	PilgrimConsoles int
+	// XboxGenerations is how many distinct Xbox generations the finishes
+	// span.
+	XboxGenerations int
 }
 
 // DropCycle is one drop-and-return arc: when the entry was dropped and, if
@@ -978,6 +1034,126 @@ var Catalogue = []Definition{
 			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
 				return s.Owned >= fullSetMinOwned && s.Played == s.Owned
 			})
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "sampler",
+			Title:       "Sampler",
+			Description: "Finish games from 5 different genres in one calendar year.",
+			Icon:        "pizza-slice",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.YearGenres >= samplerGenres
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "world_tour",
+			Title:       "World Tour",
+			Description: "Finish games on 5 different platforms.",
+			Icon:        "compass",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.DistinctPlatforms >= worldTourPlatforms
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "retroactive",
+			Title:       "Retroactive",
+			Description: "Finish a game on a platform with no logged session in the last 5 years.",
+			Icon:        "dust-cloud",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.PlatformDormant != nil && *e.Entry.PlatformDormant
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "generation_gap",
+			Title:       "Generation Gap",
+			Description: "Finish games on 5 different console generations.",
+			Icon:        "family-tree",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.DistinctGenerations >= generationGapGenerations
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "nintendo_time_machine",
+			Title:       "Nintendo Time Machine",
+			Description: "Finish games on 5 different Nintendo consoles.",
+			Icon:        "cuckoo-clock",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.NintendoConsoles >= nintendoTimeMachineConsoles
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "the_big_n",
+			Title:       "The Big N",
+			Description: "Finish a game on NES, SNES, N64, GameCube, Wii, Wii U, and Switch.",
+			Icon:        "mushroom-gills",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.BigNConsoles >= bigNConsoles
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "game_boy_generation",
+			Title:       "Game Boy Generation",
+			Description: "Finish a game on Game Boy, Game Boy Color, and Game Boy Advance.",
+			Icon:        "gamepad",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.GameBoySystems >= gameBoySystems
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "handheld_historian",
+			Title:       "Handheld Historian",
+			Description: "Finish games on 4 generations of handhelds.",
+			Icon:        "knapsack",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.HandheldGenerations >= handheldHistorianGenerations
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "playstation_pilgrim",
+			Title:       "PlayStation Pilgrim",
+			Description: "Finish a game on PS1, PS2, PS3, PS4, and PS5.",
+			Icon:        "footprint",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.PilgrimConsoles >= pilgrimConsoles
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "green_across_the_ages",
+			Title:       "Green Across the Ages",
+			Description: "Finish games on 4 generations of Xbox.",
+			Icon:        "clover",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.XboxGenerations >= xboxGenerations
 		},
 	},
 }

@@ -319,22 +319,43 @@ func lastDroppedAtTx(ctx context.Context, tx *sql.Tx, entryID string, fallback *
 	return &t, nil
 }
 
-// oldestOwnedTx returns the earliest created_at among the games the user owns
-// and still means to finish. MIN() over SQLite strings keeps lexicographic
-// order, which matches timestamp order, so the raw string is parsed here.
-func oldestOwnedTx(ctx context.Context, tx *sql.Tx, userID string) (*time.Time, error) {
-	var raw sql.NullString
-	err := tx.QueryRowContext(ctx, `
-		SELECT MIN(created_at) FROM library_entries
-		WHERE user_id = ? AND status NOT IN ('wishlist','ignored')`, userID).Scan(&raw)
-	if err != nil || !raw.Valid {
+// ownedCreatedAtTx returns the created_at stamps of every owned,
+// finishable entry — the population ownership-age ranks are measured
+// against — sorted ascending. Timestamps parse in UTC so ranks compare
+// against the same instants the live snapshot's SQL ranks.
+func ownedCreatedAtTx(ctx context.Context, tx *sql.Tx, userID string) ([]time.Time, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT created_at FROM library_entries
+		WHERE user_id = ? AND status NOT IN ('wishlist','ignored')`, userID)
+	if err != nil {
 		return nil, err
 	}
-	t, ok := parseDBTime(raw.String)
-	if !ok {
-		return nil, nil
+	defer rows.Close()
+
+	var out []time.Time
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if t, ok := parseDBTime(raw); ok {
+			out = append(out, t)
+		}
 	}
-	return &t, nil
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out, nil
+}
+
+// rankAmong returns at's position in the sorted stamps (oldest = 1),
+// counting only strictly-earlier stamps so ties share a rank — the same
+// semantics as the live snapshot's COUNT(created_at < ...) + 1.
+func rankAmong(stamps []time.Time, at time.Time) int {
+	return sort.Search(len(stamps), func(i int) bool {
+		return !stamps[i].Before(at)
+	}) + 1
 }
 
 // parseDBTime reads a SQLite timestamp or date string. Aggregates like MIN()
@@ -397,7 +418,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	rows, err := tx.QueryContext(ctx, `
 		SELECT e.id, e.created_at, COALESCE(e.finished_at, e.created_at),
 		       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0),
-		       g.time_to_beat_main, g.time_to_beat_complete
+		       g.time_to_beat_main, g.time_to_beat_complete, g.first_release_date
 		FROM library_entries e JOIN games g ON g.id = e.game_id
 		WHERE e.user_id = ? AND e.status = 'played'
 		ORDER BY COALESCE(e.finished_at, e.created_at) ASC, e.id`, userID)
@@ -409,7 +430,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		var e achievements.Entry
 		var finishedAt string
 		if err := rows.Scan(&e.ID, &e.CreatedAt, &finishedAt, &e.LoggedMinutes,
-			&e.TimeToBeatMain, &e.TimeToBeatComplete); err != nil {
+			&e.TimeToBeatMain, &e.TimeToBeatComplete, &e.FirstReleaseDate); err != nil {
 			rows.Close()
 			return err
 		}
@@ -426,7 +447,10 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		return err
 	}
 
-	oldest, err := oldestOwnedTx(ctx, tx, userID)
+	// Ownership-age ranks are measured against today's owned population,
+	// the same one the live snapshot ranks against — the generalization
+	// IsOldestOwned has always used.
+	ownedStamps, err := ownedCreatedAtTx(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
@@ -449,7 +473,8 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 
 	for i := range played {
 		played[i].PlayedCount = i + 1
-		played[i].IsOldestOwned = oldest != nil && !played[i].CreatedAt.After(*oldest)
+		played[i].CreatedAtRank = rankAmong(ownedStamps, played[i].CreatedAt)
+		played[i].IsOldestOwned = played[i].CreatedAtRank == 1
 		for ai < len(additions) && !additions[ai].After(played[i].At) {
 			yearAdditions[additions[ai].Year()]++
 			ai++

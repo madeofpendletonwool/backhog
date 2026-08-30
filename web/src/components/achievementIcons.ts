@@ -23,6 +23,14 @@ const ICONS: Record<string, GiName> = {
   target: "target",
   "door-open": "door-open",
   hourglass: "hourglass",
+  amphora: "amphora",
+  "mayan-pyramid": "mayan-pyramid",
+  "stone-tablet": "stone-tablet",
+  "time-trap": "time-trap",
+  "vintage-robot": "vintage-robot",
+  fossil: "fossil",
+  "lightning-storm": "lightning-storm",
+  bookshelf: "bookshelf",
   // The generic glyph a locked hidden achievement is masked with.
   lock: "lock",
 };

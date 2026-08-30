@@ -47,8 +47,25 @@ const (
 	dentistAppointmentDrop    = 25
 	massExtinctionReduction   = 50
 	emptyTheClosetPeakUnowned = 10
-	// archaeologistWindow is how long a game must have been owned at finish.
-	archaeologistWindow = 5 * 365 * 24 * time.Hour
+	// The ownership-age ladder: how long a game must have been owned at
+	// finish. Archaeologist (5 years) is the silver rung of it.
+	dustyRelicWindow       = 3 * 365 * 24 * time.Hour
+	archaeologistWindow    = 5 * 365 * 24 * time.Hour
+	lostCivilizationWindow = 7 * 365 * 24 * time.Hour
+	ancientArtifactWindow  = 10 * 365 * 24 * time.Hour
+	// timeCapsuleWindow is how much older than your finish a game's
+	// original release must be.
+	timeCapsuleWindow = 10 * 365 * 24 * time.Hour
+	// oldHardwareBeforeYear: Old Hardware counts games originally released
+	// before this calendar year.
+	oldHardwareBeforeYear = 2000
+	// fossilRecordOldest is how many of the oldest owned games count for
+	// The Fossil Record.
+	fossilRecordOldest = 3
+	// The acquisition-speed windows: how soon after adding a game it must
+	// be finished.
+	instantGratificationWindow = 30 * 24 * time.Hour
+	noShelfTimeWindow          = 7 * 24 * time.Hour
 	// abandonmentWindow is how long a dropped game must have been owned.
 	// Matches the season's rescue threshold (owned ≥ 1 year).
 	abandonmentWindow = 365 * 24 * time.Hour
@@ -325,6 +342,18 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			ID:          "dusty_relic",
+			Title:       "Dusty Relic",
+			Description: "Finish a game you've owned for 3+ years (owned = since you added it to Backhog).",
+			Icon:        "amphora",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && ownedFor(e.Entry) >= dustyRelicWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
 			ID:          "archaeologist",
 			Title:       "Archaeologist",
 			Description: "Finish a game you owned for 5+ years.",
@@ -337,6 +366,56 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			ID:          "lost_civilization",
+			Title:       "Lost Civilization",
+			Description: "Finish a game you've owned for 7+ years.",
+			Icon:        "mayan-pyramid",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && ownedFor(e.Entry) >= lostCivilizationWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "ancient_artifact",
+			Title:       "Ancient Artifact",
+			Description: "Finish a game you've owned for 10+ years.",
+			Icon:        "stone-tablet",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && ownedFor(e.Entry) >= ancientArtifactWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "time_capsule",
+			Title:       "Time Capsule",
+			Description: "Finish a game released 10+ years before you finished it.",
+			Icon:        "time-trap",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.FirstReleaseDate != nil &&
+				e.Entry.At.Sub(time.Unix(*e.Entry.FirstReleaseDate, 0)) >= timeCapsuleWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "old_hardware",
+			Title:       "Old Hardware, New Victory",
+			Description: "Finish a game originally released before 2000.",
+			Icon:        "vintage-robot",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.FirstReleaseDate != nil &&
+				time.Unix(*e.Entry.FirstReleaseDate, 0).Year() < oldHardwareBeforeYear
+		},
+	},
+	{
+		Achievement: models.Achievement{
 			ID:          "speedrun",
 			Title:       "Speedrun",
 			Description: "Finish a game with under 5 hours logged.",
@@ -345,6 +424,30 @@ var Catalogue = []Definition{
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.LoggedMinutes < speedrunMinutes
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "instant_gratification",
+			Title:       "Instant Gratification",
+			Description: "Finish a game within 30 days of adding it.",
+			Icon:        "lightning-storm",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && ownedFor(e.Entry) <= instantGratificationWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "no_shelf_time",
+			Title:       "No Shelf Time",
+			Description: "Finish a game within 7 days of adding it.",
+			Icon:        "bookshelf",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && ownedFor(e.Entry) <= noShelfTimeWindow
 		},
 	},
 	{
@@ -395,6 +498,19 @@ var Catalogue = []Definition{
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.IsOldestOwned
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "fossil_record",
+			Title:       "The Fossil Record",
+			Description: "Finish one of the 3 oldest games you own.",
+			Icon:        "fossil",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.CreatedAtRank > 0 &&
+				e.Entry.CreatedAtRank <= fossilRecordOldest
 		},
 	},
 }

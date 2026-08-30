@@ -39,26 +39,36 @@ func newAchievementsStore(t *testing.T) *Store {
 		('u1', 'u1@example.com', 'u1', 'x'),
 		('u2', 'u2@example.com', 'u2', 'x')`)
 
-	// games: (id, hours to beat main, hours to beat complete)
+	year := time.Now().UTC().Year()
+
+	// games: (id, hours to beat main, hours to beat complete, original
+	// release unix seconds; 0 = unknown). Game 1 is a pre-2000 release, so
+	// a1's finish earns the era achievements; game 3 is recent; game 4
+	// lands exactly on the time-capsule window for a4's finish.
 	for _, g := range []struct {
 		id             int64
 		main, complete int64
+		release        int64
 	}{
-		{1, 10, 20},
-		{2, 4, 8},
-		{3, 60, 120},
-		{4, 8, 16},
-		{5, 12, 24},
-		{6, 10, 20},
+		{1, 10, 20, time.Date(1998, 6, 15, 0, 0, 0, 0, time.UTC).Unix()},
+		{2, 4, 8, 0},
+		{3, 60, 120, time.Date(year-2, 1, 1, 0, 0, 0, 0, time.UTC).Unix()},
+		{4, 8, 16, time.Date(year-1, 7, 5, 12, 0, 0, 0, time.UTC).Add(-10 * 365 * 24 * time.Hour).Unix()},
+		{5, 12, 24, 0},
+		{6, 10, 20, 0},
 	} {
-		exec(`INSERT INTO games (id, name, time_to_beat_main, time_to_beat_complete) VALUES (?, ?, ?, ?)`,
-			g.id, "Game "+string(rune('A'+g.id-1)), g.main*3600, g.complete*3600)
+		var release any
+		if g.release != 0 {
+			release = g.release
+		}
+		exec(`INSERT INTO games (id, name, time_to_beat_main, time_to_beat_complete, first_release_date)
+			VALUES (?, ?, ?, ?, ?)`,
+			g.id, "Game "+string(rune('A'+g.id-1)), g.main*3600, g.complete*3600, release)
 	}
 
 	// ymd builds an explicit UTC calendar stamp: the year comparisons
 	// (Backlog Negative) need dates that sit in known buckets no matter
 	// when the suite runs.
-	year := time.Now().UTC().Year()
 	ymd := func(offsetYears int, monthDay string) string {
 		return time.Date(year+offsetYears, 1, 1, 12, 0, 0, 0, time.UTC).
 			Format("2006") + "-" + monthDay + " 12:00:00"
@@ -120,12 +130,18 @@ func TestAchievementsBackfill(t *testing.T) {
 	}
 
 	want := map[string]string{
-		// a1 is the first finish, the oldest-owned game, an 8-year dig with
-		// 3h logged — four achievements off one game.
-		"first_blood":     "a1",
-		"archaeologist":   "a1",
-		"speedrun":        "a1",
-		"the_ancient_one": "a1",
+		// a1 is the first finish, the oldest-owned game, an 8-year dig
+		// with 3h logged, and a pre-2000 release — nine achievements off
+		// one game.
+		"first_blood":       "a1",
+		"archaeologist":     "a1",
+		"dusty_relic":       "a1",
+		"lost_civilization": "a1",
+		"fossil_record":     "a1",
+		"time_capsule":      "a1",
+		"old_hardware":      "a1",
+		"speedrun":          "a1",
+		"the_ancient_one":   "a1",
 		// a3 is the 60h main-estimate game.
 		"long_haul": "a3",
 		// a4 logged exactly its 16h completion estimate.
@@ -183,7 +199,8 @@ func TestUpdateEntryUnlocksAchievements(t *testing.T) {
 	ctx := context.Background()
 
 	// Finishing the fifth game crosses the cleanup_crew line; a6 is a ~6
-	// year dig with nothing logged, so archaeologist and speedrun ride
+	// year dig with nothing logged, so the age ladder's lower rungs, the
+	// fossil record (a6 is the second-oldest of six), and speedrun ride
 	// along, and this year's finishes (one) already outnumber this year's
 	// additions (none).
 	_, unlocks, err := s.UpdateEntry(ctx, "u1", "a6", EntryUpdate{Status: strptr(models.StatusPlayed)})
@@ -195,7 +212,9 @@ func TestUpdateEntryUnlocksAchievements(t *testing.T) {
 		"first_blood":      "a6",
 		"cleanup_crew":     "a6",
 		"speedrun":         "a6",
+		"dusty_relic":      "a6",
 		"archaeologist":    "a6",
+		"fossil_record":    "a6",
 		"backlog_negative": "a6",
 	}
 	if len(got) != len(want) {
@@ -423,10 +442,12 @@ func TestBackfillVolumeLadderAttach(t *testing.T) {
 	got := unlockedIDs(statuses)
 	want := map[string]string{
 		// The first finish is also the oldest owned game, unlogged, and
-		// leaves exactly ten unplayed behind.
+		// leaves exactly ten unplayed behind — oldest means the fossil
+		// record opens too.
 		"first_blood":     "c0",
 		"speedrun":        "c0",
 		"the_ancient_one": "c0",
+		"fossil_record":   "c0",
 		"one_down":        "c0",
 		// Two finishes vs one same-year addition at the second finish.
 		"backlog_negative": "c1",
@@ -497,6 +518,7 @@ func TestBackfillPeakReductionAndCloset(t *testing.T) {
 		"first_blood":     "p0",
 		"speedrun":        "p0",
 		"the_ancient_one": "p0",
+		"fossil_record":   "p0",
 		// No additions last year: the first finish of the year tips the
 		// year negative.
 		"backlog_negative": "p1",
@@ -543,6 +565,12 @@ func TestBacklogNegativeYearBoundaries(t *testing.T) {
 		"speedrun":         "m1",
 		"the_ancient_one":  "m3", // added last December, the oldest owned
 		"backlog_negative": "m3",
+		// m1 is the second-oldest of three (all three are the "3 oldest")
+		// and finished five days after adding: fossil record plus both
+		// acquisition-speed achievements.
+		"fossil_record":         "m1",
+		"instant_gratification": "m1",
+		"no_shelf_time":         "m1",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("unlocked %v, want exactly %v", got, want)
@@ -592,5 +620,96 @@ func TestLiveDropsReduceBacklog(t *testing.T) {
 		if got["one_down"] != "" {
 			t.Errorf("one_down unlocked on a drop, want finish-only")
 		}
+	}
+}
+
+// TestAcquisitionSpeedBoundaries pins the 7/30-day windows through the
+// backfill replay, where the finish stamp is exact: one user per boundary
+// so idempotent unlocks can't mask a wrong crossing.
+func TestAcquisitionSpeedBoundaries(t *testing.T) {
+	s := newAchievementsStore(t)
+	ctx := context.Background()
+	database := s.DB()
+
+	cases := []struct {
+		name      string
+		owned     time.Duration
+		wantInst  bool
+		wantShelf bool
+	}{
+		{"finished exactly seven days after adding", 7 * 24 * time.Hour, true, true},
+		{"finished seven days and an hour after adding", 7*24*time.Hour + time.Hour, true, false},
+		{"finished exactly thirty days after adding", 30 * 24 * time.Hour, true, false},
+		{"finished thirty days and an hour after adding", 30*24*time.Hour + time.Hour, false, false},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			user, game, entry := fmt.Sprintf("u%d", 10+i), int64(300+i), fmt.Sprintf("q%d", i)
+			added := time.Date(time.Now().UTC().Year(), 6, 1, 12, 0, 0, 0, time.UTC)
+			finished := added.Add(tc.owned)
+			stamp := func(t time.Time) string { return t.Format("2006-01-02 15:04:05") }
+
+			seed := func(query string, args ...any) {
+				t.Helper()
+				if _, err := database.ExecContext(ctx, query, args...); err != nil {
+					t.Fatalf("seed %q: %v", query, err)
+				}
+			}
+			seed(`INSERT INTO users (id, email, username, password_hash) VALUES (?, ?, ?, 'x')`,
+				user, user+"@example.com", user)
+			seed(`INSERT INTO games (id, name) VALUES (?, 'Speed Game')`, game)
+			seed(`INSERT INTO library_entries (id, user_id, game_id, status, created_at, finished_at)
+				VALUES (?, ?, ?, 'played', ?, ?)`, entry, user, game, stamp(added), stamp(finished))
+
+			statuses, err := s.Achievements(ctx, user)
+			if err != nil {
+				t.Fatalf("Achievements: %v", err)
+			}
+			got := unlockedIDs(statuses)
+			if tc.wantInst && got["instant_gratification"] != entry {
+				t.Errorf("instant_gratification = %q, want %q", got["instant_gratification"], entry)
+			}
+			if !tc.wantInst && got["instant_gratification"] != "" {
+				t.Errorf("instant_gratification unlocked at %q, want locked", got["instant_gratification"])
+			}
+			if tc.wantShelf && got["no_shelf_time"] != entry {
+				t.Errorf("no_shelf_time = %q, want %q", got["no_shelf_time"], entry)
+			}
+			if !tc.wantShelf && got["no_shelf_time"] != "" {
+				t.Errorf("no_shelf_time unlocked at %q, want locked", got["no_shelf_time"])
+			}
+		})
+	}
+}
+
+// TestFossilRecordRanks checks the ownership-age rank semantics in the
+// backfill: ties on created_at share a rank (two entries tied oldest push
+// the next entry to rank 3, still inside the record), and the fourth
+// oldest — finishing first — earns nothing.
+func TestFossilRecordRanks(t *testing.T) {
+	f := newVolumeFixture(t, 4)
+	ctx := context.Background()
+
+	// t1 and t2 share the oldest stamp (both rank 1), so t3 ranks 3 and
+	// t4 ranks 4. t4 finishes first — outside the record — then t3's
+	// finish opens it.
+	oldest := ymdStamp(-2, "01-01")
+	f.add("t1", 0, models.StatusPlayed, oldest, ymdStamp(-1, "06-01"))
+	f.add("t2", 1, models.StatusPlayed, oldest, ymdStamp(-1, "06-02"))
+	f.add("t3", 2, models.StatusPlayed, ymdStamp(-1, "03-01"), ymdStamp(-1, "05-15"))
+	f.add("t4", 3, models.StatusPlayed, ymdStamp(-1, "03-02"), ymdStamp(-1, "05-01"))
+
+	statuses, err := f.s.Achievements(ctx, "u3")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	if got["fossil_record"] != "t3" {
+		t.Errorf("fossil_record = %q, want t3 (rank 3, after the rank-4 t4 finishes first)", got["fossil_record"])
+	}
+	// t1 is the first rank-1 entry to finish, so it keeps the Ancient One.
+	if got["the_ancient_one"] != "t1" {
+		t.Errorf("the_ancient_one = %q, want t1", got["the_ancient_one"])
 	}
 }

@@ -106,6 +106,14 @@ ICONS = {
     "vintage-robot": "lorc/vintage-robot",
     "wooden-door":   "lorc/wooden-door",
     "zap":           "lorc/focused-lightning",
+    # series mastery
+    "book-pile":       "delapouite/book-pile",
+    "linked-rings":    "lorc/linked-rings",
+    "scroll-unfurled": "lorc/scroll-unfurled",
+    "imperial-crown":  "delapouite/imperial-crown",
+    "sprint":          "lorc/sprint",
+    "cycle":           "lorc/cycle",
+    "full-folder":     "delapouite/full-folder",
     # statuses
     "ban":           "lorc/interdiction",
     "x-circle":      "lorc/interdiction",

@@ -53,6 +53,14 @@ const ICONS: Record<string, GiName> = {
   "chevrons-up": "chevrons-up",
   joystick: "joystick",
   "list-checks": "list-checks",
+  // The series mastery ladder.
+  "book-pile": "book-pile",
+  "linked-rings": "linked-rings",
+  "scroll-unfurled": "scroll-unfurled",
+  "imperial-crown": "imperial-crown",
+  sprint: "sprint",
+  cycle: "cycle",
+  "full-folder": "full-folder",
   // The generic glyph a locked hidden achievement is masked with.
   lock: "lock",
 };

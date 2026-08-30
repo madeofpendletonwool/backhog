@@ -105,6 +105,14 @@ const (
 	// adding a non-wishlist game.
 	restraintWindow  = 30 * 24 * time.Hour
 	disciplineWindow = 90 * 24 * time.Hour
+	// The series ladder: finishes from one series, how many owned
+	// entries make a series a saga, same-year finishes for a marathon,
+	// and the smallest series worth calling a completed set.
+	trilogyGames        = 3
+	franchiseModeGames  = 5
+	sagaEntries         = 5
+	marathonSeriesGames = 3
+	fullSetMinOwned     = 2
 )
 
 // Entry is the snapshot of the triggering library entry, plus the user-level
@@ -150,8 +158,19 @@ type Entry struct {
 	// finishable entries (oldest = 1). Generalizes IsOldestOwned to "oldest
 	// N" predicates; ties share a rank.
 	CreatedAtRank int
-	// SeriesIDs lists the series (franchise or collection) the game belongs to.
+	// SeriesIDs lists the series (franchise or collection) the game
+	// belongs to as a full game. DLC and expansion memberships are
+	// excluded, so they never count toward the series predicates.
 	SeriesIDs []string
+	// SeriesStandings rolls up the user's standing in each of those
+	// series at evaluation time — owned members, finishes, and what
+	// remains — read inside the store's transaction.
+	SeriesStandings map[string]SeriesStanding
+	// PrevFinishSharesSeries reports whether the user's previous finish
+	// — the closest one before this by (finish stamp, id), the same
+	// order the backfill replays in — was a game from one of the same
+	// series. Back to Back turns on it.
+	PrevFinishSharesSeries bool
 	// PlatformID is the platform the user chose to play this entry on; nil
 	// when unset.
 	PlatformID *int64
@@ -198,6 +217,22 @@ type Entry struct {
 type DropCycle struct {
 	DroppedAt time.Time
 	ResumedAt *time.Time
+}
+
+// SeriesStanding is the user's position in one series of the finished game
+// at the evaluation moment, this finish included.
+type SeriesStanding struct {
+	// Owned is how many members the user owns: non-wishlist,
+	// non-ignored, kind 'game' — the same bar the series index uses.
+	Owned int
+	// Played is how many of those are finished, this one included.
+	Played int
+	// Unplayed is how many still sit backlog or playing. Dropped
+	// members are neither played nor unplayed — they owe nothing.
+	Unplayed int
+	// YearPlayed is how many of the series' finishes landed in the
+	// event's calendar year, this one included.
+	YearPlayed int
 }
 
 // Event is one evaluation trigger.
@@ -348,7 +383,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
-			ID:   "next_up",
+			ID:    "next_up",
 			Title: "Next!",
 			Description: "Finish the game sitting at the top of your queue " +
 				"(marked finished straight from the queue).",
@@ -849,6 +884,102 @@ var Catalogue = []Definition{
 				e.Entry.CreatedAtRank <= fossilRecordOldest
 		},
 	},
+	{
+		Achievement: models.Achievement{
+			ID:          "trilogy",
+			Title:       "Trilogy",
+			Description: "Finish 3 games from the same series.",
+			Icon:        "book-pile",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
+				return s.Played >= trilogyGames
+			})
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "back_to_back",
+			Title:       "Back to Back",
+			Description: "Finish two games of the same series in a row, with nothing finished between them.",
+			Icon:        "linked-rings",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.PrevFinishSharesSeries
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "saga",
+			Title:       "Saga",
+			Description: "Finish a game from a series you own 5+ entries of.",
+			Icon:        "scroll-unfurled",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
+				return s.Owned >= sagaEntries
+			})
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "franchise_mode",
+			Title:       "Franchise Mode",
+			Description: "Finish 5 games from the same series.",
+			Icon:        "imperial-crown",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
+				return s.Played >= franchiseModeGames
+			})
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "marathon_series",
+			Title:       "Marathon Series",
+			Description: "Finish 3 games of one series within a calendar year.",
+			Icon:        "sprint",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
+				return s.YearPlayed >= marathonSeriesGames
+			})
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "closing_the_loop",
+			Title:       "Closing the Loop",
+			Description: "Finish the last unplayed game in a series you own — dropped entries don't count against you.",
+			Icon:        "cycle",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
+				return s.Owned >= fullSetMinOwned && s.Unplayed == 0
+			})
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "full_set",
+			Title:       "The Full Set",
+			Description: "Finish every game in a series you own (2+ entries, all played).",
+			Icon:        "full-folder",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
+				return s.Owned >= fullSetMinOwned && s.Played == s.Owned
+			})
+		},
+	},
 }
 
 // ByID returns the catalogue entry with that code key, or nil.
@@ -877,6 +1008,18 @@ func IsSummer(month int) bool {
 // peak — finishes and drops both count as shrinking it, honesty included.
 func unplayedReduction(e Entry) int {
 	return e.PeakUnplayedCount - e.UnplayedCount
+}
+
+// anySeries reports whether any series the finished game belongs to passes
+// the test. Standings exist only for kind-'game' memberships, so DLC and
+// expansion finishes never clear the bar.
+func anySeries(e Entry, test func(SeriesStanding) bool) bool {
+	for _, s := range e.SeriesStandings {
+		if test(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // longestReturnGap is the longest span between a drop and the return that

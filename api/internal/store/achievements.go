@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/achievements"
@@ -209,6 +210,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 	rows, err := tx.QueryContext(ctx, `
 		SELECT sg.series_id FROM series_games sg
 		WHERE sg.game_id = (SELECT game_id FROM library_entries WHERE id = ?)
+		  AND sg.kind = 'game'
 		ORDER BY sg.series_id`, e.ID)
 	if err != nil {
 		return err
@@ -227,6 +229,54 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 		return err
 	}
 
+	// The series standings, against the same owned bar the series index
+	// uses: non-wishlist, non-ignored, kind 'game'. The finish being
+	// evaluated is already stamped in-tx, so it counts as played.
+	if len(e.SeriesIDs) > 0 {
+		placeholders := strings.Repeat(",?", len(e.SeriesIDs))[1:]
+		args := make([]any, 0, len(e.SeriesIDs)+2)
+		args = append(args, year, userID)
+		for _, id := range e.SeriesIDs {
+			args = append(args, id)
+		}
+		srows, err := tx.QueryContext(ctx, `
+			SELECT sg.series_id, COUNT(*),
+			       COALESCE(SUM(e.status = 'played'), 0),
+			       COALESCE(SUM(e.status IN ('backlog','playing')), 0),
+			       COALESCE(SUM(e.status = 'played' AND strftime('%Y', e.finished_at) = ?), 0)
+			FROM series_games sg
+			JOIN library_entries e ON e.game_id = sg.game_id
+			WHERE e.user_id = ? AND sg.kind = 'game'
+			  AND sg.series_id IN (`+placeholders+`)
+			  AND e.status NOT IN ('wishlist','ignored')
+			GROUP BY sg.series_id`, args...)
+		if err != nil {
+			return err
+		}
+		e.SeriesStandings = map[string]achievements.SeriesStanding{}
+		for srows.Next() {
+			var id string
+			var s achievements.SeriesStanding
+			if err := srows.Scan(&id, &s.Owned, &s.Played, &s.Unplayed, &s.YearPlayed); err != nil {
+				srows.Close()
+				return err
+			}
+			e.SeriesStandings[id] = s
+		}
+		srows.Close()
+		if err := srows.Err(); err != nil {
+			return err
+		}
+
+		// Back to Back: the previous finish — by (stamp, id), the same
+		// order the backfill replays in — sharing a series with this one.
+		prevShares, err := prevFinishSharesSeriesTx(ctx, tx, userID, e)
+		if err != nil {
+			return err
+		}
+		e.PrevFinishSharesSeries = prevShares
+	}
+
 	// The platform the user chose and the game's original release date ride
 	// the same snapshot so predicates read one struct.
 	if err := tx.QueryRowContext(ctx, `
@@ -238,6 +288,54 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 
 	e.FinishYear, e.FinishMonth = e.At.Year(), int(e.At.Month())
 	return nil
+}
+
+// prevFinishSharesSeriesTx reports whether the user's previous finish —
+// the closest one strictly before this entry by (finish stamp, id), the
+// same order the backfill replays in — was a game from one of the same
+// kind-'game' series. Timestamps are compared as datetime() values so the
+// stored TEXT format never matters.
+func prevFinishSharesSeriesTx(ctx context.Context, tx *sql.Tx, userID string, e *achievements.Entry) (bool, error) {
+	stamp := e.At.UTC().Format("2006-01-02 15:04:05")
+	var prevGame sql.NullInt64
+	err := tx.QueryRowContext(ctx, `
+		SELECT game_id FROM library_entries
+		WHERE user_id = ? AND status = 'played' AND id <> ?
+		  AND (datetime(COALESCE(finished_at, created_at)) < datetime(?)
+		       OR (datetime(COALESCE(finished_at, created_at)) = datetime(?) AND id < ?))
+		ORDER BY datetime(COALESCE(finished_at, created_at)) DESC, id DESC
+		LIMIT 1`, userID, e.ID, stamp, stamp, e.ID).Scan(&prevGame)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !prevGame.Valid {
+		return false, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT series_id FROM series_games
+		WHERE game_id = ? AND kind = 'game'`, prevGame.Int64)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	mine := map[string]bool{}
+	for _, id := range e.SeriesIDs {
+		mine[id] = true
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return false, err
+		}
+		if mine[id] {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // timelineEvent is one endpoint of an entry's unplayed-contribution
@@ -486,6 +584,125 @@ func rankAmong(stamps []time.Time, at time.Time) int {
 	}) + 1
 }
 
+// loadSeriesGamesTx maps each cached game to its kind-'game' series
+// memberships, sorted by series id — DLC and expansion rows never feed
+// the series predicates.
+func loadSeriesGamesTx(ctx context.Context, tx *sql.Tx) (map[int64][]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT game_id, series_id FROM series_games
+		WHERE kind = 'game' ORDER BY game_id, series_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[int64][]string{}
+	for rows.Next() {
+		var gameID int64
+		var seriesID string
+		if err := rows.Scan(&gameID, &seriesID); err != nil {
+			return nil, err
+		}
+		out[gameID] = append(out[gameID], seriesID)
+	}
+	return out, rows.Err()
+}
+
+// seriesMemberState is one owned member of a series, reduced to what the
+// historical standings replay needs: when it was acquired, whether it is
+// finished or dropped today, and when that closing status was stamped.
+type seriesMemberState struct {
+	createdAt time.Time
+	status    string
+	closedAt  *time.Time
+}
+
+// loadSeriesMembersTx reads every owned (non-wishlist, non-ignored)
+// member of every series the user holds games in, keyed by series id.
+// The closed stamp is finished_at — a finish or a drop, whichever closed
+// the book — with the backfill's created_at fallback for pre-feature
+// rows; backlog and playing members never close.
+func loadSeriesMembersTx(ctx context.Context, tx *sql.Tx, userID string) (map[string][]seriesMemberState, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT sg.series_id, e.status, e.created_at, COALESCE(e.finished_at, e.created_at)
+		FROM series_games sg
+		JOIN library_entries e ON e.game_id = sg.game_id
+		WHERE e.user_id = ? AND sg.kind = 'game'
+		  AND e.status NOT IN ('wishlist','ignored')
+		ORDER BY sg.series_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string][]seriesMemberState{}
+	for rows.Next() {
+		var seriesID, status, createdRaw, closedRaw string
+		if err := rows.Scan(&seriesID, &status, &createdRaw, &closedRaw); err != nil {
+			return nil, err
+		}
+		created, ok := parseDBTime(createdRaw)
+		if !ok {
+			continue
+		}
+		m := seriesMemberState{createdAt: created, status: status}
+		switch status {
+		case models.StatusPlayed, models.StatusDropped:
+			if closed, ok := parseDBTime(closedRaw); ok {
+				m.closedAt = &closed
+			}
+		}
+		out[seriesID] = append(out[seriesID], m)
+	}
+	return out, rows.Err()
+}
+
+// standingsAt replays one series' members to the historical moment at,
+// judged from what the library knows today — the same approximation the
+// unplayed timeline makes. A member owned by then counts as played once
+// its finish stamp passes, dropped once its drop stamp does, and
+// unplayed until either.
+func standingsAt(members []seriesMemberState, at time.Time) achievements.SeriesStanding {
+	var s achievements.SeriesStanding
+	for _, m := range members {
+		if m.createdAt.After(at) {
+			continue
+		}
+		s.Owned++
+		if m.closedAt == nil || m.closedAt.After(at) {
+			s.Unplayed++
+			continue
+		}
+		if m.status == models.StatusPlayed {
+			s.Played++
+			if m.closedAt.Year() == at.Year() {
+				s.YearPlayed++
+			}
+		}
+	}
+	return s
+}
+
+// seriesSet turns a series id list into the set Back to Back carries
+// between replayed finishes.
+func seriesSet(ids []string) map[string]bool {
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+// sharesAnySeries reports whether any id is in prev.
+func sharesAnySeries(prev map[string]bool, ids []string) bool {
+	for _, id := range ids {
+		if prev[id] {
+			return true
+		}
+	}
+	return false
+}
+
 // parseDBTime reads a SQLite timestamp or date string. Aggregates like MIN()
 // and expressions like COALESCE() lose the column's declared type, so their
 // results arrive as plain strings.
@@ -544,7 +761,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	// finished timestamp is read as a string because COALESCE() strips the
 	// column's declared type.
 	rows, err := tx.QueryContext(ctx, `
-		SELECT e.id, e.created_at, COALESCE(e.finished_at, e.created_at),
+		SELECT e.id, e.game_id, e.created_at, COALESCE(e.finished_at, e.created_at),
 		       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0),
 		       g.time_to_beat_main, g.time_to_beat_complete, g.first_release_date
 		FROM library_entries e JOIN games g ON g.id = e.game_id
@@ -554,10 +771,12 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		return err
 	}
 	played := []achievements.Entry{}
+	gameIDs := []int64{}
 	for rows.Next() {
 		var e achievements.Entry
+		var gameID int64
 		var finishedAt string
-		if err := rows.Scan(&e.ID, &e.CreatedAt, &finishedAt, &e.LoggedMinutes,
+		if err := rows.Scan(&e.ID, &gameID, &e.CreatedAt, &finishedAt, &e.LoggedMinutes,
 			&e.TimeToBeatMain, &e.TimeToBeatComplete, &e.FirstReleaseDate); err != nil {
 			rows.Close()
 			return err
@@ -569,6 +788,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 			e.At = e.CreatedAt
 		}
 		played = append(played, e)
+		gameIDs = append(gameIDs, gameID)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -604,6 +824,19 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	if err != nil {
 		return err
 	}
+	// The series replay: which series each cached game belongs to as a
+	// full game, and every series' owned members reduced to the stamps
+	// the standings need — so each historical finish judges the series
+	// at its own moment, not against today's state.
+	seriesOf, err := loadSeriesGamesTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	seriesMembers, err := loadSeriesMembersTx(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	prevSeries := map[string]bool{}
 	yearFinishes, yearAdditions := map[int]int{}, map[int]int{}
 	ai := 0
 	// The calendar aggregates grow as finishes replay in order, exactly as
@@ -626,6 +859,20 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		played[i].YearFinishes = yearFinishes[year]
 		played[i].YearAdditions = yearAdditions[year]
 		played[i].UnplayedCount, played[i].PeakUnplayedCount = timeline.stateAt(played[i].At)
+
+		// Series standings at the historical moment, and the previous
+		// finish's series for Back to Back.
+		seriesIDs := seriesOf[gameIDs[i]]
+		played[i].SeriesIDs = seriesIDs
+		if len(seriesIDs) > 0 {
+			standings := make(map[string]achievements.SeriesStanding, len(seriesIDs))
+			for _, sid := range seriesIDs {
+				standings[sid] = standingsAt(seriesMembers[sid], played[i].At)
+			}
+			played[i].SeriesStandings = standings
+		}
+		played[i].PrevFinishSharesSeries = sharesAnySeries(prevSeries, seriesIDs)
+		prevSeries = seriesSet(seriesIDs)
 
 		month := monthKeyOf(played[i].At)
 		if monthCounts[month] == 0 {

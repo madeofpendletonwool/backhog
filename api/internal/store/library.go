@@ -235,10 +235,14 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 
 		// A dropped game coming back is a resume — the comeback
 		// achievements key off it. Going to wishlist is leaving, not
-		// returning; finishing a dropped game is just a finish.
+		// returning; finishing a dropped game is just a finish (but the
+		// comeback finish predicates still want the drop time).
 		if currentStatus == models.StatusDropped &&
-			(newStatus == models.StatusPlaying || newStatus == models.StatusBacklog) {
-			evalKind = achievements.EventResumed
+			(newStatus == models.StatusPlaying || newStatus == models.StatusBacklog ||
+				newStatus == models.StatusPlayed) {
+			if newStatus != models.StatusPlayed {
+				evalKind = achievements.EventResumed
+			}
 			if finishedAt.Valid {
 				t := finishedAt.Time
 				droppedAtFallback = &t

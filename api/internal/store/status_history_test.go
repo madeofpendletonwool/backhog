@@ -128,8 +128,7 @@ func TestAddSessionWritesStatusHistory(t *testing.T) {
 
 // TestResumedEventFires exercises the comeback wiring end to end: a drop
 // (which stamps history) followed by a resume to playing, then to backlog.
-// No achievement keys on EventResumed yet — the assertions are on the
-// history trail the predicates will read.
+// The first resume unlocks Resurrection; the second finds it already earned.
 func TestResumedEventFires(t *testing.T) {
 	s := newAchievementsStore(t)
 	ctx := context.Background()
@@ -140,17 +139,20 @@ func TestResumedEventFires(t *testing.T) {
 	// Resuming a dropped game by playing it again.
 	if _, unlocks, err := s.UpdateEntry(ctx, "u1", "a6", EntryUpdate{Status: strptr(models.StatusPlaying)}); err != nil {
 		t.Fatalf("resume to playing: %v", err)
-	} else if len(unlocks) != 0 {
-		t.Errorf("resume to playing unlocked %v, want nothing yet", unlocks)
+	} else if got := unlockedIDs(unlocks); got["resurrection"] != "a6" {
+		t.Errorf("resume to playing unlocked %v, want resurrection on a6", got)
 	}
-	// Dropping again, then re-shelving to backlog: also a resume.
+	// Dropping again, then re-shelving to backlog: also a resume, but
+	// Resurrection is already earned.
 	if _, _, err := s.UpdateEntry(ctx, "u1", "a6", EntryUpdate{Status: strptr(models.StatusDropped)}); err != nil {
 		t.Fatalf("re-drop: %v", err)
 	}
-	if _, unlocks, err := s.UpdateEntry(ctx, "u1", "a6", EntryUpdate{Status: strptr(models.StatusBacklog)}); err != nil {
+	_, unlocks, err := s.UpdateEntry(ctx, "u1", "a6", EntryUpdate{Status: strptr(models.StatusBacklog)})
+	if err != nil {
 		t.Fatalf("resume to backlog: %v", err)
-	} else if len(unlocks) != 0 {
-		t.Errorf("resume to backlog unlocked %v, want nothing yet", unlocks)
+	}
+	if _, ok := unlockedIDs(unlocks)["resurrection"]; ok {
+		t.Errorf("resume to backlog re-unlocked %v, want nothing new", unlockedIDs(unlocks))
 	}
 
 	want := [][2]string{

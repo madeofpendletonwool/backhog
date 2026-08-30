@@ -31,6 +31,16 @@ const ICONS: Record<string, GiName> = {
   fossil: "fossil",
   "lightning-storm": "lightning-storm",
   bookshelf: "bookshelf",
+  hand: "hand",
+  swords: "swords",
+  gift: "gift",
+  "x-circle": "x-circle",
+  ban: "ban",
+  refresh: "refresh",
+  history: "history",
+  flag: "flag",
+  dices: "dices",
+  sparkles: "sparkles",
   // The generic glyph a locked hidden achievement is masked with.
   lock: "lock",
 };

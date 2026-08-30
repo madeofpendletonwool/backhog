@@ -26,8 +26,10 @@ type unlockStub struct {
 // status change or session that earned it. The entry snapshot is read in-tx
 // and therefore includes the mutation that triggered evaluation.
 // droppedAtFallback carries the pre-update finished_at for resumed entries
-// whose drop predates the status history table.
-func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind string, droppedAtFallback *time.Time) ([]unlockStub, error) {
+// whose drop predates the status history table. wasQueueTop carries the
+// entry's top-of-queue state from before the finishing update cleared its
+// position — the snapshot itself can no longer see it.
+func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind string, droppedAtFallback *time.Time, wasQueueTop bool) ([]unlockStub, error) {
 	var e achievements.Entry
 	var finishedAt sql.NullTime
 	err := tx.QueryRowContext(ctx, `
@@ -49,6 +51,7 @@ func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, ki
 	if finishedAt.Valid {
 		e.At = finishedAt.Time
 	}
+	e.WasQueueTop = wasQueueTop
 
 	e.DroppedAt, err = lastDroppedAtTx(ctx, tx, entryID, droppedAtFallback)
 	if err != nil {
@@ -65,7 +68,7 @@ func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, ki
 
 	var newly []unlockStub
 	for _, def := range achievements.Catalogue {
-		if !def.Predicate(achievements.Event{Kind: kind, Entry: e}) {
+		if def.Predicate == nil || !def.Predicate(achievements.Event{Kind: kind, Entry: e}) {
 			continue
 		}
 		at, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &entryID)
@@ -139,6 +142,56 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 		WHERE user_id = ? AND status <> 'wishlist'
 		  AND strftime('%Y', created_at) = ?`,
 		userID, year).Scan(&e.YearAdditions); err != nil {
+		return err
+	}
+
+	// The calendar aggregates: finishes bucketed into At's month for the
+	// hat-trick ladder, the distinct months of At's year for a perfect
+	// season, and the June–August window — all against the same played
+	// population the finish count reads.
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN strftime('%Y-%m', finished_at) = ? THEN 1 ELSE 0 END), 0),
+			COUNT(DISTINCT CASE WHEN strftime('%Y', finished_at) = ? THEN strftime('%m', finished_at) END),
+			COALESCE(SUM(CASE WHEN strftime('%Y', finished_at) = ?
+				AND CAST(strftime('%m', finished_at) AS INTEGER) BETWEEN 6 AND 8 THEN 1 ELSE 0 END), 0)
+		FROM library_entries
+		WHERE user_id = ? AND status = 'played' AND finished_at IS NOT NULL`,
+		monthKeyOf(e.At), year, year, userID).
+		Scan(&e.MonthFinishes, &e.YearMonthsFinished, &e.SummerFinishes); err != nil {
+		return err
+	}
+
+	// The consecutive-month streak walks back from At's month over the
+	// months that saw a finish.
+	finishMonths := map[string]int{}
+	mrows, err := tx.QueryContext(ctx, `
+		SELECT strftime('%Y-%m', finished_at), COUNT(*) FROM library_entries
+		WHERE user_id = ? AND status = 'played' AND finished_at IS NOT NULL
+		GROUP BY 1`, userID)
+	if err != nil {
+		return err
+	}
+	for mrows.Next() {
+		var key string
+		var n int
+		if err := mrows.Scan(&key, &n); err != nil {
+			mrows.Close()
+			return err
+		}
+		finishMonths[key] = n
+	}
+	mrows.Close()
+	if err := mrows.Err(); err != nil {
+		return err
+	}
+	e.FinishStreak = finishMonthStreak(finishMonths, e.At)
+
+	// The 50h+ ladder: how many long-haul games the user has finished.
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM library_entries e JOIN games g ON g.id = e.game_id
+		WHERE e.user_id = ? AND e.status = 'played' AND g.time_to_beat_main >= ?`,
+		userID, achievements.LongHaulSeconds).Scan(&e.LongHaulFinishes); err != nil {
 		return err
 	}
 
@@ -269,6 +322,27 @@ func (tl *unplayedTimeline) stateAt(t time.Time) (current, peak int) {
 		}
 	}
 	return count, peak
+}
+
+// monthKeyOf buckets a moment into its UTC calendar month, "YYYY-MM" — the
+// same bucket strftime('%Y-%m') reads from stored timestamps.
+func monthKeyOf(t time.Time) string {
+	t = t.UTC()
+	return fmt.Sprintf("%04d-%02d", t.Year(), int(t.Month()))
+}
+
+// finishMonthStreak walks back from at's calendar month, counting the
+// consecutive months present in months. at's own month counts when it holds
+// a finish — the caller just landed one there.
+func finishMonthStreak(months map[string]int, at time.Time) int {
+	m := at.UTC()
+	m = time.Date(m.Year(), m.Month(), 1, 0, 0, 0, 0, time.UTC)
+	streak := 0
+	for months[monthKeyOf(m)] > 0 {
+		streak++
+		m = m.AddDate(0, -1, 0)
+	}
+	return streak
 }
 
 // additions returns every non-wishlist acquisition timestamp in order —
@@ -532,6 +606,11 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	}
 	yearFinishes, yearAdditions := map[int]int{}, map[int]int{}
 	ai := 0
+	// The calendar aggregates grow as finishes replay in order, exactly as
+	// they did live: month buckets, the distinct months per year behind a
+	// perfect season, the summer window, and the 50h+ count.
+	monthCounts, yearMonths, summerCounts := map[string]int{}, map[int]int{}, map[int]int{}
+	longHauls := 0
 
 	for i := range played {
 		played[i].PlayedCount = i + 1
@@ -547,9 +626,28 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		played[i].YearFinishes = yearFinishes[year]
 		played[i].YearAdditions = yearAdditions[year]
 		played[i].UnplayedCount, played[i].PeakUnplayedCount = timeline.stateAt(played[i].At)
+
+		month := monthKeyOf(played[i].At)
+		if monthCounts[month] == 0 {
+			yearMonths[year]++
+		}
+		monthCounts[month]++
+		if achievements.IsSummer(int(played[i].At.Month())) {
+			summerCounts[year]++
+		}
+		if played[i].TimeToBeatMain != nil && *played[i].TimeToBeatMain >= achievements.LongHaulSeconds {
+			longHauls++
+		}
+		played[i].MonthFinishes = monthCounts[month]
+		played[i].FinishStreak = finishMonthStreak(monthCounts, played[i].At)
+		played[i].YearMonthsFinished = yearMonths[year]
+		played[i].SummerFinishes = summerCounts[year]
+		played[i].LongHaulFinishes = longHauls
+		played[i].FinishYear, played[i].FinishMonth = year, int(played[i].At.Month())
+
 		ev := achievements.Event{Kind: achievements.EventFinished, Entry: played[i]}
 		for _, def := range achievements.Catalogue {
-			if !def.Predicate(ev) {
+			if def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &played[i].ID); err != nil {
@@ -566,7 +664,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 			DropHistory: []achievements.DropCycle{{DroppedAt: r.droppedAt, ResumedAt: &r.at}},
 		}}
 		for _, def := range achievements.Catalogue {
-			if !def.Predicate(ev) {
+			if def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &r.entryID); err != nil {
@@ -614,7 +712,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		dropped[i].UnplayedCount, dropped[i].PeakUnplayedCount = timeline.stateAt(dropped[i].At)
 		ev := achievements.Event{Kind: achievements.EventDropped, Entry: dropped[i]}
 		for _, def := range achievements.Catalogue {
-			if !def.Predicate(ev) {
+			if def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &dropped[i].ID); err != nil {
@@ -719,11 +817,13 @@ func (s *Store) evaluateTimeWindowAchievementsTx(ctx context.Context, tx *sql.Tx
 
 	var raw sql.NullString
 	if err := tx.QueryRowContext(ctx,
-		`SELECT MAX(created_at) FROM library_entries WHERE user_id = ?`, userID).Scan(&raw); err != nil {
+		`SELECT MAX(created_at) FROM library_entries WHERE user_id = ? AND status <> 'wishlist'`,
+		userID).Scan(&raw); err != nil {
 		return err
 	}
 	if !raw.Valid {
-		// No entries: there is no "last added" to measure a window from.
+		// No non-wishlist entries: there is no "last added" to measure a
+		// window from.
 		return nil
 	}
 	lastAcquired, ok := parseDBTime(raw.String)

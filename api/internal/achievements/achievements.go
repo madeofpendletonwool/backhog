@@ -85,8 +85,26 @@ const (
 	phoenixWindow        = 2 * 365 * 24 * time.Hour
 	// speedrunMinutes caps logged playtime at completion for Speedrun.
 	speedrunMinutes = 5 * 60
-	// longHaulSeconds is the time-to-beat that qualifies a game as Long Haul.
-	longHaulSeconds = 50 * 3600
+	// LongHaulSeconds is the time-to-beat that qualifies a game as Long
+	// Haul and counts a finish toward The Commitment. Exported because
+	// the store's snapshot counts the same ladder in SQL.
+	LongHaulSeconds = 50 * 3600
+	// ultraMarathonSeconds is the time-to-beat that qualifies a game as
+	// Ultra Marathon.
+	ultraMarathonSeconds = 100 * 3600
+	// theCommitmentGames is how many 50h+ finishes The Commitment demands.
+	theCommitmentGames = 3
+	// The calendar ladder: finishes bucketed by calendar month, the
+	// consecutive-month streak, the full-year sweep, and the summer window.
+	hatTrickMonth        = 3
+	cleanupMonthCount    = 5
+	backlogMachineStreak = 3
+	perfectSeasonMonths  = 12
+	summerCleanupCount   = 5
+	// The no-acquisition windows: how long the user must go without
+	// adding a non-wishlist game.
+	restraintWindow  = 30 * 24 * time.Hour
+	disciplineWindow = 90 * 24 * time.Hour
 )
 
 // Entry is the snapshot of the triggering library entry, plus the user-level
@@ -145,6 +163,28 @@ type Entry struct {
 	// into. Zero when At is the zero time.
 	FinishYear  int
 	FinishMonth int
+	// MonthFinishes is how many games were finished in At's calendar
+	// month, including this one.
+	MonthFinishes int
+	// FinishStreak is the run of consecutive calendar months with at
+	// least one finish, ending with At's month.
+	FinishStreak int
+	// YearMonthsFinished is how many distinct months of At's calendar
+	// year have seen a finish, At's own included.
+	YearMonthsFinished int
+	// SummerFinishes is how many games were finished in the June–August
+	// stretch of At's year, including this one; only meaningful when the
+	// finish itself lands in summer.
+	SummerFinishes int
+	// LongHaulFinishes is how many 50h+ games the user has finished,
+	// including this one.
+	LongHaulFinishes int
+	// WasQueueTop reports whether the entry sat at the top of the play
+	// queue at the moment it was finished — captured before the
+	// finishing update clears its position. Live finishes only: the
+	// queue's historical order is not replayable, so the backfill never
+	// sets it.
+	WasQueueTop bool
 	// DropHistory lists the entry's drop arcs from its status history,
 	// oldest first. ResumedAt is nil while the drop is still open (or was
 	// closed by finishing the game directly, which no resume row records).
@@ -190,9 +230,10 @@ func (e Event) resumed() bool {
 // to hook, so they evaluate against these on gallery loads.
 type TimeSnapshot struct {
 	Now time.Time
-	// LastAcquiredAt is MAX(library_entries.created_at) — when the user last
-	// added any entry, wishlist included. Zero time when they own nothing,
-	// in which case time predicates should not fire.
+	// LastAcquiredAt is MAX(library_entries.created_at) over non-wishlist
+	// entries — when the user last actually added a game to their library
+	// rather than its wishlist. Zero time when they own nothing, in which
+	// case time predicates should not fire.
 	LastAcquiredAt time.Time
 }
 
@@ -307,6 +348,19 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			ID:   "next_up",
+			Title: "Next!",
+			Description: "Finish the game sitting at the top of your queue " +
+				"(marked finished straight from the queue).",
+			Icon: "chevrons-up",
+			Tier: models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.WasQueueTop
+		},
+	},
+	{
+		Achievement: models.Achievement{
 			ID:          "making_a_dent",
 			Title:       "Making a Dent",
 			Description: "Shrink your unplayed backlog by 10 from its peak.",
@@ -365,6 +419,115 @@ var Catalogue = []Definition{
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.YearFinishes > e.Entry.YearAdditions
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "hat_trick",
+			Title:       "Hat Trick",
+			Description: "Finish 3 games in one calendar month.",
+			Icon:        "star",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.MonthFinishes >= hatTrickMonth
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "cleanup_month",
+			Title:       "Cleanup Month",
+			Description: "Finish 5 games in one calendar month.",
+			Icon:        "calendar",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.MonthFinishes >= cleanupMonthCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "backlog_machine",
+			Title:       "Backlog Machine",
+			Description: "Finish at least one game in 3 consecutive months.",
+			Icon:        "layers",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.FinishStreak >= backlogMachineStreak
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "perfect_season",
+			Title:       "Perfect Season",
+			Description: "Finish at least one game every month of a calendar year.",
+			Icon:        "check-circle",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.YearMonthsFinished >= perfectSeasonMonths
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "season_opener",
+			Title:       "Season Opener",
+			Description: "Finish a backlog game in January.",
+			Icon:        "play",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.FinishMonth == int(time.January)
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "strong_finish",
+			Title:       "Strong Finish",
+			Description: "Finish a backlog game in December.",
+			Icon:        "check",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.FinishMonth == int(time.December)
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "summer_cleanup",
+			Title:       "Summer Cleanup",
+			Description: "Finish 5 games in a single summer (June–August).",
+			Icon:        "zap",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && IsSummer(e.Entry.FinishMonth) &&
+				e.Entry.SummerFinishes >= summerCleanupCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "restraint",
+			Title:       "Restraint",
+			Description: "Go 30 days without adding a single game.",
+			Icon:        "clock",
+			Tier:        models.TierSilver,
+		},
+		TimePredicate: func(ts TimeSnapshot) bool {
+			return ts.Now.Sub(ts.LastAcquiredAt) >= restraintWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "discipline",
+			Title:       "Discipline",
+			Description: "Go 90 days without adding a single game.",
+			Icon:        "gauge",
+			Tier:        models.TierGold,
+		},
+		TimePredicate: func(ts TimeSnapshot) bool {
+			return ts.Now.Sub(ts.LastAcquiredAt) >= disciplineWindow
 		},
 	},
 	{
@@ -487,7 +650,32 @@ var Catalogue = []Definition{
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.TimeToBeatMain != nil &&
-				*e.Entry.TimeToBeatMain >= longHaulSeconds
+				*e.Entry.TimeToBeatMain >= LongHaulSeconds
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "ultra_marathon",
+			Title:       "Ultra Marathon",
+			Description: "Finish a game that takes 100+ hours to beat.",
+			Icon:        "joystick",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.TimeToBeatMain != nil &&
+				*e.Entry.TimeToBeatMain >= ultraMarathonSeconds
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "the_commitment",
+			Title:       "The Commitment",
+			Description: "Finish 3 games that take 50+ hours to beat.",
+			Icon:        "list-checks",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && e.Entry.LongHaulFinishes >= theCommitmentGames
 		},
 	},
 	{
@@ -676,6 +864,13 @@ func ByID(id string) *models.Achievement {
 // ownedFor is how long the entry had been in the library at the event.
 func ownedFor(e Entry) time.Duration {
 	return e.At.Sub(e.CreatedAt)
+}
+
+// IsSummer reports whether a calendar month (1–12) falls in the June–August
+// window the single-summer predicates bucket on. The store's backfill shares
+// it so the bucket can't drift from the predicate.
+func IsSummer(month int) bool {
+	return month >= 6 && month <= 8
 }
 
 // unplayedReduction is how far the unplayed backlog sits below its all-time

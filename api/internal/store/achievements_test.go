@@ -142,7 +142,9 @@ func TestAchievementsBackfill(t *testing.T) {
 		"old_hardware":      "a1",
 		"speedrun":          "a1",
 		"the_ancient_one":   "a1",
-		// a3 is the 60h main-estimate game.
+		// a3 is the third June finish of last year and the 60h
+		// main-estimate game.
+		"hat_trick": "a3",
 		"long_haul": "a3",
 		// a4 logged exactly its 16h completion estimate.
 		"completionist": "a4",
@@ -154,6 +156,10 @@ func TestAchievementsBackfill(t *testing.T) {
 		// The third finish of last year overtakes that year's two
 		// additions.
 		"backlog_negative": "a3",
+		// The lazy windows: nothing non-wishlist has been added since
+		// a4, well over a year ago.
+		"restraint":  "",
+		"discipline": "",
 		// Four finished games: cleanup_crew needs five.
 	}
 	got := unlockedIDs(achievements)
@@ -220,6 +226,14 @@ func TestUpdateEntryUnlocksAchievements(t *testing.T) {
 		"fossil_record":    "a6",
 		"backlog_negative": "a6",
 	}
+	// The live finish stamps now, so which month-scoped achievements ride
+	// along depends on when the suite runs.
+	switch time.Now().UTC().Month() {
+	case time.January:
+		want["season_opener"] = "a6"
+	case time.December:
+		want["strong_finish"] = "a6"
+	}
 	if len(got) != len(want) {
 		t.Fatalf("live unlocks = %v, want %v", got, want)
 	}
@@ -229,7 +243,9 @@ func TestUpdateEntryUnlocksAchievements(t *testing.T) {
 		}
 	}
 
-	// Un-finishing and re-finishing must not unlock anything twice.
+	// Un-finishing and re-finishing must not unlock anything twice. The
+	// one newcomer is legitimate: returning a6 to the queue leaves it
+	// sitting alone at the top, so the re-finish earns Next!.
 	if _, _, err := s.UpdateEntry(ctx, "u1", "a6", EntryUpdate{Status: strptr(models.StatusBacklog)}); err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +253,8 @@ func TestUpdateEntryUnlocksAchievements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(unlockedIDs(unlocks)) != 0 {
-		t.Errorf("re-finish unlocked %v, want nothing", unlockedIDs(unlocks))
+	if got := unlockedIDs(unlocks); len(got) != 1 || got["next_up"] != "a6" {
+		t.Errorf("re-finish unlocked %v, want only next_up on a6", got)
 	}
 }
 
@@ -446,12 +462,13 @@ func TestBackfillVolumeLadderAttach(t *testing.T) {
 	want := map[string]string{
 		// The first finish is also the oldest owned game, unlogged, and
 		// leaves exactly ten unplayed behind — oldest means the fossil
-		// record opens too.
+		// record opens too. January finish, so the season opens with it.
 		"first_blood":     "c0",
 		"speedrun":        "c0",
 		"the_ancient_one": "c0",
 		"fossil_record":   "c0",
 		"one_down":        "c0",
+		"season_opener":   "c0",
 		// Two finishes vs one same-year addition at the second finish.
 		"backlog_negative": "c1",
 		// The count ladder attaches to its crossing game.
@@ -459,6 +476,12 @@ func TestBackfillVolumeLadderAttach(t *testing.T) {
 		"spring_cleaning": "c9",
 		// Peak eleven, one left after the tenth finish: reduction ten.
 		"making_a_dent": "c9",
+		// Ten straight monthly finishes: the machine's third consecutive
+		// month lands on c2 (Jan→Feb→Mar).
+		"backlog_machine": "c2",
+		// The lazy windows: nothing added since the January straggler.
+		"restraint":  "",
+		"discipline": "",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("unlocked %v, want exactly %v", got, want)
@@ -532,6 +555,13 @@ func TestBackfillPeakReductionAndCloset(t *testing.T) {
 		// ladder crosses exactly as the closet closes.
 		"making_a_dent":    "p10",
 		"empty_the_closet": "p10",
+		// The year's monthly run: January opens the season, and the
+		// third consecutive month (Jan→Feb→Mar) starts the machine.
+		"season_opener":   "p1",
+		"backlog_machine": "p3",
+		// The lazy windows: nothing added since two years ago.
+		"restraint":  "",
+		"discipline": "",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("unlocked %v, want exactly %v", got, want)
@@ -568,12 +598,19 @@ func TestBacklogNegativeYearBoundaries(t *testing.T) {
 		"speedrun":         "m1",
 		"the_ancient_one":  "m3", // added last December, the oldest owned
 		"backlog_negative": "m3",
+		// The three finishes run Jan→Feb→Mar: the January one opens the
+		// season, the March one is the third consecutive month.
+		"season_opener":   "m1",
+		"backlog_machine": "m3",
 		// m1 is the second-oldest of three (all three are the "3 oldest")
 		// and finished five days after adding: fossil record plus both
 		// acquisition-speed achievements.
 		"fossil_record":         "m1",
 		"instant_gratification": "m1",
 		"no_shelf_time":         "m1",
+		// The lazy windows: the year-old additions are far behind.
+		"restraint":  "",
+		"discipline": "",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("unlocked %v, want exactly %v", got, want)
@@ -852,6 +889,17 @@ func TestBackfillComebackArcs(t *testing.T) {
 		"second_chance": "b1",
 		// b2's finish closes its own arc: 2 years drop → finish.
 		"phoenix": "b2",
+		// The lazy windows: nothing added in three years.
+		"restraint":  "",
+		"discipline": "",
+	}
+	// Both finishes land in the calendar month a year before the suite
+	// runs, so a January or December run adds the month-scoped pair.
+	switch time.Now().UTC().Month() {
+	case time.January:
+		want["season_opener"] = "b1"
+	case time.December:
+		want["strong_finish"] = "b1"
 	}
 	if len(got) != len(want) {
 		t.Fatalf("unlocked %v, want exactly %v", got, want)
@@ -964,5 +1012,318 @@ func TestFossilRecordRanks(t *testing.T) {
 	// t1 is the first rank-1 entry to finish, so it keeps the Ancient One.
 	if got["the_ancient_one"] != "t1" {
 		t.Errorf("the_ancient_one = %q, want t1", got["the_ancient_one"])
+	}
+}
+
+// TestBackfillCalendarLadder drives the calendar predicates through the
+// completion-order replay: month buckets grow exactly as they did live, the
+// streak crosses the Dec→Jan year wrap, and the season bookends attach to
+// their months.
+func TestBackfillCalendarLadder(t *testing.T) {
+	f := newVolumeFixture(t, 8)
+	ctx := context.Background()
+
+	// Eight games bought three years back (spread days for clean
+	// ownership ranks): one October finish, five November finishes, a
+	// December finish, and a January finish after the year wraps.
+	f.add("o1", 0, models.StatusPlayed, ymdStamp(-3, "01-01"), ymdStamp(-1, "10-05"))
+	f.add("n1", 1, models.StatusPlayed, ymdStamp(-3, "01-02"), ymdStamp(-1, "11-02"))
+	f.add("n2", 2, models.StatusPlayed, ymdStamp(-3, "01-03"), ymdStamp(-1, "11-09"))
+	f.add("n3", 3, models.StatusPlayed, ymdStamp(-3, "01-04"), ymdStamp(-1, "11-16"))
+	f.add("n4", 4, models.StatusPlayed, ymdStamp(-3, "01-05"), ymdStamp(-1, "11-23"))
+	f.add("n5", 5, models.StatusPlayed, ymdStamp(-3, "01-06"), ymdStamp(-1, "11-28"))
+	f.add("d0", 6, models.StatusPlayed, ymdStamp(-3, "01-07"), ymdStamp(-1, "12-10"))
+	f.add("j0", 7, models.StatusPlayed, ymdStamp(-3, "01-08"), ymdStamp(0, "01-08"))
+
+	statuses, err := f.s.Achievements(ctx, "u3")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	want := map[string]string{
+		"first_blood":      "o1",
+		"speedrun":         "o1",
+		"the_ancient_one":  "o1",
+		"fossil_record":    "o1",
+		"backlog_negative": "o1",
+		// The November run: hat trick on the third finish of the month,
+		// Cleanup Crew (fifth total) on n4, Cleanup Month (fifth of
+		// November) on n5.
+		"hat_trick":     "n3",
+		"cleanup_crew":  "n4",
+		"cleanup_month": "n5",
+		// Oct→Nov→Dec: the machine crosses on the December finish, which
+		// is itself a strong finish. The January finish after the wrap
+		// is also a three-year dig.
+		"backlog_machine": "d0",
+		"strong_finish":   "d0",
+		"season_opener":   "j0",
+		"dusty_relic":     "j0",
+		// The lazy windows: nothing added in three years.
+		"restraint":  "",
+		"discipline": "",
+	}
+	got := unlockedIDs(statuses)
+	if len(got) != len(want) {
+		t.Fatalf("unlocked %v, want exactly %v", got, want)
+	}
+	for id, entryID := range want {
+		if got[id] != entryID {
+			t.Errorf("%s attached to %q, want %q", id, got[id], entryID)
+		}
+	}
+}
+
+// TestBackfillStreakBoundaries pins the consecutive-month semantics: a
+// missed month resets the count to one, and the Dec→Jan wrap continues a
+// live streak instead of breaking it.
+func TestBackfillStreakBoundaries(t *testing.T) {
+	t.Run("a missed month breaks the streak", func(t *testing.T) {
+		f := newVolumeFixture(t, 2)
+		ctx := context.Background()
+		f.add("g0", 0, models.StatusPlayed, ymdStamp(-2, "01-01"), ymdStamp(-1, "10-05"))
+		f.add("g1", 1, models.StatusPlayed, ymdStamp(-2, "01-02"), ymdStamp(-1, "12-05"))
+
+		statuses, err := f.s.Achievements(ctx, "u3")
+		if err != nil {
+			t.Fatalf("Achievements: %v", err)
+		}
+		if got := unlockedIDs(statuses); got["backlog_machine"] != "" {
+			t.Errorf("backlog_machine unlocked on %q with a November gap, want locked", got["backlog_machine"])
+		}
+	})
+
+	t.Run("the year wrap continues the streak", func(t *testing.T) {
+		f := newVolumeFixture(t, 3)
+		ctx := context.Background()
+		f.add("w0", 0, models.StatusPlayed, ymdStamp(-2, "01-01"), ymdStamp(-1, "11-05"))
+		f.add("w1", 1, models.StatusPlayed, ymdStamp(-2, "01-02"), ymdStamp(-1, "12-05"))
+		f.add("w2", 2, models.StatusPlayed, ymdStamp(-2, "01-03"), ymdStamp(0, "01-05"))
+
+		statuses, err := f.s.Achievements(ctx, "u3")
+		if err != nil {
+			t.Fatalf("Achievements: %v", err)
+		}
+		if got := unlockedIDs(statuses); got["backlog_machine"] != "w2" {
+			t.Errorf("backlog_machine = %q, want w2 (Nov→Dec→Jan crosses the year wrap)", got["backlog_machine"])
+		}
+	})
+}
+
+// TestBackfillSummerBucket checks that Summer Cleanup pools only the
+// June–August stretch of a single year: five spread across one summer
+// unlocks, five split across two summers never does.
+func TestBackfillSummerBucket(t *testing.T) {
+	t.Run("five across one summer", func(t *testing.T) {
+		f := newVolumeFixture(t, 5)
+		ctx := context.Background()
+		f.add("s1", 0, models.StatusPlayed, ymdStamp(-2, "01-01"), ymdStamp(-1, "06-05"))
+		f.add("s2", 1, models.StatusPlayed, ymdStamp(-2, "01-02"), ymdStamp(-1, "06-20"))
+		f.add("s3", 2, models.StatusPlayed, ymdStamp(-2, "01-03"), ymdStamp(-1, "07-10"))
+		f.add("s4", 3, models.StatusPlayed, ymdStamp(-2, "01-04"), ymdStamp(-1, "07-25"))
+		f.add("s5", 4, models.StatusPlayed, ymdStamp(-2, "01-05"), ymdStamp(-1, "08-15"))
+
+		statuses, err := f.s.Achievements(ctx, "u3")
+		if err != nil {
+			t.Fatalf("Achievements: %v", err)
+		}
+		if got := unlockedIDs(statuses); got["summer_cleanup"] != "s5" {
+			t.Errorf("summer_cleanup = %q, want s5 (fifth finish of the summer)", got["summer_cleanup"])
+		}
+	})
+
+	t.Run("two summers do not pool", func(t *testing.T) {
+		f := newVolumeFixture(t, 5)
+		ctx := context.Background()
+		f.add("s1", 0, models.StatusPlayed, ymdStamp(-3, "01-01"), ymdStamp(-1, "06-05"))
+		f.add("s2", 1, models.StatusPlayed, ymdStamp(-3, "01-02"), ymdStamp(-1, "06-20"))
+		f.add("s3", 2, models.StatusPlayed, ymdStamp(-3, "01-03"), ymdStamp(-1, "07-10"))
+		f.add("s4", 3, models.StatusPlayed, ymdStamp(-3, "01-04"), ymdStamp(-1, "07-25"))
+		f.add("s5", 4, models.StatusPlayed, ymdStamp(-3, "01-05"), ymdStamp(0, "06-05"))
+
+		statuses, err := f.s.Achievements(ctx, "u3")
+		if err != nil {
+			t.Fatalf("Achievements: %v", err)
+		}
+		if got := unlockedIDs(statuses); got["summer_cleanup"] != "" {
+			t.Errorf("summer_cleanup unlocked on %q with finishes split 4+1 across summers, want locked", got["summer_cleanup"])
+		}
+	})
+}
+
+// TestBackfillPerfectSeason walks a full calendar year of monthly finishes:
+// only the December finish — the twelfth distinct month — crowns it, and a
+// year with a gap (the streak/summer fixtures) never gets there.
+func TestBackfillPerfectSeason(t *testing.T) {
+	f := newVolumeFixture(t, 12)
+	ctx := context.Background()
+
+	for i := 1; i <= 12; i++ {
+		f.add(fmt.Sprintf("p%02d", i), i-1, models.StatusPlayed,
+			ymdStamp(-2, fmt.Sprintf("01-%02d", i)),
+			ymdStamp(-1, fmt.Sprintf("%02d-15", i)))
+	}
+
+	statuses, err := f.s.Achievements(ctx, "u3")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	want := map[string]string{
+		// The January finish opens everything an only-finish can —
+		// including One Down, with all eleven later games unplayed.
+		"first_blood":      "p01",
+		"speedrun":         "p01",
+		"the_ancient_one":  "p01",
+		"fossil_record":    "p01",
+		"backlog_negative": "p01",
+		"one_down":         "p01",
+		"season_opener":    "p01",
+		// The ladders cross on their own games.
+		"cleanup_crew":    "p05",
+		"backlog_machine": "p03",
+		"spring_cleaning": "p10",
+		// The tenth finish leaves two of twelve unplayed — reduction
+		// exactly ten. December carries the triple crown: strong finish,
+		// the emptied closet, and the twelfth distinct month.
+		"making_a_dent":    "p10",
+		"strong_finish":    "p12",
+		"empty_the_closet": "p12",
+		"perfect_season":   "p12",
+		// The lazy windows.
+		"restraint":  "",
+		"discipline": "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unlocked %v, want exactly %v", got, want)
+	}
+	for id, entryID := range want {
+		if got[id] != entryID {
+			t.Errorf("%s attached to %q, want %q", id, got[id], entryID)
+		}
+	}
+}
+
+// TestLiveQueueTopFinish exercises the Next! capture on the real update
+// path: the queue rank is read before the finishing UPDATE clears the
+// entry's position, so the queue top earns it, mid-queue does not, and a
+// game that left the queue by starting to play cannot earn it afterwards.
+func TestLiveQueueTopFinish(t *testing.T) {
+	f := newVolumeFixture(t, 3)
+	ctx := context.Background()
+	database := f.s.DB()
+
+	f.add("q1", 0, models.StatusBacklog, ymdStamp(-1, "01-01"), "")
+	f.add("q2", 1, models.StatusBacklog, ymdStamp(-1, "01-02"), "")
+	f.add("q3", 2, models.StatusBacklog, ymdStamp(-1, "01-03"), "")
+	for id, pos := range map[string]float64{"q1": 1024, "q2": 2048, "q3": 3072} {
+		if _, err := database.ExecContext(ctx,
+			`UPDATE library_entries SET queue_position = ? WHERE id = ?`, pos, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Finishing from the middle of the queue earns nothing queue-shaped.
+	_, unlocks, err := f.s.UpdateEntry(ctx, "u3", "q2", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish q2: %v", err)
+	}
+	if got := unlockedIDs(unlocks); got["next_up"] != "" {
+		t.Errorf("mid-queue finish earned next_up on %q", got["next_up"])
+	}
+
+	// Finishing the top of the queue does.
+	_, unlocks, err = f.s.UpdateEntry(ctx, "u3", "q1", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish q1: %v", err)
+	}
+	if got := unlockedIDs(unlocks); got["next_up"] != "q1" {
+		t.Errorf("queue-top finish: next_up = %q, want q1", got["next_up"])
+	}
+
+	// Starting the last one moves it out of the queue (the auto
+	// backlog→playing flip clears its position); finishing it afterwards
+	// must not count as finishing the queue top.
+	if _, _, err := f.s.AddSession(ctx, "u3", "q3", time.Now().UTC().Format("2006-01-02"), 30, ""); err != nil {
+		t.Fatalf("session q3: %v", err)
+	}
+	_, unlocks, err = f.s.UpdateEntry(ctx, "u3", "q3", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish q3: %v", err)
+	}
+	if got := unlockedIDs(unlocks); got["next_up"] != "" {
+		t.Errorf("finish after leaving the queue earned next_up on %q", got["next_up"])
+	}
+}
+
+// TestRestraintDisciplineWindows drives the lazy windows through the
+// gallery: 30/90-day gaps measured from the last non-wishlist add, with
+// wishlist additions explicitly not resetting the clock.
+func TestRestraintDisciplineWindows(t *testing.T) {
+	s := newAchievementsStore(t)
+	ctx := context.Background()
+	database := s.DB()
+
+	now := time.Now().UTC()
+	stamp := func(t time.Time) string { return t.Format("2006-01-02 15:04:05") }
+	user := func(id string, gameID int64, status string, created time.Time) {
+		t.Helper()
+		if _, err := database.ExecContext(ctx,
+			`INSERT INTO users (id, email, username, password_hash) VALUES (?, ?, ?, 'x')`,
+			id, id+"@example.com", id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx,
+			`INSERT INTO games (id, name) VALUES (?, ?)`, gameID, "Window Game "+id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx,
+			`INSERT INTO library_entries (id, user_id, game_id, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+			"w-"+id, id, gameID, status, stamp(created)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Ten days quiet, forty days quiet, and a hundred days quiet with a
+	// wishlist entry added yesterday (a different game — one entry per
+	// user per game).
+	user("u20", 600, models.StatusBacklog, now.AddDate(0, 0, -10))
+	user("u21", 601, models.StatusBacklog, now.AddDate(0, 0, -40))
+	user("u22", 602, models.StatusBacklog, now.AddDate(0, 0, -100))
+	if _, err := database.ExecContext(ctx,
+		`INSERT INTO games (id, name) VALUES (603, 'Window Wish')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO library_entries (id, user_id, game_id, status, created_at)
+		VALUES ('w-u22w', 'u22', 603, 'wishlist', ?)`, stamp(now.AddDate(0, 0, -1))); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		user                          string
+		wantRestraint, wantDiscipline bool
+	}{
+		{"u20", false, false},
+		{"u21", true, false},
+		{"u22", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.user, func(t *testing.T) {
+			statuses, err := s.Achievements(ctx, tt.user)
+			if err != nil {
+				t.Fatalf("Achievements: %v", err)
+			}
+			got := unlockedIDs(statuses)
+			if _, ok := got["restraint"]; ok != tt.wantRestraint {
+				t.Errorf("restraint unlocked = %v, want %v", ok, tt.wantRestraint)
+			}
+			if _, ok := got["discipline"]; ok != tt.wantDiscipline {
+				t.Errorf("discipline unlocked = %v, want %v", ok, tt.wantDiscipline)
+			}
+			// A lazy unlock carries no triggering game.
+			if tt.wantRestraint && got["restraint"] != "" {
+				t.Errorf("restraint attached to entry %q, want no triggering game", got["restraint"])
+			}
+		})
 	}
 }

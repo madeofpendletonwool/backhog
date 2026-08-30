@@ -41,6 +41,18 @@ const ICONS: Record<string, GiName> = {
   flag: "flag",
   dices: "dices",
   sparkles: "sparkles",
+  star: "star",
+  calendar: "calendar",
+  layers: "layers",
+  "check-circle": "check-circle",
+  play: "play",
+  check: "check",
+  zap: "zap",
+  clock: "clock",
+  gauge: "gauge",
+  "chevrons-up": "chevrons-up",
+  joystick: "joystick",
+  "list-checks": "list-checks",
   // The generic glyph a locked hidden achievement is masked with.
   lock: "lock",
 };

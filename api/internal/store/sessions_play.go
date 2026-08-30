@@ -75,7 +75,9 @@ func (s *Store) AddSession(ctx context.Context, userID, entryID, playedOn string
 		}
 	}
 
-	newly, err := evaluateAchievementsTx(ctx, tx, userID, entryID, achievements.EventSession, nil)
+	// A session can never be the queue-top finish: the entry left the
+	// queue when it started playing.
+	newly, err := evaluateAchievementsTx(ctx, tx, userID, entryID, achievements.EventSession, nil, false)
 	if err != nil {
 		return models.Session{}, nil, err
 	}

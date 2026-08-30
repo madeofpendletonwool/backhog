@@ -1327,3 +1327,221 @@ func TestRestraintDisciplineWindows(t *testing.T) {
 		})
 	}
 }
+
+// seriesFixture seeds a series-flavoured library: user u5 owns a trilogy
+// plus its DLC and one foreign game (series srA), user u6 owns a six-entry
+// saga (series srB) with one member dropped, and users u7/u8 get backlog
+// rows to finish live. Every series predicate has a deterministic crossing
+// somewhere in here.
+func seriesFixture(t *testing.T) *Store {
+	t.Helper()
+	s := newAchievementsStore(t)
+	ctx := context.Background()
+	database := s.DB()
+
+	seed := func(query string, args ...any) {
+		t.Helper()
+		if _, err := database.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	addSeriesEntry := func(id, user string, game int64, status, created, finished string) {
+		t.Helper()
+		var fin any
+		if finished != "" {
+			fin = finished
+		}
+		seed(`INSERT INTO library_entries (id, user_id, game_id, status, created_at, finished_at)
+			VALUES (?, ?, ?, ?, ?, ?)`, id, user, game, status, created, fin)
+	}
+
+	seed(`INSERT INTO users (id, email, username, password_hash) VALUES
+		('u5', 'u5@example.com', 'u5', 'x'),
+		('u6', 'u6@example.com', 'u6', 'x'),
+		('u7', 'u7@example.com', 'u7', 'x'),
+		('u8', 'u8@example.com', 'u8', 'x')`)
+
+	for i := int64(0); i < 5; i++ {
+		seed(`INSERT INTO games (id, name) VALUES (?, ?)`, 500+i, fmt.Sprintf("Saga A %d", i))
+	}
+	for i := int64(0); i < 6; i++ {
+		seed(`INSERT INTO games (id, name) VALUES (?, ?)`, 510+i, fmt.Sprintf("Saga B %d", i))
+	}
+	seed(`INSERT INTO series (id, name) VALUES ('srA', 'Saga A'), ('srB', 'Saga B')`)
+	seed(`INSERT INTO series_games (series_id, game_id, kind) VALUES
+		('srA', 500, 'game'), ('srA', 501, 'game'), ('srA', 502, 'game'),
+		('srA', 503, 'dlc'),
+		('srB', 510, 'game'), ('srB', 511, 'game'), ('srB', 512, 'game'),
+		('srB', 513, 'game'), ('srB', 514, 'game'), ('srB', 515, 'game')`)
+
+	// u5: the trilogy fixture. Two series finishes back to back, then the
+	// DLC (which must not count), then a foreign game (which must break
+	// the run), then the third real entry completing everything.
+	addSeriesEntry("as1", "u5", 500, models.StatusPlayed, ymdStamp(-2, "01-01"), ymdStamp(-1, "01-10"))
+	addSeriesEntry("as2", "u5", 501, models.StatusPlayed, ymdStamp(-2, "01-02"), ymdStamp(-1, "01-20"))
+	addSeriesEntry("as4", "u5", 503, models.StatusPlayed, ymdStamp(-2, "01-03"), ymdStamp(-1, "02-01"))
+	addSeriesEntry("as5", "u5", 504, models.StatusPlayed, ymdStamp(-2, "01-04"), ymdStamp(-1, "02-15"))
+	addSeriesEntry("as3", "u5", 502, models.StatusPlayed, ymdStamp(-2, "01-05"), ymdStamp(-1, "03-10"))
+
+	// u6: a six-entry saga finished across three years with one member
+	// dropped — the marathon never pools three in a year, and the loop
+	// closes without the set ever being full.
+	addSeriesEntry("bs1", "u6", 510, models.StatusPlayed, ymdStamp(-3, "01-01"), ymdStamp(-2, "06-01"))
+	addSeriesEntry("bs2", "u6", 511, models.StatusPlayed, ymdStamp(-3, "01-02"), ymdStamp(-2, "11-15"))
+	addSeriesEntry("bs3", "u6", 512, models.StatusDropped, ymdStamp(-3, "01-03"), ymdStamp(-1, "07-01"))
+	addSeriesEntry("bs4", "u6", 513, models.StatusPlayed, ymdStamp(-3, "01-04"), ymdStamp(-1, "08-01"))
+	addSeriesEntry("bs5", "u6", 514, models.StatusPlayed, ymdStamp(-3, "01-05"), ymdStamp(-1, "09-01"))
+	addSeriesEntry("bs6", "u6", 515, models.StatusPlayed, ymdStamp(-3, "01-06"), ymdStamp(0, "01-10"))
+
+	// u7: one trilogy entry already finished, the rest waiting to finish
+	// live. u8: one saga entry finished, a foreign finish after it, three
+	// more owned entries still backlog so the saga bar (5 owned) is met.
+	stamp := func(t time.Time) string { return t.Format("2006-01-02 15:04:05") }
+	now := time.Now().UTC()
+	addSeriesEntry("ls1", "u7", 500, models.StatusPlayed, stamp(now.AddDate(0, 0, -30)), stamp(now.AddDate(0, 0, -10)))
+	addSeriesEntry("ls2", "u7", 501, models.StatusBacklog, stamp(now.AddDate(0, 0, -29)), "")
+	addSeriesEntry("ls4", "u7", 503, models.StatusBacklog, stamp(now.AddDate(0, 0, -28)), "")
+	addSeriesEntry("ls3", "u7", 502, models.StatusBacklog, stamp(now.AddDate(0, 0, -27)), "")
+	addSeriesEntry("ls6", "u8", 510, models.StatusPlayed, stamp(now.AddDate(0, 0, -30)), stamp(now.AddDate(0, 0, -10)))
+	addSeriesEntry("lf1", "u8", 504, models.StatusPlayed, stamp(now.AddDate(0, 0, -25)), stamp(now.AddDate(0, 0, -5)))
+	addSeriesEntry("ls7", "u8", 511, models.StatusBacklog, stamp(now.AddDate(0, 0, -24)), "")
+	addSeriesEntry("ls8", "u8", 512, models.StatusBacklog, stamp(now.AddDate(0, 0, -23)), "")
+	addSeriesEntry("ls9", "u8", 513, models.StatusBacklog, stamp(now.AddDate(0, 0, -22)), "")
+	addSeriesEntry("ls10", "u8", 514, models.StatusBacklog, stamp(now.AddDate(0, 0, -21)), "")
+
+	return s
+}
+
+// seriesAchievements is the series ladder's id set, so tests can assert a
+// complete picture of what fired and what stayed locked.
+var seriesAchievements = []string{
+	"trilogy", "back_to_back", "saga", "franchise_mode",
+	"marathon_series", "closing_the_loop", "full_set",
+}
+
+// assertSeries checks every series achievement's unlock state against want
+// (entry id = unlocked and attached there; "" = locked).
+func assertSeries(t *testing.T, got map[string]string, want map[string]string) {
+	t.Helper()
+	for _, id := range seriesAchievements {
+		if got[id] != want[id] {
+			t.Errorf("%s = %q, want %q", id, got[id], want[id])
+		}
+	}
+}
+
+// TestBackfillSeriesMasteryA replays the trilogy fixture: the DLC finish
+// never counts toward the series, the foreign finish breaks Back to Back,
+// and the third real finish carries trilogy, the same-year marathon, the
+// closed loop, and the full set at once.
+func TestBackfillSeriesMasteryA(t *testing.T) {
+	s := seriesFixture(t)
+	ctx := context.Background()
+
+	statuses, err := s.Achievements(ctx, "u5")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	assertSeries(t, unlockedIDs(statuses), map[string]string{
+		"back_to_back":     "as2", // as1 → as2, nothing between
+		"trilogy":          "as3", // third kind-'game' finish (as4 is DLC)
+		"marathon_series":  "as3", // as1, as2, as3 all last year
+		"closing_the_loop": "as3", // srA owned: as1, as2, as3, all played
+		"full_set":         "as3",
+		"saga":             "", // only 3 owned entries
+		"franchise_mode":   "", // only 3 finishes
+	})
+
+	// Idempotent across gallery loads.
+	if _, err := s.Achievements(ctx, "u5"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBackfillSeriesMasteryB replays the six-entry saga: the saga bar is
+// met at the first finish, the marathon never pools three finishes into
+// one calendar year, and the loop closes on the last unplayed member
+// while the dropped entry keeps the set from ever being full.
+func TestBackfillSeriesMasteryB(t *testing.T) {
+	s := seriesFixture(t)
+	ctx := context.Background()
+
+	statuses, err := s.Achievements(ctx, "u6")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	assertSeries(t, unlockedIDs(statuses), map[string]string{
+		"saga":             "bs1", // six owned entries at the first finish
+		"back_to_back":     "bs2", // bs1 → bs2
+		"trilogy":          "bs4", // bs1, bs2, bs4
+		"franchise_mode":   "bs6", // fifth finish
+		"closing_the_loop": "bs6", // bs6 was the last unplayed member
+		"marathon_series":  "",    // 2 + 2 + 1 across three years
+		"full_set":         "",    // bs3 is dropped, played 5 of 6
+	})
+}
+
+// TestLiveSeriesFinishes drives the series predicates through the live
+// update path: Back to Back against a seeded earlier finish, a DLC finish
+// that counts for nothing, the trilogy completing live, the saga bar
+// clearing on a first live finish, and a foreign finish keeping the run
+// broken.
+func TestLiveSeriesFinishes(t *testing.T) {
+	s := seriesFixture(t)
+	ctx := context.Background()
+
+	// u7: ls2 finishes right after ls1 (same series) — Back to Back.
+	_, unlocks, err := s.UpdateEntry(ctx, "u7", "ls2", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish ls2: %v", err)
+	}
+	got := unlockedIDs(unlocks)
+	if got["back_to_back"] != "ls2" {
+		t.Errorf("ls2 unlocks = %v, want back_to_back", got)
+	}
+	if got["trilogy"] != "" {
+		t.Errorf("second series finish unlocked trilogy on %q", got["trilogy"])
+	}
+
+	// The DLC finish counts for nothing series-shaped.
+	_, unlocks, err = s.UpdateEntry(ctx, "u7", "ls4", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish ls4: %v", err)
+	}
+	got = unlockedIDs(unlocks)
+	for _, id := range seriesAchievements {
+		if got[id] != "" {
+			t.Errorf("DLC finish unlocked %s on %q, want nothing series-shaped", id, got[id])
+		}
+	}
+
+	// The third real finish completes the set — trilogy, loop, and full
+	// set together. The DLC in between keeps Back to Back from refiring.
+	_, unlocks, err = s.UpdateEntry(ctx, "u7", "ls3", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish ls3: %v", err)
+	}
+	got = unlockedIDs(unlocks)
+	for _, id := range []string{"trilogy", "closing_the_loop", "full_set"} {
+		if got[id] != "ls3" {
+			t.Errorf("ls3 unlocks = %v, want %s on ls3", got, id)
+		}
+	}
+	if got["back_to_back"] != "" {
+		t.Error("ls3 re-unlocked back_to_back after the DLC finish")
+	}
+
+	// u8: five owned saga entries, but the previous finish (lf1) is
+	// foreign — the saga clears, Back to Back does not.
+	_, unlocks, err = s.UpdateEntry(ctx, "u8", "ls7", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("finish ls7: %v", err)
+	}
+	got = unlockedIDs(unlocks)
+	if got["saga"] != "ls7" {
+		t.Errorf("ls7 unlocks = %v, want saga on ls7", got)
+	}
+	if got["back_to_back"] != "" {
+		t.Errorf("a foreign finish in between unlocked back_to_back on %q", got["back_to_back"])
+	}
+}

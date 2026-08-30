@@ -883,6 +883,164 @@ func TestPredicates(t *testing.T) {
 			}},
 			want: []string{"first_blood", "long_haul"},
 		},
+		{
+			name: "the third finish of a series completes the trilogy",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 3,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 4, Played: 3, Unplayed: 1, YearPlayed: 2},
+				},
+			}},
+			want: []string{"first_blood", "trilogy"},
+		},
+		{
+			name: "the second finish of a series is not a trilogy",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 4, Played: 2, Unplayed: 2, YearPlayed: 2},
+				},
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "the fifth finish of a series is franchise mode",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 6,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 6, Played: 5, Unplayed: 1, YearPlayed: 2},
+				},
+			}},
+			want: []string{"first_blood", "cleanup_crew", "trilogy", "saga", "franchise_mode"},
+		},
+		{
+			name: "finishing inside a five-entry saga counts as one",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 5, Played: 1, Unplayed: 4, YearPlayed: 1},
+				},
+			}},
+			want: []string{"first_blood", "saga"},
+		},
+		{
+			name: "a four-entry series is not yet a saga",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 4, Played: 1, Unplayed: 3, YearPlayed: 1},
+				},
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "two series finishes in a row are back to back",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 3, Played: 2, Unplayed: 1, YearPlayed: 2},
+				},
+				PrevFinishSharesSeries: true,
+			}},
+			want: []string{"first_blood", "back_to_back"},
+		},
+		{
+			name: "a foreign finish between series games breaks the run",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 3, Played: 2, Unplayed: 1, YearPlayed: 2},
+				},
+				PrevFinishSharesSeries: false,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "three series finishes in one calendar year run the marathon",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:    models.StatusPlayed,
+				CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:        time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 3,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 4, Played: 3, Unplayed: 1, YearPlayed: 3},
+				},
+			}},
+			want: []string{"first_blood", "trilogy", "marathon_series"},
+		},
+		{
+			name: "three series finishes split across years do not run the marathon",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:    models.StatusPlayed,
+				CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:        time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 3,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 4, Played: 3, Unplayed: 1, YearPlayed: 2},
+				},
+			}},
+			want: []string{"first_blood", "trilogy"},
+		},
+		{
+			name: "emptying a series with a dropped member closes the loop but is no full set",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 3, Played: 2, Unplayed: 0, YearPlayed: 2},
+				},
+			}},
+			want: []string{"first_blood", "closing_the_loop"},
+		},
+		{
+			name: "finishing a series' lone owned game does not close any loop",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 1, Played: 1, Unplayed: 0, YearPlayed: 1},
+				},
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "playing every owned member of a series is the full set",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 3,
+				SeriesStandings: map[string]SeriesStanding{
+					"sr1": {Owned: 3, Played: 3, Unplayed: 0, YearPlayed: 2},
+				},
+			}},
+			want: []string{"first_blood", "trilogy", "closing_the_loop", "full_set"},
+		},
 	}
 
 	for _, tt := range tests {

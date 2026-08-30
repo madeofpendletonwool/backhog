@@ -69,6 +69,20 @@ const (
 	// abandonmentWindow is how long a dropped game must have been owned.
 	// Matches the season's rescue threshold (owned ≥ 1 year).
 	abandonmentWindow = 365 * 24 * time.Hour
+	// The drop celebrations: the logged effort that makes a fold honest,
+	// the share of the main estimate that makes it cutting losses, and the
+	// drop-count ladder.
+	knowWhenToFoldMinutes = 5 * 60
+	cutYourLossesDivisor  = 10
+	buyersRemorseWindow   = 7 * 24 * time.Hour
+	wasntYouDropCount     = 5
+	theReaperDropCount    = 10
+	// The comeback windows: how long a game must stay dropped before the
+	// return counts. Half a 365-day year for six months, matching the
+	// whole-year windows around it.
+	secondChanceWindow   = 182 * 24 * time.Hour
+	againstAllOddsWindow = 365 * 24 * time.Hour
+	phoenixWindow        = 2 * 365 * 24 * time.Hour
 	// speedrunMinutes caps logged playtime at completion for Speedrun.
 	speedrunMinutes = 5 * 60
 	// longHaulSeconds is the time-to-beat that qualifies a game as Long Haul.
@@ -131,6 +145,19 @@ type Entry struct {
 	// into. Zero when At is the zero time.
 	FinishYear  int
 	FinishMonth int
+	// DropHistory lists the entry's drop arcs from its status history,
+	// oldest first. ResumedAt is nil while the drop is still open (or was
+	// closed by finishing the game directly, which no resume row records).
+	// Drops that predate the history table appear only through the
+	// resume-time fallback the store passes in. Comeback predicates read it.
+	DropHistory []DropCycle
+}
+
+// DropCycle is one drop-and-return arc: when the entry was dropped and, if
+// it came back, when.
+type DropCycle struct {
+	DroppedAt time.Time
+	ResumedAt *time.Time
 }
 
 // Event is one evaluation trigger.
@@ -490,6 +517,127 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			ID:          "know_when_to_fold",
+			Title:       "Know When to Fold 'Em",
+			Description: "Drop a game after 5+ hours of honest effort.",
+			Icon:        "hand",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.dropped() && e.Entry.LoggedMinutes >= knowWhenToFoldMinutes
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "cut_your_losses",
+			Title:       "Cut Your Losses",
+			Description: "Drop a game with less than 10% of its main story logged.",
+			Icon:        "swords",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.dropped() && e.Entry.TimeToBeatMain != nil &&
+				int64(e.Entry.LoggedMinutes)*60*cutYourLossesDivisor < *e.Entry.TimeToBeatMain
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "buyers_remorse",
+			Title:       "Buyer's Remorse",
+			Description: "Drop a game within 7 days of adding it.",
+			Icon:        "gift",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.dropped() && ownedFor(e.Entry) <= buyersRemorseWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "wasnt_you_it_was_me",
+			Title:       "It Wasn't You, It Was Me",
+			Description: "Drop 5 games. It's not them, it's you.",
+			Icon:        "x-circle",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.dropped() && e.Entry.DroppedCount >= wasntYouDropCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "the_reaper",
+			Title:       "The Reaper",
+			Description: "Drop 10 games.",
+			Icon:        "ban",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.dropped() && e.Entry.DroppedCount >= theReaperDropCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "resurrection",
+			Title:       "Resurrection",
+			Description: "Bring a dropped game back into the rotation.",
+			Icon:        "refresh",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.resumed()
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "second_chance",
+			Title:       "Second Chance",
+			Description: "Resume a game 6+ months after dropping it.",
+			Icon:        "history",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.resumed() && longestReturnGap(e.Entry) >= secondChanceWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "never_give_up",
+			Title:       "Never Give Up",
+			Description: "Finish a game you previously dropped.",
+			Icon:        "flag",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && len(e.Entry.DropHistory) > 0
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "against_all_odds",
+			Title:       "Against All Odds",
+			Description: "Resume a game after a year away and finish it.",
+			Icon:        "dices",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && longestReturnGap(e.Entry) >= againstAllOddsWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "phoenix",
+			Title:       "Phoenix",
+			Description: "Return to a game 2+ years after dropping it and finish it.",
+			Icon:        "sparkles",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.finished() && longestReturnGap(e.Entry) >= phoenixWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
 			ID:          "the_ancient_one",
 			Title:       "The Ancient One",
 			Description: "Finish the oldest game you own.",
@@ -534,6 +682,24 @@ func ownedFor(e Entry) time.Duration {
 // peak — finishes and drops both count as shrinking it, honesty included.
 func unplayedReduction(e Entry) int {
 	return e.PeakUnplayedCount - e.UnplayedCount
+}
+
+// longestReturnGap is the longest span between a drop and the return that
+// ended it: the resume when one followed, or the event's own moment when the
+// arc is still open — a dropped game finished directly is its own return.
+// Zero when the entry has never been dropped.
+func longestReturnGap(e Entry) time.Duration {
+	var longest time.Duration
+	for _, cycle := range e.DropHistory {
+		returnAt := e.At
+		if cycle.ResumedAt != nil {
+			returnAt = *cycle.ResumedAt
+		}
+		if gap := returnAt.Sub(cycle.DroppedAt); gap > longest {
+			longest = gap
+		}
+	}
+	return longest
 }
 
 // Placeholders a locked hidden achievement is served with. The identity is

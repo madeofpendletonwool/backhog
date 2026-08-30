@@ -54,6 +54,10 @@ func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, ki
 	if err != nil {
 		return nil, err
 	}
+	e.DropHistory, err = loadDropHistoryTx(ctx, tx, entryID, droppedAtFallback)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := snapshotAggregatesTx(ctx, tx, userID, &e); err != nil {
 		return nil, err
@@ -319,6 +323,56 @@ func lastDroppedAtTx(ctx context.Context, tx *sql.Tx, entryID string, fallback *
 	return &t, nil
 }
 
+// loadDropHistoryTx assembles the entry's drop arcs from its status history,
+// oldest first: each to_status='dropped' row opens an arc, each
+// dropped → playing|backlog row closes the newest open one. Going to
+// wishlist or ignored is leaving, not returning, so those rows close nothing.
+// A resume row with no arc to close is a pre-feature drop — the fallback
+// (the pre-update finished_at) stands in for its drop time.
+func loadDropHistoryTx(ctx context.Context, tx *sql.Tx, entryID string, fallback *time.Time) ([]achievements.DropCycle, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT from_status, to_status, changed_at FROM entry_status_history
+		WHERE entry_id = ?
+		ORDER BY changed_at, rowid`, entryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cycles := []achievements.DropCycle{}
+	for rows.Next() {
+		var from, to, raw string
+		if err := rows.Scan(&from, &to, &raw); err != nil {
+			return nil, err
+		}
+		at, ok := parseDBTime(raw)
+		if !ok {
+			continue
+		}
+		switch {
+		case to == models.StatusDropped:
+			cycles = append(cycles, achievements.DropCycle{DroppedAt: at})
+		case from == models.StatusDropped &&
+			(to == models.StatusPlaying || to == models.StatusBacklog):
+			closed := false
+			for i := len(cycles) - 1; i >= 0; i-- {
+				if cycles[i].ResumedAt == nil {
+					resumed := at
+					cycles[i].ResumedAt = &resumed
+					closed = true
+					break
+				}
+			}
+			if !closed && fallback != nil {
+				cycles = append(cycles, achievements.DropCycle{
+					DroppedAt: *fallback, ResumedAt: &at,
+				})
+			}
+		}
+	}
+	return cycles, rows.Err()
+}
+
 // ownedCreatedAtTx returns the created_at stamps of every owned,
 // finishable entry — the population ownership-age ranks are measured
 // against — sorted ascending. Timestamps parse in UTC so ranks compare
@@ -468,6 +522,14 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	if err != nil {
 		return err
 	}
+	// The comeback arcs: drop cycles for the finish predicates and the
+	// resume events to replay. Pre-feature data has no history rows, so
+	// comebacks backfill only where history exists — the gap fills in as
+	// users actually cycle games.
+	arcs, resumes, err := loadUserDropArcsTx(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
 	yearFinishes, yearAdditions := map[int]int{}, map[int]int{}
 	ai := 0
 
@@ -475,6 +537,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		played[i].PlayedCount = i + 1
 		played[i].CreatedAtRank = rankAmong(ownedStamps, played[i].CreatedAt)
 		played[i].IsOldestOwned = played[i].CreatedAtRank == 1
+		played[i].DropHistory = arcsUntil(arcs[played[i].ID], played[i].At)
 		for ai < len(additions) && !additions[ai].After(played[i].At) {
 			yearAdditions[additions[ai].Year()]++
 			ai++
@@ -495,11 +558,32 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		}
 	}
 
-	// Dropped games only feed Abandonment Issues.
+	// Resume events replay at their historical moments, each carrying the
+	// arc it closed. Only the resume-gated predicates can fire on them.
+	for _, r := range resumes {
+		ev := achievements.Event{Kind: achievements.EventResumed, Entry: achievements.Entry{
+			ID: r.entryID, Status: r.status, At: r.at,
+			DropHistory: []achievements.DropCycle{{DroppedAt: r.droppedAt, ResumedAt: &r.at}},
+		}}
+		for _, def := range achievements.Catalogue {
+			if !def.Predicate(ev) {
+				continue
+			}
+			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &r.entryID); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Dropped games feed the drop predicates, replayed in drop order so
+	// the count ladder attaches to the game that crossed the line.
 	rows, err = tx.QueryContext(ctx, `
-		SELECT e.id, e.created_at, COALESCE(e.finished_at, e.created_at)
-		FROM library_entries e
-		WHERE e.user_id = ? AND e.status = 'dropped'`, userID)
+		SELECT e.id, e.created_at, COALESCE(e.finished_at, e.created_at),
+		       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0),
+		       g.time_to_beat_main
+		FROM library_entries e JOIN games g ON g.id = e.game_id
+		WHERE e.user_id = ? AND e.status = 'dropped'
+		ORDER BY COALESCE(e.finished_at, e.created_at) ASC, e.id`, userID)
 	if err != nil {
 		return err
 	}
@@ -507,7 +591,8 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	for rows.Next() {
 		var e achievements.Entry
 		var finishedAt string
-		if err := rows.Scan(&e.ID, &e.CreatedAt, &finishedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.CreatedAt, &finishedAt, &e.LoggedMinutes,
+			&e.TimeToBeatMain); err != nil {
 			rows.Close()
 			return err
 		}
@@ -524,19 +609,95 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		return err
 	}
 
-	for _, e := range dropped {
-		e.UnplayedCount, e.PeakUnplayedCount = timeline.stateAt(e.At)
-		ev := achievements.Event{Kind: achievements.EventDropped, Entry: e}
+	for i := range dropped {
+		dropped[i].DroppedCount = i + 1
+		dropped[i].UnplayedCount, dropped[i].PeakUnplayedCount = timeline.stateAt(dropped[i].At)
+		ev := achievements.Event{Kind: achievements.EventDropped, Entry: dropped[i]}
 		for _, def := range achievements.Catalogue {
 			if !def.Predicate(ev) {
 				continue
 			}
-			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &e.ID); err != nil {
+			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &dropped[i].ID); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// resumeReplay is one historical dropped → playing|backlog transition to
+// re-fire the resume predicates at.
+type resumeReplay struct {
+	entryID   string
+	status    string
+	at        time.Time
+	droppedAt time.Time
+}
+
+// loadUserDropArcsTx reads every entry's status history for the user and
+// returns the drop arcs per entry (for the finish predicates) plus the
+// resume transitions to replay (for the resume predicates). Real history
+// rows only — a pre-feature drop that is still dropped has no arc, and one
+// that was resumed before the feature left no resume row.
+func loadUserDropArcsTx(ctx context.Context, tx *sql.Tx, userID string) (map[string][]achievements.DropCycle, []resumeReplay, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT h.entry_id, h.from_status, h.to_status, h.changed_at
+		FROM entry_status_history h
+		WHERE h.user_id = ?
+		ORDER BY h.entry_id, h.changed_at, h.rowid`, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	arcs := map[string][]achievements.DropCycle{}
+	resumes := []resumeReplay{}
+	for rows.Next() {
+		var entryID, from, to, raw string
+		if err := rows.Scan(&entryID, &from, &to, &raw); err != nil {
+			return nil, nil, err
+		}
+		at, ok := parseDBTime(raw)
+		if !ok {
+			continue
+		}
+		switch {
+		case to == models.StatusDropped:
+			arcs[entryID] = append(arcs[entryID], achievements.DropCycle{DroppedAt: at})
+		case from == models.StatusDropped &&
+			(to == models.StatusPlaying || to == models.StatusBacklog):
+			cycles := arcs[entryID]
+			for i := len(cycles) - 1; i >= 0; i-- {
+				if cycles[i].ResumedAt == nil {
+					resumed := at
+					cycles[i].ResumedAt = &resumed
+					resumes = append(resumes, resumeReplay{
+						entryID: entryID, status: to, at: at, droppedAt: cycles[i].DroppedAt,
+					})
+					break
+				}
+			}
+		}
+	}
+	return arcs, resumes, rows.Err()
+}
+
+// arcsUntil filters the arcs down to drops that had already happened at at —
+// a later drop-and-return must not count against an earlier finish.
+func arcsUntil(cycles []achievements.DropCycle, at time.Time) []achievements.DropCycle {
+	if len(cycles) == 0 {
+		return nil
+	}
+	out := make([]achievements.DropCycle, 0, len(cycles))
+	for _, cycle := range cycles {
+		if !cycle.DroppedAt.After(at) {
+			out = append(out, cycle)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // evaluateTimeWindowAchievementsTx runs the catalogue's lazy time predicates

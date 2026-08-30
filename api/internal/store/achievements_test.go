@@ -146,8 +146,11 @@ func TestAchievementsBackfill(t *testing.T) {
 		"long_haul": "a3",
 		// a4 logged exactly its 16h completion estimate.
 		"completionist": "a4",
-		// a5 was dropped after ~21 months of ownership.
+		// a5 was dropped after ~21 months of ownership, with nothing
+		// logged against a 12h main estimate — an honest abandonment and
+		// textbook loss-cutting.
 		"abandonment_issues": "a5",
+		"cut_your_losses":    "a5",
 		// The third finish of last year overtakes that year's two
 		// additions.
 		"backlog_negative": "a3",
@@ -601,9 +604,20 @@ func TestLiveDropsReduceBacklog(t *testing.T) {
 		}
 		got := unlockedIDs(unlocks)
 		switch i {
-		case 9: // tenth drop: reduction exactly ten
+		case 4: // fifth drop: the breakup
+			if got["wasnt_you_it_was_me"] != id {
+				t.Errorf("after 5 drops, wasnt_you_it_was_me = %q, want %q", got["wasnt_you_it_was_me"], id)
+			}
+		case 5: // sixth: the breakup doesn't fire again
+			if _, ok := got["wasnt_you_it_was_me"]; ok {
+				t.Errorf("wasnt_you_it_was_me unlocked again at %s", id)
+			}
+		case 9: // tenth drop: reduction exactly ten, and the reaper
 			if got["making_a_dent"] != id {
 				t.Errorf("after 10 drops, making_a_dent = %q, want %q", got["making_a_dent"], id)
+			}
+			if got["the_reaper"] != id {
+				t.Errorf("after 10 drops, the_reaper = %q, want %q", got["the_reaper"], id)
 			}
 		case 10: // eleventh: nothing new on the dent ladder
 			if _, ok := got["making_a_dent"]; ok {
@@ -620,6 +634,245 @@ func TestLiveDropsReduceBacklog(t *testing.T) {
 		if got["one_down"] != "" {
 			t.Errorf("one_down unlocked on a drop, want finish-only")
 		}
+	}
+}
+
+// TestLiveFoldAndRemorse pins the logged-time and acquisition-age drop
+// predicates through UpdateEntry: five honest hours folds 'em, one minute
+// less does not; dropping inside seven days of adding is buyer's remorse.
+func TestLiveFoldAndRemorse(t *testing.T) {
+	f := newVolumeFixture(t, 3)
+	ctx := context.Background()
+	database := f.s.DB()
+
+	// f0's game has a 30h estimate (300 logged minutes are not "losses");
+	// f1 and f2 sit on a 100h estimate so the fold and cut boundaries are
+	// clean.
+	if _, err := database.ExecContext(ctx,
+		`UPDATE games SET time_to_beat_main = 108000 WHERE id = 100`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx,
+		`UPDATE games SET time_to_beat_main = 360000 WHERE id IN (101, 102)`); err != nil {
+		t.Fatal(err)
+	}
+	f.add("f0", 0, models.StatusBacklog, ymdStamp(-1, "01-01"), "")
+	f.add("f1", 1, models.StatusPlaying, ymdStamp(-1, "06-01"), "")
+	f.add("f2", 2, models.StatusBacklog, time.Now().UTC().Format("2006-01-02 15:04:05"), "")
+	// Five hours logged on f0; four hours and change on f1.
+	for i := 0; i < 5; i++ {
+		if _, _, err := f.s.AddSession(ctx, "u3", "f0", ymdStamp(-1, fmt.Sprintf("02-%02d", i+1))[:10], 60, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := f.s.AddSession(ctx, "u3", "f1", ymdStamp(-1, "07-01")[:10], 240, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.s.AddSession(ctx, "u3", "f1", ymdStamp(-1, "07-02")[:10], 59, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// f0: five hours exactly, added ~a year ago — fold 'em fires.
+	_, unlocks, err := f.s.UpdateEntry(ctx, "u3", "f0", EntryUpdate{Status: strptr(models.StatusDropped)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unlockedIDs(unlocks); got["know_when_to_fold"] != "f0" {
+		t.Errorf("f0 unlocks = %v, want know_when_to_fold", got)
+	}
+
+	// f1: 299 minutes logged — fold 'em stays locked, but under a tenth
+	// of the 100h estimate cuts the losses.
+	_, unlocks, err = f.s.UpdateEntry(ctx, "u3", "f1", EntryUpdate{Status: strptr(models.StatusDropped)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := unlockedIDs(unlocks)
+	if _, ok := got["know_when_to_fold"]; ok {
+		t.Error("299 minutes should not fold 'em")
+	}
+	if got["cut_your_losses"] != "f1" {
+		t.Errorf("f1 unlocks = %v, want cut_your_losses", got)
+	}
+
+	// f2: added today and dropped — buyer's remorse, nothing harder.
+	_, unlocks, err = f.s.UpdateEntry(ctx, "u3", "f2", EntryUpdate{Status: strptr(models.StatusDropped)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unlockedIDs(unlocks); got["buyers_remorse"] != "f2" {
+		t.Errorf("f2 unlocks = %v, want buyers_remorse", got)
+	}
+	if _, ok := unlockedIDs(unlocks)["know_when_to_fold"]; ok {
+		t.Error("an unplayed day-one drop should not fold 'em")
+	}
+}
+
+// TestLiveComebackCycle drives the whole redemption arc through UpdateEntry:
+// drop, resume, finish — with the drop history recorded live, the resume
+// fires Resurrection and the finish fires Never Give Up.
+func TestLiveComebackCycle(t *testing.T) {
+	f := newVolumeFixture(t, 1)
+	ctx := context.Background()
+
+	f.add("c1", 0, models.StatusBacklog, ymdStamp(-2, "03-01"), "")
+
+	if _, _, err := f.s.UpdateEntry(ctx, "u3", "c1", EntryUpdate{Status: strptr(models.StatusDropped)}); err != nil {
+		t.Fatal(err)
+	}
+	_, unlocks, err := f.s.UpdateEntry(ctx, "u3", "c1", EntryUpdate{Status: strptr(models.StatusPlaying)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unlockedIDs(unlocks); got["resurrection"] != "c1" {
+		t.Fatalf("resume unlocks = %v, want resurrection on c1", got)
+	}
+	// The gap is seconds, not months: no second chance yet.
+	if _, ok := unlockedIDs(unlocks)["second_chance"]; ok {
+		t.Error("an immediate resume should not earn second_chance")
+	}
+
+	_, unlocks, err = f.s.UpdateEntry(ctx, "u3", "c1", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unlockedIDs(unlocks); got["never_give_up"] != "c1" {
+		t.Fatalf("finish unlocks = %v, want never_give_up on c1", got)
+	}
+	// Direct finish from dropped also counts: re-drop, then finish without
+	// a resume in between.
+	if _, _, err := f.s.UpdateEntry(ctx, "u3", "c1", EntryUpdate{Status: strptr(models.StatusDropped)}); err != nil {
+		t.Fatal(err)
+	}
+	_, unlocks, err = f.s.UpdateEntry(ctx, "u3", "c1", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := unlockedIDs(unlocks)
+	if _, ok := got["never_give_up"]; ok {
+		t.Error("never_give_up should not unlock twice")
+	}
+	if _, ok := got["against_all_odds"]; ok {
+		t.Error("a seconds-long drop should not earn against_all_odds")
+	}
+}
+
+// TestLiveSecondChance resumes a game dropped 6+ months ago (a real history
+// row, backdated) — the resume event reads the arc and fires the window
+// predicates live.
+func TestLiveSecondChance(t *testing.T) {
+	f := newVolumeFixture(t, 1)
+	ctx := context.Background()
+	database := f.s.DB()
+
+	f.add("s1", 0, models.StatusDropped, ymdStamp(-2, "03-01"), ymdStamp(-1, "01-10"))
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO entry_status_history (id, entry_id, user_id, from_status, to_status, changed_at)
+		VALUES ('hs1', 's1', 'u3', 'playing', 'dropped', ?)`,
+		ymdStamp(-1, "01-10")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, unlocks, err := f.s.UpdateEntry(ctx, "u3", "s1", EntryUpdate{Status: strptr(models.StatusBacklog)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := unlockedIDs(unlocks)
+	if got["resurrection"] != "s1" {
+		t.Errorf("resume unlocks = %v, want resurrection on s1", got)
+	}
+	// Dropped mid-January last year, resumed now: well past six months.
+	if got["second_chance"] != "s1" {
+		t.Errorf("resume unlocks = %v, want second_chance on s1", got)
+	}
+	if _, ok := got["never_give_up"]; ok {
+		t.Error("a resume must not fire finish predicates")
+	}
+}
+
+// TestBackfillComebackArcs replays seeded status history through the gallery
+// backfill: resume rows fire at their historical moments, finishes pick up
+// the arcs that predate them, and a drop closed by finishing directly uses
+// the finish itself as the return.
+func TestBackfillComebackArcs(t *testing.T) {
+	s := newAchievementsStore(t)
+	ctx := context.Background()
+	database := s.DB()
+
+	seed := func(query string, args ...any) {
+		t.Helper()
+		if _, err := database.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	seed(`INSERT INTO users (id, email, username, password_hash) VALUES ('u4', 'u4@example.com', 'u4', 'x')`)
+	seed(`INSERT INTO games (id, name, time_to_beat_main) VALUES (400, 'Arc One', 3600), (401, 'Arc Two', 3600)`)
+
+	now := time.Now().UTC()
+	stamp := func(t time.Time) string { return t.Format("2006-01-02 15:04:05") }
+	history := func(id, entry, from, to string, at time.Time) {
+		seed(`INSERT INTO entry_status_history (id, entry_id, user_id, from_status, to_status, changed_at)
+			VALUES (?, ?, 'u4', ?, ?, ?)`, id, entry, from, to, stamp(at))
+	}
+
+	// b1: dropped 3 years ago, resumed ~a year later (past both the
+	// six-month and one-year windows), finished a year after that. b1 is
+	// the older owned game, so the age-rank achievements ride its finish.
+	seed(`INSERT INTO library_entries (id, user_id, game_id, status, created_at, finished_at)
+		VALUES ('b1', 'u4', 400, 'played', ?, ?)`,
+		stamp(now.AddDate(-3, 0, -10)), stamp(now.AddDate(-1, 0, 0)))
+	history("hb1a", "b1", "backlog", "dropped", now.AddDate(-3, 0, 0))
+	history("hb1b", "b1", "dropped", "playing", now.AddDate(-1, -11, -29))
+	history("hb1c", "b1", "playing", "played", now.AddDate(-1, 0, 0))
+	// b2: dropped 3 years ago and finished directly 2 years later — the
+	// open arc makes the finish itself the return, past the phoenix window.
+	seed(`INSERT INTO library_entries (id, user_id, game_id, status, created_at, finished_at)
+		VALUES ('b2', 'u4', 401, 'played', ?, ?)`,
+		stamp(now.AddDate(-3, 0, -5)), stamp(now.AddDate(-1, 0, 0)))
+	history("hb2a", "b2", "backlog", "dropped", now.AddDate(-3, 0, 0))
+	history("hb2b", "b2", "dropped", "played", now.AddDate(-1, 0, 0))
+
+	statuses, err := s.Achievements(ctx, "u4")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	want := map[string]string{
+		// b1's finish: first, oldest owned, unlogged, nothing added in
+		// the finish year, and the closed arc behind it.
+		"first_blood":      "b1",
+		"speedrun":         "b1",
+		"the_ancient_one":  "b1",
+		"fossil_record":    "b1",
+		"backlog_negative": "b1",
+		"never_give_up":    "b1",
+		"against_all_odds": "b1",
+		// The resume replay: both windows crossed at the resume moment.
+		"resurrection":  "b1",
+		"second_chance": "b1",
+		// b2's finish closes its own arc: 2 years drop → finish.
+		"phoenix": "b2",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unlocked %v, want exactly %v", got, want)
+	}
+	for id, entryID := range want {
+		if got[id] != entryID {
+			t.Errorf("%s attached to %q, want %q", id, got[id], entryID)
+		}
+	}
+
+	// Idempotent across gallery loads.
+	if _, err := s.Achievements(ctx, "u4"); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM achievement_unlocks WHERE user_id = 'u4'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(want) {
+		t.Errorf("second backfill left %d unlocks, want %d", count, len(want))
 	}
 }
 

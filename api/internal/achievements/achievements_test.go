@@ -17,6 +17,8 @@ var base = Entry{
 
 func i64(v int64) *int64 { return &v }
 
+func ptrTime(t time.Time) *time.Time { return &t }
+
 // unlockIDs runs an event against the catalogue and returns the ids of every
 // achievement whose predicate fired.
 func unlockIDs(e Event) []string {
@@ -236,10 +238,10 @@ func TestPredicates(t *testing.T) {
 		{
 			name: "release eleven years before the finish is a time capsule",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:            models.StatusPlayed,
-				CreatedAt:         time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:                time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-				LoggedMinutes:     600, PlayedCount: 2,
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
 				FirstReleaseDate: i64(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Add(-11 * 365 * 24 * time.Hour).Unix()),
 			}},
 			want: []string{"first_blood", "time_capsule"},
@@ -247,10 +249,10 @@ func TestPredicates(t *testing.T) {
 		{
 			name: "one hour short of the time capsule window is not one",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:            models.StatusPlayed,
-				CreatedAt:         time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:                time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-				LoggedMinutes:     600, PlayedCount: 2,
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
 				FirstReleaseDate: i64(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Add(-timeCapsuleWindow + time.Hour).Unix()),
 			}},
 			want: []string{"first_blood"},
@@ -258,10 +260,10 @@ func TestPredicates(t *testing.T) {
 		{
 			name: "a pre-2000 release is old hardware and a time capsule",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:            models.StatusPlayed,
-				CreatedAt:         time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:                time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-				LoggedMinutes:     600, PlayedCount: 2,
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
 				FirstReleaseDate: i64(time.Date(1999, 6, 1, 0, 0, 0, 0, time.UTC).Unix()),
 			}},
 			want: []string{"first_blood", "time_capsule", "old_hardware"},
@@ -269,10 +271,10 @@ func TestPredicates(t *testing.T) {
 		{
 			name: "a 2000 release is not old hardware",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:            models.StatusPlayed,
-				CreatedAt:         time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:                time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-				LoggedMinutes:     600, PlayedCount: 2,
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
 				FirstReleaseDate: i64(time.Date(2000, 6, 1, 0, 0, 0, 0, time.UTC).Unix()),
 			}},
 			want: []string{"first_blood", "time_capsule"},
@@ -474,6 +476,192 @@ func TestPredicates(t *testing.T) {
 			want: []string{"first_blood", "cleanup_crew"},
 		},
 		{
+			name: "dropping after five honest hours folds 'em",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:        models.StatusDropped,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 300,
+			}},
+			want: []string{"know_when_to_fold"},
+		},
+		{
+			name: "one minute short of five hours is not a fold",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:        models.StatusDropped,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 299,
+			}},
+			want: nil,
+		},
+		{
+			name: "dropping under a tenth of the main estimate cuts losses",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:         models.StatusDropped,
+				CreatedAt:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:             time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes:  599,
+				TimeToBeatMain: i64(100 * 3600),
+			}},
+			want: []string{"know_when_to_fold", "cut_your_losses"},
+		},
+		{
+			name: "exactly a tenth logged is not cutting losses",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:         models.StatusDropped,
+				CreatedAt:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:             time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes:  600,
+				TimeToBeatMain: i64(100 * 3600),
+			}},
+			want: []string{"know_when_to_fold"},
+		},
+		{
+			name: "unknown estimate never cuts losses",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:    models.StatusDropped,
+				CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:        time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+			}},
+			want: nil,
+		},
+		{
+			name: "dropping five games is the breakup",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:       models.StatusDropped,
+				CreatedAt:    time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC),
+				At:           time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				DroppedCount: 5,
+			}},
+			want: []string{"wasnt_you_it_was_me"},
+		},
+		{
+			name: "dropping ten games brings the reaper",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:       models.StatusDropped,
+				CreatedAt:    time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC),
+				At:           time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				DroppedCount: 10,
+			}},
+			want: []string{"wasnt_you_it_was_me", "the_reaper"},
+		},
+		{
+			name: "dropping exactly seven days after adding is remorse",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:    models.StatusDropped,
+				CreatedAt: time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC),
+				At:        time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			}},
+			want: []string{"buyers_remorse"},
+		},
+		{
+			name: "dropping eight days in is past remorse",
+			event: Event{Kind: EventDropped, Entry: Entry{
+				Status:    models.StatusDropped,
+				CreatedAt: time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC),
+				At:        time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			}},
+			want: nil,
+		},
+		{
+			name: "resuming a dropped game is a resurrection",
+			event: Event{Kind: EventResumed, Entry: Entry{
+				Status: models.StatusPlaying,
+				At:     time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			}},
+			want: []string{"resurrection"},
+		},
+		{
+			name: "resuming six months to the day after the drop",
+			event: Event{Kind: EventResumed, Entry: Entry{
+				Status: models.StatusBacklog,
+				At:     time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				DropHistory: []DropCycle{{
+					DroppedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Add(-secondChanceWindow),
+					ResumedAt: ptrTime(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
+				}},
+			}},
+			want: []string{"resurrection", "second_chance"},
+		},
+		{
+			name: "one day short of six months is only a resurrection",
+			event: Event{Kind: EventResumed, Entry: Entry{
+				Status: models.StatusPlaying,
+				At:     time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				DropHistory: []DropCycle{{
+					DroppedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Add(-secondChanceWindow + 24*time.Hour),
+					ResumedAt: ptrTime(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
+				}},
+			}},
+			want: []string{"resurrection"},
+		},
+		{
+			name: "finishing a previously dropped game never gives up",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				DropHistory: []DropCycle{{
+					DroppedAt: time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC),
+					ResumedAt: ptrTime(time.Date(2026, 1, 25, 0, 0, 0, 0, time.UTC)),
+				}},
+			}},
+			want: []string{"first_blood", "never_give_up"},
+		},
+		{
+			name: "finishing a year after the drop beats the odds",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				DropHistory: []DropCycle{{
+					DroppedAt: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour),
+					ResumedAt: ptrTime(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
+				}},
+			}},
+			want: []string{"first_blood", "never_give_up", "against_all_odds"},
+		},
+		{
+			name: "returning two years after the drop rises like a phoenix",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				DropHistory: []DropCycle{{
+					DroppedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Add(-phoenixWindow),
+					ResumedAt: ptrTime(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
+				}},
+			}},
+			want: []string{"first_blood", "dusty_relic", "never_give_up", "against_all_odds", "phoenix"},
+		},
+		{
+			name: "finishing directly from dropped counts the finish as the return",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				DropHistory: []DropCycle{{
+					DroppedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Add(-phoenixWindow),
+				}},
+			}},
+			want: []string{"first_blood", "dusty_relic", "never_give_up", "against_all_odds", "phoenix"},
+		},
+		{
+			name: "a finish without any drop history earns no comeback",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
 			name: "session against a dropped game can only re-fire drop predicates",
 			event: Event{Kind: EventSession, Entry: Entry{
 				Status:      models.StatusDropped,
@@ -616,9 +804,8 @@ func TestResumedEventKind(t *testing.T) {
 	if resumed.finished() || resumed.dropped() {
 		t.Error("EventResumed should not count as finished or dropped")
 	}
-	// Wiring only: nothing in today's catalogue unlocks on a resume. When
-	// the comeback batch lands, this expectation flips to the real set.
-	if ids := unlockIDs(resumed); len(ids) != 0 {
-		t.Errorf("resumed event unlocked %v, want nothing yet", ids)
+	// A bare resume is the comeback ladder's first rung.
+	if ids := unlockIDs(resumed); len(ids) != 1 || ids[0] != "resurrection" {
+		t.Errorf("resumed event unlocked %v, want [resurrection]", ids)
 	}
 }

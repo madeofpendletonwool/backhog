@@ -20,11 +20,12 @@ func i64(v int64) *int64 { return &v }
 func ptrTime(t time.Time) *time.Time { return &t }
 
 // unlockIDs runs an event against the catalogue and returns the ids of every
-// achievement whose predicate fired.
+// achievement whose predicate fired. Lazy (time-window) entries have no
+// event predicate and never fire here.
 func unlockIDs(e Event) []string {
 	var ids []string
 	for _, def := range Catalogue {
-		if def.Predicate(e) {
+		if def.Predicate != nil && def.Predicate(e) {
 			ids = append(ids, def.Achievement.ID)
 		}
 	}
@@ -671,6 +672,217 @@ func TestPredicates(t *testing.T) {
 			}},
 			want: []string{"abandonment_issues"},
 		},
+		{
+			name: "the third finish of a month is a hat trick",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				MonthFinishes: 3, FinishYear: 2026, FinishMonth: 6,
+			}},
+			want: []string{"first_blood", "hat_trick"},
+		},
+		{
+			name: "the second finish of a month is not a hat trick",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				MonthFinishes: 2, FinishYear: 2026, FinishMonth: 6,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "the fifth finish of a month cleans it up",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 6,
+				MonthFinishes: 5, FinishYear: 2026, FinishMonth: 6,
+			}},
+			want: []string{"first_blood", "cleanup_crew", "hat_trick", "cleanup_month"},
+		},
+		{
+			name: "a third consecutive month runs the backlog machine",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				FinishStreak: 3, FinishYear: 2026, FinishMonth: 6,
+			}},
+			want: []string{"first_blood", "backlog_machine"},
+		},
+		{
+			name: "two consecutive months stall the machine",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				FinishStreak: 2, FinishYear: 2026, FinishMonth: 6,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "twelve distinct months crown the perfect season",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 12, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 12,
+				YearMonthsFinished: 12, FinishYear: 2026, FinishMonth: 12,
+			}},
+			want: []string{"first_blood", "cleanup_crew", "spring_cleaning", "perfect_season", "strong_finish"},
+		},
+		{
+			name: "eleven months of the year is not a perfect season",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 12, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 12,
+				YearMonthsFinished: 11, FinishYear: 2026, FinishMonth: 12,
+			}},
+			want: []string{"first_blood", "cleanup_crew", "spring_cleaning", "strong_finish"},
+		},
+		{
+			name: "a January finish opens the season",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				FinishYear: 2026, FinishMonth: 1,
+			}},
+			want: []string{"first_blood", "season_opener"},
+		},
+		{
+			name: "a February finish is not the season opener",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				FinishYear: 2026, FinishMonth: 2,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "a December finish is a strong one",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 12, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				FinishYear: 2026, FinishMonth: 12,
+			}},
+			want: []string{"first_blood", "strong_finish"},
+		},
+		{
+			name: "the fifth summer finish cleans the summer",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 6,
+				SummerFinishes: 5, FinishYear: 2026, FinishMonth: 7,
+			}},
+			want: []string{"first_blood", "cleanup_crew", "summer_cleanup"},
+		},
+		{
+			name: "four summer finishes are not enough",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 6,
+				SummerFinishes: 4, FinishYear: 2026, FinishMonth: 7,
+			}},
+			want: []string{"first_blood", "cleanup_crew"},
+		},
+		{
+			name: "a September finish is outside the summer bucket",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 6,
+				SummerFinishes: 5, FinishYear: 2026, FinishMonth: 9,
+			}},
+			want: []string{"first_blood", "cleanup_crew"},
+		},
+		{
+			name: "finishing the queue top is next",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				WasQueueTop: true,
+			}},
+			want: []string{"first_blood", "next_up"},
+		},
+		{
+			name: "finishing from mid-queue is not next",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				WasQueueTop: false,
+			}},
+			want: []string{"first_blood"},
+		},
+		{
+			name: "a 100h game at the boundary is an ultra marathon",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				TimeToBeatMain: i64(100 * 3600),
+			}},
+			want: []string{"first_blood", "long_haul", "ultra_marathon"},
+		},
+		{
+			name: "one second under 100h is a long haul only",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				TimeToBeatMain: i64(100*3600 - 1),
+			}},
+			want: []string{"first_blood", "long_haul"},
+		},
+		{
+			name: "the third 50h+ finish is the commitment",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				TimeToBeatMain:   i64(51 * 3600),
+				LongHaulFinishes: 3,
+			}},
+			want: []string{"first_blood", "long_haul", "the_commitment"},
+		},
+		{
+			name: "the second 50h+ finish is not yet the commitment",
+			event: Event{Kind: EventFinished, Entry: Entry{
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 4,
+				TimeToBeatMain:   i64(51 * 3600),
+				LongHaulFinishes: 2,
+			}},
+			want: []string{"first_blood", "long_haul"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -709,8 +921,55 @@ func TestCatalogueIntegrity(t *testing.T) {
 	if ByID("does-not-exist") != nil {
 		t.Error("ByID for unknown id should be nil")
 	}
-	if HasTimePredicates() {
-		t.Error("HasTimePredicates should be false while no entry defines one")
+	if !HasTimePredicates() {
+		t.Error("HasTimePredicates should be true now that lazy predicates ship")
+	}
+}
+
+// defByID returns the catalogue definition (predicate included) for an id.
+func defByID(id string) *Definition {
+	for i := range Catalogue {
+		if Catalogue[i].Achievement.ID == id {
+			return &Catalogue[i]
+		}
+	}
+	return nil
+}
+
+// TestNoAcquisitionWindows pins the lazy 30/90-day boundaries: the window
+// is measured from the last non-wishlist add, inclusively at the boundary.
+func TestNoAcquisitionWindows(t *testing.T) {
+	restraint := defByID("restraint")
+	discipline := defByID("discipline")
+	if restraint == nil || discipline == nil {
+		t.Fatalf("restraint/discipline missing from catalogue")
+	}
+	if restraint.Predicate != nil || discipline.Predicate != nil {
+		t.Error("lazy achievements must not carry an event predicate")
+	}
+
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name           string
+		gap            time.Duration
+		wantRestraint  bool
+		wantDiscipline bool
+	}{
+		{"twenty-nine days and change", restraintWindow - time.Hour, false, false},
+		{"exactly thirty days", restraintWindow, true, false},
+		{"eighty-nine days and change", disciplineWindow - time.Hour, true, false},
+		{"exactly ninety days", disciplineWindow, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := TimeSnapshot{Now: now, LastAcquiredAt: now.Add(-tt.gap)}
+			if got := restraint.TimePredicate(snap); got != tt.wantRestraint {
+				t.Errorf("restraint = %v, want %v", got, tt.wantRestraint)
+			}
+			if got := discipline.TimePredicate(snap); got != tt.wantDiscipline {
+				t.Errorf("discipline = %v, want %v", got, tt.wantDiscipline)
+			}
+		})
 	}
 }
 

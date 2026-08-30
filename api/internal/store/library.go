@@ -185,9 +185,10 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 
 	var currentStatus string
 	var startedAt, finishedAt sql.NullTime
+	var queuePos sql.NullFloat64
 	err = tx.QueryRowContext(ctx,
-		`SELECT status, started_at, finished_at FROM library_entries WHERE user_id = ? AND id = ?`,
-		userID, entryID).Scan(&currentStatus, &startedAt, &finishedAt)
+		`SELECT status, started_at, finished_at, queue_position FROM library_entries WHERE user_id = ? AND id = ?`,
+		userID, entryID).Scan(&currentStatus, &startedAt, &finishedAt, &queuePos)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Entry{}, nil, ErrNotFound
 	}
@@ -269,6 +270,21 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 		args = append(args, *u.PlatformID)
 	}
 
+	// Next! needs the queue rank captured before the UPDATE clears the
+	// finishing entry's position: the top of the queue is whoever holds
+	// the smallest position among the backlog.
+	wasQueueTop := false
+	if evalKind == achievements.EventFinished && queuePos.Valid {
+		var minPos sql.NullFloat64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT MIN(queue_position) FROM library_entries
+			 WHERE user_id = ? AND status = 'backlog' AND queue_position IS NOT NULL`,
+			userID).Scan(&minPos); err != nil {
+			return models.Entry{}, nil, err
+		}
+		wasQueueTop = minPos.Valid && queuePos.Float64 == minPos.Float64
+	}
+
 	switch {
 	case u.ClearRating:
 		sets = append(sets, "user_rating = NULL")
@@ -294,7 +310,7 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 
 	var newly []unlockStub
 	if evalKind != "" {
-		newly, err = evaluateAchievementsTx(ctx, tx, userID, entryID, evalKind, droppedAtFallback)
+		newly, err = evaluateAchievementsTx(ctx, tx, userID, entryID, evalKind, droppedAtFallback, wasQueueTop)
 		if err != nil {
 			return models.Entry{}, nil, err
 		}

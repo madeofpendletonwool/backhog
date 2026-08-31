@@ -18,18 +18,27 @@ import (
 // walk from the UI.
 const backfillKickCap = backfill.KickCap
 
+// eggRateLimit is how many egg attempts one user may make per achievement
+// per window — enough for honest curiosity, boring for scripts.
+const eggRateLimit = 10
+
 // Server holds the dependencies shared by all handlers.
 type Server struct {
-	cfg      config.Config
-	store    *store.Store
-	provider metadata.Provider
-	covers   *metadata.CoverCache
-	steam    *metadata.Steam
-	backfill *backfill.Runner
+	cfg        config.Config
+	store      *store.Store
+	provider   metadata.Provider
+	covers     *metadata.CoverCache
+	steam      *metadata.Steam
+	backfill   *backfill.Runner
+	eggLimiter eggLimiter
 }
 
 func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache, steam *metadata.Steam, backfill *backfill.Runner) *Server {
-	return &Server{cfg: cfg, store: st, provider: provider, covers: covers, steam: steam, backfill: backfill}
+	return &Server{
+		cfg: cfg, store: st, provider: provider, covers: covers,
+		steam: steam, backfill: backfill,
+		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
+	}
 }
 
 // Routes builds the API router. Everything is mounted under /api so nginx can
@@ -86,9 +95,9 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/pick", s.handlePick)
 				r.Get("/tonight", s.handleTonight)
 				r.Post("/bulk", s.handleBulkAdd)
-			r.Get("/{entryID}", s.handleGetEntry)
-			r.Get("/{entryID}/lists", s.handleEntryLists)
-			r.Get("/{entryID}/projects", s.handleEntryProjects)
+				r.Get("/{entryID}", s.handleGetEntry)
+				r.Get("/{entryID}/lists", s.handleEntryLists)
+				r.Get("/{entryID}/projects", s.handleEntryProjects)
 				r.Get("/{entryID}/sessions", s.handleGetSessions)
 				r.Post("/{entryID}/sessions", s.handleAddSession)
 				r.Patch("/{entryID}", s.handleUpdateEntry)
@@ -98,6 +107,7 @@ func (s *Server) Routes() http.Handler {
 			r.Route("/achievements", func(r chi.Router) {
 				r.Get("/", s.handleAchievements)
 				r.Get("/season", s.handleSeason)
+				r.Post("/{achievementID}/egg", s.handleAchievementEgg)
 			})
 
 			r.Delete("/sessions/{sessionID}", s.handleDeleteSession)

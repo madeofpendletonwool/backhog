@@ -2,6 +2,9 @@ package achievements
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -982,9 +985,9 @@ func TestPredicates(t *testing.T) {
 		{
 			name: "three series finishes in one calendar year run the marathon",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:    models.StatusPlayed,
-				CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:        time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 				LoggedMinutes: 600, PlayedCount: 3,
 				SeriesStandings: map[string]SeriesStanding{
 					"sr1": {Owned: 4, Played: 3, Unplayed: 1, YearPlayed: 3},
@@ -995,9 +998,9 @@ func TestPredicates(t *testing.T) {
 		{
 			name: "three series finishes split across years do not run the marathon",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:    models.StatusPlayed,
-				CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:        time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 				LoggedMinutes: 600, PlayedCount: 3,
 				SeriesStandings: map[string]SeriesStanding{
 					"sr1": {Owned: 4, Played: 3, Unplayed: 1, YearPlayed: 2},
@@ -1091,22 +1094,22 @@ func TestPredicates(t *testing.T) {
 		{
 			name: "finishing on a dormant platform is retroactive",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:          models.StatusPlayed,
-				CreatedAt:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:              time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
-				LoggedMinutes:   600, PlayedCount: 2,
-				PlatformID:      i64(18), PlatformDormant: boolPtr(true),
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				PlatformID: i64(18), PlatformDormant: boolPtr(true),
 			}},
 			want: []string{"first_blood", "retroactive"},
 		},
 		{
 			name: "an active platform is not retroactive",
 			event: Event{Kind: EventFinished, Entry: Entry{
-				Status:          models.StatusPlayed,
-				CreatedAt:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:              time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
-				LoggedMinutes:   600, PlayedCount: 2,
-				PlatformID:      i64(18), PlatformDormant: boolPtr(false),
+				Status:        models.StatusPlayed,
+				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				LoggedMinutes: 600, PlayedCount: 2,
+				PlatformID: i64(18), PlatformDormant: boolPtr(false),
 			}},
 			want: []string{"first_blood"},
 		},
@@ -1115,7 +1118,7 @@ func TestPredicates(t *testing.T) {
 			event: Event{Kind: EventFinished, Entry: Entry{
 				Status:        models.StatusPlayed,
 				CreatedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-				At:           time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+				At:            time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 				LoggedMinutes: 600, PlayedCount: 2,
 			}},
 			want: []string{"first_blood"},
@@ -1518,5 +1521,165 @@ func TestResumedEventKind(t *testing.T) {
 	// A bare resume is the comeback ladder's first rung.
 	if ids := unlockIDs(resumed); len(ids) != 1 || ids[0] != "resurrection" {
 		t.Errorf("resumed event unlocked %v, want [resurrection]", ids)
+	}
+}
+
+func TestCatalogueEggInvariants(t *testing.T) {
+	seen := map[string]bool{}
+	for _, def := range Catalogue {
+		if seen[def.Achievement.ID] {
+			t.Errorf("duplicate catalogue id %q", def.Achievement.ID)
+		}
+		seen[def.Achievement.ID] = true
+
+		if !def.Achievement.Egg {
+			continue
+		}
+		// An egg implies hidden: the reveal must never sit on the wall.
+		if !def.Achievement.Hidden {
+			t.Errorf("%s: egg without hidden", def.Achievement.ID)
+		}
+		// Predicates never fire for eggs — no event, no time window.
+		if def.Predicate != nil {
+			t.Errorf("%s: egg carries an event predicate", def.Achievement.ID)
+		}
+		if def.TimePredicate != nil {
+			t.Errorf("%s: egg carries a time predicate", def.Achievement.ID)
+		}
+	}
+
+	for _, id := range []string{"night_owl", "hog_watcher", "konami", "queue_shuffler"} {
+		if !IsEgg(id) {
+			t.Errorf("IsEgg(%q) = false, want true", id)
+		}
+	}
+	for _, id := range []string{"first_blood", "the_big_n", "nope"} {
+		if IsEgg(id) {
+			t.Errorf("IsEgg(%q) = true, want false", id)
+		}
+	}
+}
+
+func TestCatalogueHiddenSet(t *testing.T) {
+	// The curated hidden set: surprise-flavored achievements plus the eggs.
+	// Keep it small enough that the visible wall still reads rich.
+	want := map[string]bool{
+		"empty_the_closet": true, "backlog_negative": true, "perfect_season": true,
+		"closing_the_loop": true, "the_big_n": true, "fossil_record": true,
+		"phoenix": true, "buyers_remorse": true, "know_when_to_fold": true,
+		"cut_your_losses": true,
+		"night_owl":       true, "hog_watcher": true, "konami": true, "queue_shuffler": true,
+	}
+	hidden := 0
+	for _, def := range Catalogue {
+		if !def.Achievement.Hidden {
+			continue
+		}
+		hidden++
+		if !want[def.Achievement.ID] {
+			t.Errorf("unexpected hidden achievement %q", def.Achievement.ID)
+		}
+	}
+	if hidden != len(want) {
+		t.Errorf("hidden count = %d, want %d", hidden, len(want))
+	}
+}
+
+func TestMaskedHintTeases(t *testing.T) {
+	// Every curated hidden entry ships teasing copy — the tease is the fun.
+	for _, def := range Catalogue {
+		if !def.Achievement.Hidden {
+			continue
+		}
+		if got := MaskedHint(def.Achievement.ID); got == MaskedDescription {
+			t.Errorf("%s: no teasing copy, falls back to the placeholder", def.Achievement.ID)
+		}
+	}
+
+	locked := models.Achievement{ID: "konami", Title: "Old Habits", Description: "Enter the Konami code.", Hidden: true, Egg: true}
+	served := Present(locked, true)
+	if served.Title != MaskedTitle || served.Icon != MaskedIcon {
+		t.Errorf("masked title/icon = %q/%q, want %q/%q", served.Title, served.Icon, MaskedTitle, MaskedIcon)
+	}
+	if served.Description != maskedHints["konami"] {
+		t.Errorf("masked description = %q, want the tease %q", served.Description, maskedHints["konami"])
+	}
+	if served.Egg != true || served.Hidden != true {
+		t.Errorf("masking dropped hidden/egg flags: %v/%v", served.Hidden, served.Egg)
+	}
+	if locked.Title != "Old Habits" {
+		t.Errorf("Present mutated its input: title = %q", locked.Title)
+	}
+
+	// An unlisted hidden id falls back to the generic placeholder.
+	unknown := models.Achievement{ID: "mystery", Title: "??", Hidden: true}
+	if got := Present(unknown, true).Description; got != MaskedDescription {
+		t.Errorf("fallback description = %q, want %q", got, MaskedDescription)
+	}
+}
+
+// TestAchievementsDocSync pins docs/ACHIEVEMENTS.md to the catalogue: every
+// entry appears exactly once with its id, title, tier, hidden and egg flags,
+// and unlock text in step with the Go definitions. The doc is
+// hand-maintained; this test is what keeps it honest.
+func TestAchievementsDocSync(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "ACHIEVEMENTS.md"))
+	if err != nil {
+		t.Fatalf("read doc: %v", err)
+	}
+
+	parseBool := func(field string) bool {
+		if field == "true" {
+			return true
+		}
+		if field == "false" {
+			return false
+		}
+		t.Fatalf("doc boolean column = %q, want true/false", field)
+		return false
+	}
+
+	rows := map[string]struct {
+		title, tier, unlock string
+		hidden, egg         bool
+	}{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "| `") {
+			continue
+		}
+		cols := strings.Split(strings.TrimSpace(line), "|")
+		if len(cols) != 8 {
+			t.Fatalf("doc row has %d columns, want 7: %q", len(cols)-1, line)
+		}
+		id := strings.Trim(strings.TrimSpace(cols[1]), "`")
+		rows[id] = struct {
+			title, tier, unlock string
+			hidden, egg         bool
+		}{
+			title:  strings.TrimSpace(cols[2]),
+			tier:   strings.TrimSpace(cols[3]),
+			hidden: parseBool(strings.TrimSpace(cols[4])),
+			egg:    parseBool(strings.TrimSpace(cols[5])),
+			unlock: strings.TrimSpace(cols[6]),
+		}
+	}
+
+	if len(rows) != len(Catalogue) {
+		t.Errorf("doc has %d rows, catalogue has %d — extra or missing entries", len(rows), len(Catalogue))
+	}
+	for _, def := range Catalogue {
+		row, ok := rows[def.Achievement.ID]
+		if !ok {
+			t.Errorf("%s: no doc row — add it to docs/ACHIEVEMENTS.md", def.Achievement.ID)
+			continue
+		}
+		if row.title != def.Achievement.Title || row.tier != def.Achievement.Tier ||
+			row.hidden != def.Achievement.Hidden || row.egg != def.Achievement.Egg ||
+			row.unlock != def.Achievement.Description {
+			t.Errorf("%s: doc row = %q/%q/%v/%v/%q, want %q/%q/%v/%v/%q",
+				def.Achievement.ID, row.title, row.tier, row.hidden, row.egg, row.unlock,
+				def.Achievement.Title, def.Achievement.Tier, def.Achievement.Hidden,
+				def.Achievement.Egg, def.Achievement.Description)
+		}
 	}
 }

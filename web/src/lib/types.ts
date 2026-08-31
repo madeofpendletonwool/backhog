@@ -355,8 +355,10 @@ export interface Achievement {
   /** Code key the client maps to an icon glyph. */
   icon: string;
   tier: AchievementTier;
-  /** Hidden achievements are served masked while locked: ??? / "Hidden achievement". */
+  /** Hidden achievements are served masked while locked: ??? / teasing copy. */
   hidden: boolean;
+  /** Eggs unlock only by playing with the app — predicates never fire for them. */
+  egg: boolean;
 }
 
 /** An achievement plus the user's unlock state: no date and no game = locked. */

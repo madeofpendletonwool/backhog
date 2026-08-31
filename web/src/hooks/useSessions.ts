@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { dispatchUnlocks } from "@/hooks/useAchievements";
+import { dispatchUnlocks, useEggUnlock } from "@/hooks/useAchievements";
 import { api } from "@/lib/api";
 
 /** Invalidates everything that a logged session can change. */
@@ -30,12 +30,19 @@ export function useSessions(entryId: string | undefined) {
 
 export function useAddSession(entryId: string | undefined) {
   const queryClient = useQueryClient();
+  const fireEgg = useEggUnlock();
   return useMutation({
     mutationFn: (input: { minutes: number; played_on?: string; note?: string }) =>
       api.addSession(entryId!, input),
     onSuccess: ({ unlocks }) => {
       invalidateAfterSession(queryClient, entryId);
       dispatchUnlocks(unlocks);
+      // Sessions store the day, not the hour — so the night owl earns its
+      // keep live: logging play between 3:00 and 4:59 AM in the user's own
+      // clock hatches the egg. The client's local hour is the only honest
+      // witness; the server never sees a time to judge.
+      const hour = new Date().getHours();
+      if (hour >= 3 && hour < 5) void fireEgg("night_owl");
     },
   });
 }

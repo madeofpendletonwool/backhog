@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import { api } from "@/lib/api";
 import type { AchievementStatus } from "@/lib/types";
@@ -23,4 +24,28 @@ export function useAchievements() {
 /** The current year's season by default. */
 export function useSeason() {
   return useQuery({ queryKey: ["season"], queryFn: () => api.season() });
+}
+
+/**
+ * Fires an easter egg. Silent by design: when the endpoint rejects the id,
+ * throttles, or is unreachable, nothing happens — an egg that doesn't hatch
+ * shouldn't announce itself. The reveal rides the normal unlock toast, and
+ * only when this call is the one that unlocked it.
+ */
+export function useEggUnlock() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (id: string) => {
+      try {
+        const { unlocked, achievement } = await api.unlockEgg(id);
+        if (unlocked) {
+          dispatchUnlocks([achievement]);
+          void queryClient.invalidateQueries({ queryKey: ["achievements"] });
+        }
+      } catch {
+        // Eggs stay quiet on failure.
+      }
+    },
+    [queryClient],
+  );
 }

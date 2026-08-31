@@ -148,6 +148,17 @@ export const api = {
   season: (year?: number) =>
     request<Season>(`/achievements/season${year != null ? `?year=${year}` : ""}`),
 
+  /**
+   * Fire an easter egg. Only egg ids are accepted (everything else 400s);
+   * the response carries the revealed achievement and whether this call is
+   * the one that unlocked it — the toast payload.
+   */
+  unlockEgg: (id: string) =>
+    request<{ unlocked: boolean; achievement: AchievementStatus }>(
+      `/achievements/${id}/egg`,
+      { method: "POST" },
+    ),
+
   // --- play sessions --------------------------------------------------
   sessions: (entryId: string) =>
     request<{ sessions: PlaySession[] }>(`/library/${entryId}/sessions`),

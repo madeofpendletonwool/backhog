@@ -124,6 +124,11 @@ ICONS = {
     "knapsack":      "lorc/knapsack",
     "footprint":     "lorc/footprint",
     "clover":        "lorc/clover",
+    # easter eggs
+    "night-sleep":   "delapouite/night-sleep",
+    "eyeball":       "lorc/eyeball",
+    "keyboard":      "delapouite/keyboard",
+    "whirlwind":     "lorc/whirlwind",
     # statuses
     "ban":           "lorc/interdiction",
     "x-circle":      "lorc/interdiction",

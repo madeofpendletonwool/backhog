@@ -14,11 +14,13 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useRef } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import { QueueRow } from "@/components/QueueRow";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { useEggUnlock } from "@/hooks/useAchievements";
 import { useQueue, useReorderQueue } from "@/hooks/useLibrary";
 import { formatHours, toHours } from "@/lib/format";
 
@@ -26,6 +28,21 @@ export function QueuePage() {
   const { openAddDialog } = useOutletContext<{ openAddDialog: () => void }>();
   const { data, isLoading } = useQueue();
   const reorder = useReorderQueue();
+  const fireEgg = useEggUnlock();
+
+  // The gremlin watch: shuttling the same game back to the top five times
+  // in one sitting hatches the Chaos Gremlin egg. Each game counts its own
+  // runs — the streak has to be one game, five times.
+  const topMoves = useRef(new Map<string, number>());
+  const onGremlinMove = (entryId: string) => {
+    const count = (topMoves.current.get(entryId) ?? 0) + 1;
+    if (count >= 5) {
+      topMoves.current.delete(entryId);
+      void fireEgg("queue_shuffler");
+      return;
+    }
+    topMoves.current.set(entryId, count);
+  };
 
   const entries = data?.entries ?? [];
 
@@ -64,6 +81,7 @@ export function QueuePage() {
   const moveBy = (index: number, kind: "top" | "up" | "down" | "bottom") => {
     const target =
       kind === "top" ? 0 : kind === "bottom" ? entries.length - 1 : kind === "up" ? index - 1 : index + 1;
+    if (kind === "top") onGremlinMove(entries[index].id);
     applyMove(index, target);
   };
 

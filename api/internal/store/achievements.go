@@ -23,6 +23,49 @@ type unlockStub struct {
 	unlockedAt    time.Time
 }
 
+// ErrNotAnEgg is returned when UnlockEgg is asked to unlock an id that is
+// not on the egg whitelist.
+var ErrNotAnEgg = errors.New("achievement is not an easter egg")
+
+// UnlockEgg records an easter-egg unlock for the user: the only path that
+// can tip an Egg achievement, since predicates never fire for them. The
+// insert is the same idempotent INSERT OR IGNORE the event evaluation uses,
+// so a second call reports the existing unlock instead of duplicating it.
+// The returned status carries the revealed identity — the reveal is the
+// toast payload — and newly reports whether this call is the one that
+// unlocked it.
+func (s *Store) UnlockEgg(ctx context.Context, userID, achievementID string) (models.AchievementStatus, bool, error) {
+	if !achievements.IsEgg(achievementID) {
+		return models.AchievementStatus{}, false, ErrNotAnEgg
+	}
+	def := achievements.ByID(achievementID)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.AchievementStatus{}, false, err
+	}
+	defer tx.Rollback()
+
+	at, err := insertUnlockTx(ctx, tx, userID, achievementID, nil)
+	if err != nil {
+		return models.AchievementStatus{}, false, err
+	}
+	newly := at != nil
+	if !newly {
+		// Already had it: report the original unlock moment.
+		at = new(time.Time)
+		if err := tx.QueryRowContext(ctx,
+			`SELECT unlocked_at FROM achievement_unlocks WHERE user_id = ? AND achievement_id = ?`,
+			userID, achievementID).Scan(at); err != nil {
+			return models.AchievementStatus{}, false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return models.AchievementStatus{}, false, err
+	}
+	return models.AchievementStatus{Achievement: *def, UnlockedAt: at}, newly, nil
+}
+
 // evaluateAchievementsTx runs the catalogue against one triggering event,
 // inside the caller's transaction so the unlock lands atomically with the
 // status change or session that earned it. The entry snapshot is read in-tx
@@ -70,7 +113,10 @@ func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, ki
 
 	var newly []unlockStub
 	for _, def := range achievements.Catalogue {
-		if def.Predicate == nil || !def.Predicate(achievements.Event{Kind: kind, Entry: e}) {
+		// Eggs never unlock from events — only the egg endpoint can tip
+		// them — and entries without a predicate can never fire.
+		if def.Achievement.Egg || def.Predicate == nil ||
+			!def.Predicate(achievements.Event{Kind: kind, Entry: e}) {
 			continue
 		}
 		at, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &entryID)
@@ -1199,7 +1245,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 
 		ev := achievements.Event{Kind: achievements.EventFinished, Entry: played[i]}
 		for _, def := range achievements.Catalogue {
-			if def.Predicate == nil || !def.Predicate(ev) {
+			if def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &played[i].ID); err != nil {
@@ -1216,7 +1262,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 			DropHistory: []achievements.DropCycle{{DroppedAt: r.droppedAt, ResumedAt: &r.at}},
 		}}
 		for _, def := range achievements.Catalogue {
-			if def.Predicate == nil || !def.Predicate(ev) {
+			if def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &r.entryID); err != nil {
@@ -1264,7 +1310,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		dropped[i].UnplayedCount, dropped[i].PeakUnplayedCount = timeline.stateAt(dropped[i].At)
 		ev := achievements.Event{Kind: achievements.EventDropped, Entry: dropped[i]}
 		for _, def := range achievements.Catalogue {
-			if def.Predicate == nil || !def.Predicate(ev) {
+			if def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &dropped[i].ID); err != nil {
@@ -1456,7 +1502,9 @@ func (s *Store) Achievements(ctx context.Context, userID string) ([]models.Achie
 		u, unlocked := byAchievement[def.Achievement.ID]
 		locked := !unlocked
 		status := models.AchievementStatus{Achievement: achievements.Present(def.Achievement, locked)}
-		if locked {
+		if locked && !def.Achievement.Hidden {
+			// Progress strings speak to the visible ladder achievements
+			// only — on a hidden card the count would give the game away.
 			if p, ok := progress[def.Achievement.ID]; ok && p.have > 0 && p.have < p.want {
 				status.Description = fmt.Sprintf("%s %d/%d %s so far.",
 					status.Description, p.have, p.want, p.unit)

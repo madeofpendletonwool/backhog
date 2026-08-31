@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { AchievementToasts } from "./AchievementToasts";
@@ -9,6 +9,7 @@ import { SteamImportDialog } from "./SteamImportDialog";
 import { Button, Gi } from "./ui/primitives";
 import { Sprite } from "./ui/Sprite";
 import { useAuth } from "@/hooks/useAuth";
+import { useEggUnlock } from "@/hooks/useAchievements";
 import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
 import type { GiName } from "@/lib/gameicons";
@@ -32,6 +33,19 @@ export function Layout() {
   const navigate = useNavigate();
   const { data: stats } = useStats();
   const { data: listData } = useLists();
+  const fireEgg = useEggUnlock();
+
+  // The logo is watching for watchers: ten clicks on the hog and the
+  // Hog Watcher egg hatches. The counter resets on reload — a streak
+  // should be one sitting.
+  const logoClicks = useRef(0);
+  const onLogoClick = () => {
+    logoClicks.current += 1;
+    if (logoClicks.current >= 10) {
+      logoClicks.current = 0;
+      void fireEgg("hog_watcher");
+    }
+  };
 
   // Cmd/Ctrl+K opens the add dialog from anywhere in the app.
   useEffect(() => {
@@ -50,7 +64,11 @@ export function Layout() {
   return (
     <div className="flex min-h-screen">
       <aside className="f-panel fixed inset-y-2 left-2 z-20 hidden w-60 flex-col px-3 py-5 lg:flex">
-        <div className="flex items-center gap-3 px-2 pb-6">
+        <div
+          className="flex items-center gap-3 px-2 pb-6 select-none"
+          title="Backhog"
+          onClick={onLogoClick}
+        >
           <Sprite name="stick" />
           <div>
             <p className="font-pixel text-[13px] font-bold uppercase tracking-widest text-ink-100">
@@ -127,7 +145,9 @@ export function Layout() {
 
       {/* Mobile top bar; the sidebar collapses away below lg. */}
       <header className="f-panel fixed inset-x-2 top-2 z-30 flex items-center gap-1 px-3 py-1.5 lg:hidden">
-        <Sprite name="ball" className="h-8 w-8 shrink-0" />
+        <button type="button" aria-label="Backhog" className="shrink-0" onClick={onLogoClick}>
+          <Sprite name="ball" className="h-8 w-8" />
+        </button>
         <nav className="flex flex-1 items-center gap-1 overflow-x-auto">
           {navItems.map(({ to, label, icon, end }) => (
             <NavLink key={to} to={to} end={end} className={mobileLinkClass} title={label}>

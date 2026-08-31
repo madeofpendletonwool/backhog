@@ -424,8 +424,8 @@ func TestLazyTimeWindowEvaluation(t *testing.T) {
 }
 
 // TestAchievementsGalleryShape pins the gallery contract: every entry carries
-// a valid tier, and — until any hidden achievement ships — locked entries
-// show their real identity.
+// a valid tier; locked visible entries show their real identity; locked
+// hidden entries are masked down to ???, their tease, and the lock icon.
 func TestAchievementsGalleryShape(t *testing.T) {
 	s := newAchievementsStore(t)
 	ctx := context.Background()
@@ -445,8 +445,19 @@ func TestAchievementsGalleryShape(t *testing.T) {
 		if def == nil {
 			t.Fatalf("gallery id %q not in catalogue", st.ID)
 		}
-		if st.UnlockedAt == nil && (st.Title != def.Title || st.Description != def.Description) {
-			t.Errorf("locked entry %s is masked (%q), want real identity", st.ID, st.Title)
+		if st.UnlockedAt != nil {
+			continue
+		}
+		if !def.Hidden {
+			if st.Title != def.Title || st.Description != def.Description {
+				t.Errorf("locked visible entry %s is masked (%q), want real identity", st.ID, st.Title)
+			}
+			continue
+		}
+		if st.Title != achievements.MaskedTitle || st.Icon != achievements.MaskedIcon ||
+			st.Description != achievements.MaskedHint(def.ID) {
+			t.Errorf("locked hidden entry %s = %q/%q, want the masked ???/tease/lock",
+				st.ID, st.Title, st.Description)
 		}
 	}
 }

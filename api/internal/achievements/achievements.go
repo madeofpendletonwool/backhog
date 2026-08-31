@@ -493,6 +493,7 @@ var Catalogue = []Definition{
 			Description: "Reach zero unplayed games after hoarding 10+.",
 			Icon:        "wooden-door",
 			Tier:        models.TierGold,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return (e.finished() || e.dropped()) &&
@@ -507,6 +508,7 @@ var Catalogue = []Definition{
 			Description: "Finish more games in a year than you add.",
 			Icon:        "minus",
 			Tier:        models.TierGold,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.YearFinishes > e.Entry.YearAdditions
@@ -555,6 +557,7 @@ var Catalogue = []Definition{
 			Description: "Finish at least one game every month of a calendar year.",
 			Icon:        "check-circle",
 			Tier:        models.TierLegendary,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.YearMonthsFinished >= perfectSeasonMonths
@@ -801,6 +804,7 @@ var Catalogue = []Definition{
 			Description: "Drop a game after 5+ hours of honest effort.",
 			Icon:        "hand",
 			Tier:        models.TierSilver,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.dropped() && e.Entry.LoggedMinutes >= knowWhenToFoldMinutes
@@ -813,6 +817,7 @@ var Catalogue = []Definition{
 			Description: "Drop a game with less than 10% of its main story logged.",
 			Icon:        "swords",
 			Tier:        models.TierBronze,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.dropped() && e.Entry.TimeToBeatMain != nil &&
@@ -826,6 +831,7 @@ var Catalogue = []Definition{
 			Description: "Drop a game within 7 days of adding it.",
 			Icon:        "gift",
 			Tier:        models.TierBronze,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.dropped() && ownedFor(e.Entry) <= buyersRemorseWindow
@@ -910,6 +916,7 @@ var Catalogue = []Definition{
 			Description: "Return to a game 2+ years after dropping it and finish it.",
 			Icon:        "sparkles",
 			Tier:        models.TierLegendary,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && longestReturnGap(e.Entry) >= phoenixWindow
@@ -934,6 +941,7 @@ var Catalogue = []Definition{
 			Description: "Finish one of the 3 oldest games you own.",
 			Icon:        "fossil",
 			Tier:        models.TierGold,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.CreatedAtRank > 0 &&
@@ -1015,6 +1023,7 @@ var Catalogue = []Definition{
 			Description: "Finish the last unplayed game in a series you own — dropped entries don't count against you.",
 			Icon:        "cycle",
 			Tier:        models.TierGold,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && anySeries(e.Entry, func(s SeriesStanding) bool {
@@ -1103,6 +1112,7 @@ var Catalogue = []Definition{
 			Description: "Finish a game on NES, SNES, N64, GameCube, Wii, Wii U, and Switch.",
 			Icon:        "mushroom-gills",
 			Tier:        models.TierLegendary,
+			Hidden:      true,
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.BigNConsoles >= bigNConsoles
@@ -1154,6 +1164,55 @@ var Catalogue = []Definition{
 		},
 		Predicate: func(e Event) bool {
 			return e.finished() && e.Entry.XboxGenerations >= xboxGenerations
+		},
+	},
+	// The easter eggs: unlockable only by playing with the app itself, never
+	// by a predicate. Egg implies Hidden — the locked card shows ??? and a
+	// tease, and the reveal rides the normal unlock toast. The client fires
+	// POST /api/achievements/{id}/egg when it detects the interaction; the
+	// endpoint only accepts ids from this club.
+	{
+		Achievement: models.Achievement{
+			ID:          "night_owl",
+			Title:       "Do You Even Sleep?",
+			Description: "Log a play session between 3 and 5 in the morning.",
+			Icon:        "night-sleep",
+			Tier:        models.TierBronze,
+			Hidden:      true,
+			Egg:         true,
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "hog_watcher",
+			Title:       "Hog Watcher",
+			Description: "Click the Backhog logo 10 times in a row.",
+			Icon:        "eyeball",
+			Tier:        models.TierBronze,
+			Hidden:      true,
+			Egg:         true,
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "konami",
+			Title:       "Old Habits",
+			Description: "Enter the Konami code on the achievements page.",
+			Icon:        "keyboard",
+			Tier:        models.TierSilver,
+			Hidden:      true,
+			Egg:         true,
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			ID:          "queue_shuffler",
+			Title:       "Chaos Gremlin",
+			Description: "Re-queue the same game 5 times in one sitting.",
+			Icon:        "whirlwind",
+			Tier:        models.TierBronze,
+			Hidden:      true,
+			Egg:         true,
 		},
 	},
 }
@@ -1218,22 +1277,60 @@ func longestReturnGap(e Entry) time.Duration {
 
 // Placeholders a locked hidden achievement is served with. The identity is
 // the reward for unlocking; only the tier leaks, so the gallery can still
-// group it.
+// group it. The description placeholder is the fallback for hidden entries
+// without custom teasing copy — every curated one has a tease in maskedHints.
 const (
 	MaskedTitle       = "???"
 	MaskedDescription = "Hidden achievement"
 	MaskedIcon        = "lock"
 )
 
+// maskedHints is the teasing copy a locked hidden card wears instead of a
+// description: flavor that hints at the shape of the thing without naming
+// it. The tease is part of the fun — write one when hiding an achievement.
+var maskedHints = map[string]string{
+	"empty_the_closet":  "One day the closet will be empty. You'll know.",
+	"backlog_negative":  "Spend less than you bring in. You do the math.",
+	"perfect_season":    "A whole year, every month. You'll know it when it's done.",
+	"closing_the_loop":  "Some loops are waiting to be closed.",
+	"the_big_n":         "Seven of a kind, from one house.",
+	"fossil_record":     "The oldest things you own remember.",
+	"phoenix":           "Some things come back from the ashes.",
+	"buyers_remorse":    "Buyer's... something. You'll know it when you feel it.",
+	"know_when_to_fold": "You'll know it when you hold it.",
+	"cut_your_losses":   "Sometimes the kindest cut is early.",
+	"night_owl":         "You'll know it when you feel it. Especially around 3 AM.",
+	"hog_watcher":       "Keep watching the hog.",
+	"konami":            "Some codes never die.",
+	"queue_shuffler":    "Chaos is a ladder. Or a queue.",
+}
+
+// MaskedHint returns the teasing copy for a locked hidden achievement, or
+// the generic placeholder when it has none.
+func MaskedHint(id string) string {
+	if hint, ok := maskedHints[id]; ok {
+		return hint
+	}
+	return MaskedDescription
+}
+
 // Present returns the achievement as it should be served for the given lock
-// state: hidden achievements mask their identity while locked and reveal the
-// real data on unlock, so the reveal lives in the unlock toast and gallery.
+// state: hidden achievements mask their identity while locked — title, tease,
+// and lock icon — and reveal the real data on unlock, so the reveal lives in
+// the unlock toast and gallery.
 func Present(a models.Achievement, locked bool) models.Achievement {
 	if !a.Hidden || !locked {
 		return a
 	}
 	a.Title = MaskedTitle
-	a.Description = MaskedDescription
+	a.Description = MaskedHint(a.ID)
 	a.Icon = MaskedIcon
 	return a
+}
+
+// IsEgg reports whether id is an easter-egg achievement — the only ids the
+// egg endpoint will unlock.
+func IsEgg(id string) bool {
+	def := ByID(id)
+	return def != nil && def.Egg
 }

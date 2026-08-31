@@ -434,6 +434,9 @@ type Achievement struct {
 	// Hidden keeps an achievement's identity masked while locked — the
 	// reveal lives in the unlock toast and the gallery.
 	Hidden bool `json:"hidden"`
+	// Egg marks an easter egg: unlockable only by playing with the app
+	// through the /egg endpoint, never by a predicate. Implies Hidden.
+	Egg bool `json:"egg"`
 }
 
 // AchievementStatus is an achievement plus the user's unlock state: locked

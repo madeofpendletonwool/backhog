@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
+import { useEffect, useRef } from "react";
 
 import { GameCover } from "@/components/GameCover";
 import { achievementIcon } from "@/components/achievementIcons";
 import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
-import { useAchievements } from "@/hooks/useAchievements";
+import { useAchievements, useEggUnlock } from "@/hooks/useAchievements";
 import { formatDate } from "@/lib/format";
 import { ACHIEVEMENT_TIERS, type AchievementStatus, type AchievementTier } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -38,8 +39,36 @@ const TIER_TEXT: Record<AchievementTier, string> = {
  * the date and the game that tipped them over. Hidden achievements arrive
  * masked from the API and reveal on unlock.
  */
+/** The Konami code, as key events read it. */
+const KONAMI = ["arrowup", "arrowup", "arrowdown", "arrowdown",
+  "arrowleft", "arrowright", "arrowleft", "arrowright", "b", "a"];
+
 export function AchievementsPage() {
   const { data, isLoading } = useAchievements();
+  const fireEgg = useEggUnlock();
+
+  // Old habits: typing the Konami code anywhere on the gallery hatches
+  // the Old Habits egg. Progress resets on any wrong key — as it should.
+  const konamiPos = useRef(0);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === KONAMI[konamiPos.current]) {
+        konamiPos.current += 1;
+      } else {
+        // A wrong key restarts the watch — unless it is itself the
+        // opening move, in which case the run starts there.
+        konamiPos.current = key === KONAMI[0] ? 1 : 0;
+      }
+      if (konamiPos.current === KONAMI.length) {
+        konamiPos.current = 0;
+        void fireEgg("konami");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fireEgg]);
 
   if (isLoading) {
     return (

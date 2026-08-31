@@ -72,6 +72,11 @@ const ICONS: Record<string, GiName> = {
   knapsack: "knapsack",
   footprint: "footprint",
   clover: "clover",
+  // The easter eggs.
+  "night-sleep": "night-sleep",
+  eyeball: "eyeball",
+  keyboard: "keyboard",
+  whirlwind: "whirlwind",
   // The generic glyph a locked hidden achievement is masked with.
   lock: "lock",
 };

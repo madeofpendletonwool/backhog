@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/collinpendleton/backhog/api/internal/achievements"
 	"github.com/collinpendleton/backhog/api/internal/db"
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
@@ -1848,6 +1849,8 @@ func TestLivePlatformFinishes(t *testing.T) {
 
 	// The gallery shows the locked curated sets' progress in their
 	// descriptions, served server-side like the tonight picks' reasons.
+	// The Big N is hidden now: its locked card is fully masked — a
+	// progress string would give the game away.
 	statuses, err := s.Achievements(ctx, "u15")
 	if err != nil {
 		t.Fatalf("Achievements: %v", err)
@@ -1855,9 +1858,16 @@ func TestLivePlatformFinishes(t *testing.T) {
 	for _, st := range statuses {
 		switch st.ID {
 		case "the_big_n":
-			want := "Finish a game on NES, SNES, N64, GameCube, Wii, Wii U, and Switch. 4/7 consoles so far."
-			if st.UnlockedAt == nil && st.Description != want {
-				t.Errorf("locked the_big_n description = %q, want %q", st.Description, want)
+			if st.UnlockedAt != nil {
+				continue
+			}
+			if st.Title != achievements.MaskedTitle || st.Icon != achievements.MaskedIcon {
+				t.Errorf("locked the_big_n = %q/%q, want masked %q/%q",
+					st.Title, st.Icon, achievements.MaskedTitle, achievements.MaskedIcon)
+			}
+			if st.Description != achievements.MaskedHint("the_big_n") {
+				t.Errorf("locked the_big_n description = %q, want the tease %q",
+					st.Description, achievements.MaskedHint("the_big_n"))
 			}
 		case "game_boy_generation":
 			want := "Finish a game on Game Boy, Game Boy Color, and Game Boy Advance. 1/3 systems so far."
@@ -1880,5 +1890,100 @@ func TestLivePlatformFinishes(t *testing.T) {
 	}
 	if got := unlockedIDs(unlocks); got["retroactive"] != "" || got["playstation_pilgrim"] != "" {
 		t.Errorf("lb2 unlocks = %v, want no retroactive refire and no pilgrim", got)
+	}
+}
+
+// TestUnlockEgg covers the easter-egg unlock path: the whitelist, the
+// idempotent insert, the reveal, and the masking that stays intact until
+// the egg actually unlocks.
+func TestUnlockEgg(t *testing.T) {
+	s := newAchievementsStore(t)
+	ctx := context.Background()
+
+	// u2 has no history: every egg sits masked on their wall.
+	statuses, err := s.Achievements(ctx, "u2")
+	if err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	for _, st := range statuses {
+		if !st.Egg {
+			continue
+		}
+		if st.UnlockedAt != nil {
+			t.Fatalf("%s: egg unlocked without the endpoint", st.ID)
+		}
+		if st.Title != achievements.MaskedTitle || st.Icon != achievements.MaskedIcon {
+			t.Errorf("locked egg %s = %q/%q, want masked", st.ID, st.Title, st.Icon)
+		}
+		if st.Description != achievements.MaskedHint(st.ID) {
+			t.Errorf("locked egg %s description = %q, want the tease", st.ID, st.Description)
+		}
+	}
+
+	// Predicates never fire for eggs: u1's rich backfill history leaves
+	// all four locked.
+	statuses, err = s.Achievements(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Achievements u1: %v", err)
+	}
+	got := unlockedIDs(statuses)
+	for _, id := range []string{"night_owl", "hog_watcher", "konami", "queue_shuffler"} {
+		if _, ok := got[id]; ok {
+			t.Errorf("%s unlocked from backfill, want locked", id)
+		}
+	}
+
+	// The unlock reveals the real identity and reports itself as new.
+	status, newly, err := s.UnlockEgg(ctx, "u2", "konami")
+	if err != nil {
+		t.Fatalf("UnlockEgg: %v", err)
+	}
+	if !newly {
+		t.Error("first UnlockEgg not reported as new")
+	}
+	if status.Title != "Old Habits" || status.Egg != true || status.Hidden != true {
+		t.Errorf("revealed egg = %+v, want the real catalogue entry", status.Achievement)
+	}
+	if status.UnlockedAt == nil {
+		t.Error("revealed egg has no unlock timestamp")
+	}
+	if status.Entry != nil {
+		t.Errorf("egg unlock carries entry %+v, want none", status.Entry)
+	}
+
+	// Idempotent: the second call reports the original unlock, not a new one.
+	again, newly, err := s.UnlockEgg(ctx, "u2", "konami")
+	if err != nil {
+		t.Fatalf("second UnlockEgg: %v", err)
+	}
+	if newly {
+		t.Error("second UnlockEgg reported as new")
+	}
+	if !again.UnlockedAt.Equal(*status.UnlockedAt) {
+		t.Errorf("second UnlockEgg timestamp = %v, want the original %v", again.UnlockedAt, status.UnlockedAt)
+	}
+
+	// The wall reflects the reveal for u2 only — u1 stays locked and
+	// masked, so one user's egg cannot unlock another's.
+	statuses, err = s.Achievements(ctx, "u2")
+	if err != nil {
+		t.Fatalf("Achievements u2 after unlock: %v", err)
+	}
+	if _, ok := unlockedIDs(statuses)["konami"]; !ok {
+		t.Error("konami not unlocked for u2 after UnlockEgg")
+	}
+	statuses, err = s.Achievements(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Achievements u1 after u2's unlock: %v", err)
+	}
+	if _, ok := unlockedIDs(statuses)["konami"]; ok {
+		t.Error("u1 unlocked konami from u2's egg — unlocks must be user-scoped")
+	}
+
+	// The whitelist: non-egg catalogue ids and unknown ids are rejected.
+	for _, id := range []string{"first_blood", "the_big_n", "rest", "nope"} {
+		if _, _, err := s.UnlockEgg(ctx, "u2", id); err != ErrNotAnEgg {
+			t.Errorf("UnlockEgg(%q) error = %v, want ErrNotAnEgg", id, err)
+		}
 	}
 }

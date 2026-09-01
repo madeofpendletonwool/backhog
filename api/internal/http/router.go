@@ -10,6 +10,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/auth"
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	"github.com/collinpendleton/backhog/api/internal/config"
+	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -30,13 +31,14 @@ type Server struct {
 	covers     *metadata.CoverCache
 	steam      *metadata.Steam
 	backfill   *backfill.Runner
+	media      *media.Runner
 	eggLimiter eggLimiter
 }
 
-func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache, steam *metadata.Steam, backfill *backfill.Runner) *Server {
+func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache, steam *metadata.Steam, backfill *backfill.Runner, mediaRunner *media.Runner) *Server {
 	return &Server{
 		cfg: cfg, store: st, provider: provider, covers: covers,
-		steam: steam, backfill: backfill,
+		steam: steam, backfill: backfill, media: mediaRunner,
 		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
 	}
 }
@@ -102,6 +104,14 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/{entryID}/sessions", s.handleAddSession)
 				r.Patch("/{entryID}", s.handleUpdateEntry)
 				r.Delete("/{entryID}", s.handleDeleteEntry)
+			})
+
+			// The scanned NAS library: kick and poll the inventory walk, and
+			// list files for the attach UI.
+			r.Route("/media", func(r chi.Router) {
+				r.Get("/scan", s.handleMediaScan)
+				r.Post("/scan", s.handleMediaScan)
+				r.Get("/files", s.handleMediaFiles)
 			})
 
 			r.Route("/achievements", func(r chi.Router) {

@@ -13,6 +13,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
+	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
 
@@ -34,7 +35,7 @@ func newEggTestApp(t *testing.T) *eggTestApp {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	srv := NewServer(config.Config{}, store.New(database), nil, nil, nil, &backfill.Runner{})
+	srv := NewServer(config.Config{}, store.New(database), nil, nil, nil, &backfill.Runner{}, &media.Runner{})
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 

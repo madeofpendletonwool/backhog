@@ -17,6 +17,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
 	apihttp "github.com/collinpendleton/backhog/api/internal/http"
+	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -119,7 +120,14 @@ func run() error {
 	// background, a bounded batch per boot.
 	seriesBackfill := backfill.NewRunner(st, provider)
 
-	server := apihttp.NewServer(cfg, st, provider, covers, steam, seriesBackfill)
+	// The media scanner inventories the read-only NAS library (Books arena).
+	// Without MEDIA_DIR it is inert: no roots, nothing to walk.
+	mediaScan := media.NewRunner(st, cfg.MediaDirs)
+	if len(cfg.MediaDirs) == 0 {
+		slog.Info("media library scanning disabled (MEDIA_DIR not set)")
+	}
+
+	server := apihttp.NewServer(cfg, st, provider, covers, steam, seriesBackfill, mediaScan)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           server.Routes(),
@@ -134,6 +142,11 @@ func run() error {
 	go func() {
 		if _, err := seriesBackfill.Run(ctx, backfill.StartupCap); err != nil {
 			slog.Warn("startup series backfill", "error", err)
+		}
+	}()
+	go func() {
+		if _, err := mediaScan.Run(ctx); err != nil {
+			slog.Warn("startup media scan", "error", err)
 		}
 	}()
 

@@ -14,8 +14,15 @@ services:
       IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
       # Optional: enables bulk import of an owned Steam library.
       STEAM_API_KEY: ${STEAM_API_KEY:-}
+      # Optional: Books arena library roots, colon-separated. The paths are
+      # container-side and must match the read-only bind mounts below.
+      MEDIA_DIR: ${MEDIA_DIR:-}
     volumes:
       - backhog-data:/data
+      # Books arena: bind-mount the NAS library read-only, one entry per
+      # MEDIA_DIR root. Nothing under these mounts is ever written to.
+      # - /mnt/nas/audiobooks:/media/audiobooks:ro
+      # - /mnt/nas/ebooks:/media/ebooks:ro
     healthcheck:
       # The distroless image has no shell, so the binary probes itself.
       test: ["CMD", "/app/backhog", "-healthcheck"]

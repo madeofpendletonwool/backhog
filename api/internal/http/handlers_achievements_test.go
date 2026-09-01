@@ -34,7 +34,7 @@ func newEggTestApp(t *testing.T) *eggTestApp {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	srv := NewServer(config.Config{}, store.New(database), nil, nil, nil, &backfill.Runner{})
+	srv := NewServer(config.Config{}, store.New(database), nil, nil, nil, nil, &backfill.Runner{})
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 

@@ -98,22 +98,23 @@ func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, game)
 }
 
-// handleCover serves a locally cached cover, downloading it on first request if
-// the file is missing but the upstream URL is known.
+// handleCover serves a locally cached game cover, downloading it on first
+// request if the file is missing but the upstream URL is known.
 func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "gameID"), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
+	key := metadata.GameCoverKey(id)
 
-	if !s.covers.Has(id) {
+	if !s.covers.Has(key) {
 		url, err := s.store.CoverURLFor(r.Context(), id)
 		if err != nil || url == "" {
 			http.NotFound(w, r)
 			return
 		}
-		accent, err := s.covers.Fetch(r.Context(), id, url)
+		accent, err := s.covers.Fetch(r.Context(), key, url)
 		if err != nil {
 			// The IGDB CDN is occasionally slow, especially when a search fires
 			// a dozen cover requests at once. Falling back to the upstream URL
@@ -128,7 +129,12 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	path := s.covers.Path(id)
+	serveCoverFile(w, r, s.covers.Path(key))
+}
+
+// serveCoverFile streams a cached cover from disk. Covers are immutable for a
+// given key, so they are cached hard.
+func serveCoverFile(w http.ResponseWriter, r *http.Request, path string) {
 	f, err := os.Open(path)
 	if err != nil {
 		http.NotFound(w, r)
@@ -142,7 +148,6 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Covers are immutable for a given game id, so cache them hard.
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	http.ServeContent(w, r, path, info.ModTime(), f)

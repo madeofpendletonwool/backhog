@@ -115,11 +115,14 @@ func run() error {
 		slog.Info("steam import enabled")
 	}
 
+	// Open Library needs no credentials, so book metadata works out of the box.
+	books := metadata.NewOpenLibrary()
+
 	// The series backfill enriches cached games with full IGDB metadata in the
 	// background, a bounded batch per boot.
 	seriesBackfill := backfill.NewRunner(st, provider)
 
-	server := apihttp.NewServer(cfg, st, provider, covers, steam, seriesBackfill)
+	server := apihttp.NewServer(cfg, st, provider, books, covers, steam, seriesBackfill)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           server.Routes(),

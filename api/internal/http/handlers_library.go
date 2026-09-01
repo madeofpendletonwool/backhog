@@ -365,14 +365,15 @@ func (s *Server) handleReorder(w http.ResponseWriter, r *http.Request) {
 // cacheCover downloads a cover and records its accent colour. Failures are
 // logged but never block adding a game.
 func (s *Server) cacheCover(r *http.Request, gameID int64) {
-	if s.covers.Has(gameID) {
+	key := metadata.GameCoverKey(gameID)
+	if s.covers.Has(key) {
 		return
 	}
 	url, err := s.store.CoverURLFor(r.Context(), gameID)
 	if err != nil || url == "" {
 		return
 	}
-	accent, err := s.covers.Fetch(r.Context(), gameID, url)
+	accent, err := s.covers.Fetch(r.Context(), key, url)
 	if err != nil {
 		slog.Warn("cache cover", "game_id", gameID, "error", err)
 		return

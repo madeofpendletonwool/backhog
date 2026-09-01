@@ -109,6 +109,11 @@ func TestMediaEntriesMigration(t *testing.T) {
 	}
 
 	// Down: game rows survive, a book row is dropped rather than folded.
+	// Since 00011, book_id carries a real FK, so the book must exist first.
+	if _, err := database.Exec(
+		`INSERT INTO books (id, title) VALUES ('isbn-1', 'A Book')`); err != nil {
+		t.Fatalf("insert books row: %v", err)
+	}
 	if _, err := database.Exec(
 		`INSERT INTO library_entries (id, user_id, media_type, book_id, status) VALUES ('b1', 'u2', 'book', 'isbn-1', 'backlog')`); err != nil {
 		t.Fatalf("insert book row: %v", err)

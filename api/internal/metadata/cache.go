@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -36,26 +37,32 @@ func NewCoverCache(dir string) (*CoverCache, error) {
 	}, nil
 }
 
-// Path returns the on-disk location for a game's cover, whether or not it exists.
-func (c *CoverCache) Path(gameID int64) string {
-	return filepath.Join(c.dir, fmt.Sprintf("%d.jpg", gameID))
+// GameCoverKey is the cache key for a game's cover: the numeric IGDB id.
+// Book covers use the Open Library work key ("OL12345W") verbatim. The two
+// namespaces cannot collide — work keys always start with "OL" — so covers
+// cached by older binaries keep their filenames unchanged.
+func GameCoverKey(gameID int64) string { return strconv.FormatInt(gameID, 10) }
+
+// Path returns the on-disk location for a cover, whether or not it exists.
+func (c *CoverCache) Path(key string) string {
+	return filepath.Join(c.dir, key+".jpg")
 }
 
 // Has reports whether a cover has already been downloaded.
-func (c *CoverCache) Has(gameID int64) bool {
-	info, err := os.Stat(c.Path(gameID))
+func (c *CoverCache) Has(key string) bool {
+	info, err := os.Stat(c.Path(key))
 	return err == nil && info.Size() > 0
 }
 
 // Fetch downloads a cover if it is not already cached and returns an accent
 // colour sampled from the artwork. Writes go to a temp file first so a failed
 // download can never leave a truncated image in the cache.
-func (c *CoverCache) Fetch(ctx context.Context, gameID int64, url string) (accent string, err error) {
+func (c *CoverCache) Fetch(ctx context.Context, key string, url string) (accent string, err error) {
 	if url == "" {
 		return "", nil
 	}
-	dest := c.Path(gameID)
-	if c.Has(gameID) {
+	dest := c.Path(key)
+	if c.Has(key) {
 		return accentFromFile(dest), nil
 	}
 
@@ -67,7 +74,7 @@ func (c *CoverCache) Fetch(ctx context.Context, gameID int64, url string) (accen
 	}
 
 	// Another request may have won the race for this cover while we queued.
-	if c.Has(gameID) {
+	if c.Has(key) {
 		return accentFromFile(dest), nil
 	}
 

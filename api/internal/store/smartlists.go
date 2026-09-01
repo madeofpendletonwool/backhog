@@ -10,16 +10,25 @@ import (
 
 // smartField describes one queryable field of a smart list rule.
 type smartField struct {
-	Column string   // SQL expression; never built from user input
-	Type   string   // "text" | "number" | "date" | "enum" | "ref"
-	Label  string   // shown in the rule builder UI
-	Ops    []string // operators the UI should offer
-	Enum   []string // allowed values for "enum" fields
+	Column string // SQL expression; never built from user input
+	Type   string // "text" | "number" | "date" | "enum" | "ref"
+	Label  string // shown in the rule builder UI
+	Ops    []string
+	Enum   []string
+	// GameOnly marks fields that read games-table columns. Not exposed to the
+	// UI — the media scoping decision is list-level, not per-field (see
+	// ruleSetTargetsBooks).
+	GameOnly bool
 }
 
 // Durations are stored in seconds but presented in hours, so the builder sends
 // hours and we convert. Ratings are IGDB's 0-100 scale.
 var smartFields = map[string]smartField{
+	"media_type": {
+		Column: "e.media_type", Type: "enum", Label: "Media type",
+		Ops:  []string{"eq", "neq", "in"},
+		Enum: models.AllMediaTypes,
+	},
 	"status": {
 		Column: "e.status", Type: "enum", Label: "Status",
 		Ops:  []string{"eq", "neq", "in"},
@@ -30,29 +39,31 @@ var smartFields = map[string]smartField{
 		Type:   "number", Label: "Hours I've logged",
 		Ops: []string{"gt", "lt", "gte", "lte"},
 	},
-	"name":               {Column: "g.name", Type: "text", Label: "Title", Ops: []string{"contains", "eq"}},
-	"igdb_rating":        {Column: "g.igdb_rating", Type: "number", Label: "IGDB rating", Ops: []string{"gt", "lt", "gte", "lte"}},
+	"name":               {Column: "g.name", Type: "text", Label: "Title", Ops: []string{"contains", "eq"}, GameOnly: true},
+	"igdb_rating":        {Column: "g.igdb_rating", Type: "number", Label: "IGDB rating", Ops: []string{"gt", "lt", "gte", "lte"}, GameOnly: true},
 	"user_rating":        {Column: "e.user_rating", Type: "number", Label: "My rating", Ops: []string{"gt", "lt", "gte", "lte", "eq", "is_null", "not_null"}},
-	"hours_to_beat":      {Column: "g.time_to_beat_main / 3600.0", Type: "number", Label: "Hours to beat", Ops: []string{"lt", "gt", "lte", "gte", "is_null", "not_null"}},
-	"release_year":       {Column: "CAST(strftime('%Y', g.first_release_date, 'unixepoch') AS INTEGER)", Type: "number", Label: "Release year", Ops: []string{"eq", "gt", "lt", "gte", "lte"}},
+	"hours_to_beat":      {Column: "g.time_to_beat_main / 3600.0", Type: "number", Label: "Hours to beat", Ops: []string{"lt", "gt", "lte", "gte", "is_null", "not_null"}, GameOnly: true},
+	"release_year":       {Column: "CAST(strftime('%Y', g.first_release_date, 'unixepoch') AS INTEGER)", Type: "number", Label: "Release year", Ops: []string{"eq", "gt", "lt", "gte", "lte"}, GameOnly: true},
 	"days_since_added":   {Column: "julianday('now') - julianday(e.created_at)", Type: "number", Label: "Days since added", Ops: []string{"gt", "lt"}},
 	"days_since_started": {Column: "julianday('now') - julianday(e.started_at)", Type: "number", Label: "Days since started", Ops: []string{"gt", "lt"}},
-	"genre":              {Column: "genre", Type: "ref", Label: "Genre", Ops: []string{"in", "not_in"}},
-	"platform":           {Column: "platform", Type: "ref", Label: "Platform", Ops: []string{"in", "not_in"}},
-	"series":             {Column: "series", Type: "ref", Label: "Series", Ops: []string{"in", "not_in"}},
+	"genre":              {Column: "genre", Type: "ref", Label: "Genre", Ops: []string{"in", "not_in"}, GameOnly: true},
+	"platform":           {Column: "platform", Type: "ref", Label: "Platform", Ops: []string{"in", "not_in"}, GameOnly: true},
+	"series":             {Column: "series", Type: "ref", Label: "Series", Ops: []string{"in", "not_in"}, GameOnly: true},
 	// Platform family and generation read the "playing on" platform on the
 	// entry itself — the honest signal for what someone actually finished on —
 	// via the curated classification on the platforms row.
 	"platform_family": {
 		Column: "(SELECT COALESCE(NULLIF(p.family, ''), 'other') FROM platforms p WHERE p.id = e.platform_id)",
 		Type:   "enum", Label: "Platform family",
-		Ops:  []string{"eq", "neq", "in"},
-		Enum: metadata.PlatformFamilies,
+		Ops:      []string{"eq", "neq", "in"},
+		Enum:     metadata.PlatformFamilies,
+		GameOnly: true,
 	},
 	"platform_generation": {
-		Column: "(SELECT p.generation FROM platforms p WHERE p.id = e.platform_id)",
-		Type:   "number", Label: "Console generation",
-		Ops: []string{"eq", "gt", "lt", "gte", "lte", "is_null", "not_null"},
+		Column:   "(SELECT p.generation FROM platforms p WHERE p.id = e.platform_id)",
+		Type:     "number", Label: "Console generation",
+		Ops:      []string{"eq", "gt", "lt", "gte", "lte", "is_null", "not_null"},
+		GameOnly: true,
 	},
 }
 
@@ -70,6 +81,47 @@ var smartSorts = map[string]string{
 // SmartFields exposes the field catalogue to the rule-builder UI.
 func SmartFields() map[string]smartField { return smartFields }
 
+// Media scoping decision (documented here once): a smart list carries its
+// media scope at the list level — as media_type rules inside its rule set —
+// rather than each field carrying a media tag. A rule set "targets books" when
+// at least one of its media_type rules admits only books (eq 'book', or an
+// in-list of books only); an unscoped set, or one scoped to games or both,
+// does not. Game-only fields (title, IGDB rating, time-to-beat, genre,
+// platform, series…) are rejected in a book-targeting set: the entry
+// projection joins games, so those columns cannot be read there. In an
+// unscoped or mixed set they stay available — they simply match nothing for
+// book rows, which is ordinary SQL filter semantics.
+func ruleSetTargetsBooks(rs models.RuleSet) bool {
+	for _, rule := range rs.Rules {
+		if rule.Field != "media_type" {
+			continue
+		}
+		switch rule.Op {
+		case "eq":
+			if s, err := asString(rule.Value); err == nil && s == models.MediaBook {
+				return true
+			}
+		case "in":
+			values, err := asSlice(rule.Value)
+			if err != nil || len(values) == 0 {
+				continue
+			}
+			booksOnly := true
+			for _, v := range values {
+				s, err := asString(v)
+				if err != nil || s != models.MediaBook {
+					booksOnly = false
+					break
+				}
+			}
+			if booksOnly {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // compileRules turns a validated rule set into a SQL fragment and its arguments.
 // Field names and operators are only ever resolved through the maps above, so no
 // user-controlled string reaches the query text.
@@ -77,6 +129,8 @@ func compileRules(rs models.RuleSet) (string, []any, error) {
 	if len(rs.Rules) == 0 {
 		return "1=1", nil, nil
 	}
+
+	booksOnly := ruleSetTargetsBooks(rs)
 
 	joiner := " AND "
 	if strings.EqualFold(rs.Match, "any") {
@@ -89,6 +143,9 @@ func compileRules(rs models.RuleSet) (string, []any, error) {
 		field, ok := smartFields[rule.Field]
 		if !ok {
 			return "", nil, fmt.Errorf("unknown field %q", rule.Field)
+		}
+		if booksOnly && field.GameOnly {
+			return "", nil, fmt.Errorf("field %q is game-only and cannot be used in a book-scoped rule set", rule.Field)
 		}
 		clause, clauseArgs, err := compileRule(rule, field)
 		if err != nil {

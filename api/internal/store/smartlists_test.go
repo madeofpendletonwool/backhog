@@ -145,3 +145,92 @@ func TestSeededDefaultRuleSetsAreValid(t *testing.T) {
 		}
 	}
 }
+
+func TestBookScopedRuleSetRejectsGameOnlyFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		rules   []models.Rule
+		wantErr bool
+	}{
+		{
+			"book scope rejects a game-only field",
+			[]models.Rule{
+				{Field: "media_type", Op: "eq", Value: models.MediaBook},
+				{Field: "genre", Op: "in", Value: []any{"RPG"}},
+			},
+			true,
+		},
+		{
+			"book in-list scope rejects a game-only field",
+			[]models.Rule{
+				{Field: "media_type", Op: "in", Value: []any{models.MediaBook}},
+				{Field: "igdb_rating", Op: "gt", Value: 80.0},
+			},
+			true,
+		},
+		{
+			"book scope keeps media-agnostic fields",
+			[]models.Rule{
+				{Field: "media_type", Op: "eq", Value: models.MediaBook},
+				{Field: "status", Op: "eq", Value: models.StatusBacklog},
+			},
+			false,
+		},
+		{
+			"game scope keeps game-only fields",
+			[]models.Rule{
+				{Field: "media_type", Op: "eq", Value: models.MediaGame},
+				{Field: "genre", Op: "in", Value: []any{"RPG"}},
+			},
+			false,
+		},
+		{
+			"mixed scope keeps game-only fields",
+			[]models.Rule{
+				{Field: "media_type", Op: "in", Value: []any{models.MediaGame, models.MediaBook}},
+				{Field: "hours_to_beat", Op: "lt", Value: 8.0},
+			},
+			false,
+		},
+		{
+			"unscoped set unchanged",
+			[]models.Rule{
+				{Field: "series", Op: "in", Value: []any{"Mass Effect"}},
+			},
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRuleSet(models.RuleSet{Match: "all", Rules: tt.rules})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateRuleSet error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCompileMediaTypeRule(t *testing.T) {
+	sql, args, err := compileRules(models.RuleSet{
+		Match: "all",
+		Rules: []models.Rule{{Field: "media_type", Op: "eq", Value: models.MediaGame}},
+	})
+	if err != nil {
+		t.Fatalf("compileRules: %v", err)
+	}
+	if !strings.Contains(sql, "e.media_type") {
+		t.Errorf("media_type rule should compile against e.media_type: %s", sql)
+	}
+	if len(args) != 1 || args[0] != models.MediaGame {
+		t.Errorf("args = %v, want [game]", args)
+	}
+
+	// An off-catalogue media value is rejected like any other enum.
+	if _, _, err := compileRules(models.RuleSet{
+		Match: "all",
+		Rules: []models.Rule{{Field: "media_type", Op: "eq", Value: "vinyl"}},
+	}); err == nil {
+		t.Error("invalid media_type value should be rejected")
+	}
+}

@@ -97,8 +97,12 @@ export interface GameExtras {
   expansions: RelatedGame[];
 }
 
+export type MediaType = "game" | "book";
+
 export interface Entry {
   id: string;
+  /** Which subject the entry points at: `game` today, `book` once books land. */
+  media_type: MediaType;
   game: Game;
   status: Status;
   platform_id: number | null;

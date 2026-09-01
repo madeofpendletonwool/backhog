@@ -62,9 +62,11 @@ func (s *Store) TonightPicks(ctx context.Context, userID string, minutes int, ex
 }
 
 // tonightCandidates loads and distils every backlog and playing entry.
+// Game-scoped: the picks reason about time-to-beat, ratings and genres, which
+// books do not have.
 func (s *Store) tonightCandidates(ctx context.Context, userID string, now time.Time) ([]tonightCandidate, error) {
 	entries, err := s.queryEntries(ctx, entrySelect+`
-		WHERE e.user_id = ? AND e.status IN ('backlog','playing')`, userID)
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status IN ('backlog','playing')`, userID)
 	if err != nil {
 		return nil, err
 	}

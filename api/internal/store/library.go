@@ -15,6 +15,7 @@ import (
 // LibraryFilter describes a library query. Zero values mean "no filter".
 type LibraryFilter struct {
 	Status     string
+	MediaType  string
 	Query      string
 	PlatformID *int64
 	GenreID    *int64
@@ -27,7 +28,7 @@ type LibraryFilter struct {
 // entrySelect is the shared projection for entry queries. Genres and platforms
 // are attached separately by hydrate.
 const entrySelect = `
-	SELECT e.id, e.status, e.platform_id, e.user_rating, e.notes, e.queue_position,
+	SELECT e.id, e.media_type, e.status, e.platform_id, e.user_rating, e.notes, e.queue_position,
 	       e.started_at, e.finished_at, e.created_at, e.updated_at, e.game_id,
 	       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0)
 	FROM library_entries e JOIN games g ON g.id = e.game_id`
@@ -69,9 +70,9 @@ func (s *Store) AddEntry(ctx context.Context, userID string, gameID int64, statu
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO library_entries (id, user_id, game_id, status, platform_id, queue_position, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, userID, gameID, status, platformID, queuePos, started)
+		INSERT INTO library_entries (id, user_id, media_type, game_id, status, platform_id, queue_position, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, userID, models.MediaGame, gameID, status, platformID, queuePos, started)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return models.Entry{}, ErrConflict
@@ -104,6 +105,10 @@ func (s *Store) ListEntries(ctx context.Context, userID string, f LibraryFilter)
 	if models.ValidStatus(f.Status) {
 		where = append(where, "e.status = ?")
 		args = append(args, f.Status)
+	}
+	if models.ValidMediaType(f.MediaType) {
+		where = append(where, "e.media_type = ?")
+		args = append(args, f.MediaType)
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		where = append(where, "g.name LIKE ? COLLATE NOCASE")
@@ -151,6 +156,10 @@ func (s *Store) CountEntries(ctx context.Context, userID string, f LibraryFilter
 	if models.ValidStatus(f.Status) {
 		query += " AND e.status = ?"
 		args = append(args, f.Status)
+	}
+	if models.ValidMediaType(f.MediaType) {
+		query += " AND e.media_type = ?"
+		args = append(args, f.MediaType)
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		query += " AND g.name LIKE ? COLLATE NOCASE"
@@ -354,7 +363,9 @@ func (s *Store) DeleteEntry(ctx context.Context, userID, entryID string) error {
 	return nil
 }
 
-// Stats summarises the library for the dashboard.
+// Stats summarises the library for the dashboard. Explicitly game-scoped: the
+// dashboard is the games dashboard, and book entries must not inflate it once
+// they exist.
 func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) {
 	var st models.Stats
 	var loggedMinutes float64
@@ -373,7 +384,7 @@ func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) 
 			                  THEN g.time_to_beat_main ELSE 0 END), 0),
 			COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.user_id = ?), 0)
 		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ?`, userID, userID).
+		WHERE e.user_id = ? AND e.media_type = 'game'`, userID, userID).
 		Scan(&st.Total, &st.Backlog, &st.Playing, &st.Played, &st.Dropped, &st.Ignored, &st.Wishlist,
 			&st.BacklogHours, &st.PlayedHours, &loggedMinutes)
 	if err != nil {
@@ -397,7 +408,8 @@ func (s *Store) Stats(ctx context.Context, userID string) (models.Stats, error) 
 // Facets returns the platforms and genres present in a user's library, for the
 // filter rail. Only values that would actually match anything are returned.
 // Platforms carry their curated classification, degrading to family "other"
-// for unclassified rows.
+// for unclassified rows. Game-scoped by hand: books carry no platforms or
+// genres, so they must never reach the rail even once they exist.
 func (s *Store) Facets(ctx context.Context, userID string) (platforms []models.Platform, genres []models.NamedRef, err error) {
 	prows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT p.id, p.name,
@@ -407,7 +419,7 @@ func (s *Store) Facets(ctx context.Context, userID string) (platforms []models.P
 		FROM library_entries e
 		JOIN game_platforms gp ON gp.game_id = e.game_id
 		JOIN platforms p ON p.id = gp.platform_id
-		WHERE e.user_id = ? ORDER BY p.name`, userID)
+		WHERE e.user_id = ? AND e.media_type = 'game' ORDER BY p.name`, userID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -435,7 +447,7 @@ func (s *Store) Facets(ctx context.Context, userID string) (platforms []models.P
 		FROM library_entries e
 		JOIN game_genres gg ON gg.game_id = e.game_id
 		JOIN genres gn ON gn.id = gg.genre_id
-		WHERE e.user_id = ? ORDER BY gn.name`)
+		WHERE e.user_id = ? AND e.media_type = 'game' ORDER BY gn.name`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -473,7 +485,7 @@ func (s *Store) queryEntries(ctx context.Context, query string, args ...any) ([]
 	for rows.Next() {
 		var e models.Entry
 		var gameID int64
-		if err := rows.Scan(&e.ID, &e.Status, &e.PlatformID, &e.UserRating, &e.Notes,
+		if err := rows.Scan(&e.ID, &e.MediaType, &e.Status, &e.PlatformID, &e.UserRating, &e.Notes,
 			&e.QueuePosition, &e.StartedAt, &e.FinishedAt, &e.CreatedAt, &e.UpdatedAt, &gameID,
 			&e.LoggedMinutes); err != nil {
 			return nil, err

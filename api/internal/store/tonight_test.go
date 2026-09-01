@@ -14,7 +14,7 @@ var tonightNow = time.Date(2026, 8, 25, 20, 0, 0, 0, time.UTC)
 // set the same raw signals the DB has (estimate, logged minutes); remaining is
 // derived the way the loader derives it.
 func cand(name, status string, mutators ...func(*tonightCandidate)) tonightCandidate {
-	c := tonightCandidate{entry: models.Entry{ID: name, Status: status, Game: models.Game{Name: name}}}
+	c := tonightCandidate{entry: models.Entry{ID: name, Status: status, Game: &models.Game{Name: name}}}
 	for _, m := range mutators {
 		m(&c)
 	}

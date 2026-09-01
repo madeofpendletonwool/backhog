@@ -13,7 +13,7 @@ import { useDeleteEntry, useEntry, useUpdateEntry } from "@/hooks/useLibrary";
 import { useEntryLists, useLists, useToggleListMembership } from "@/hooks/useLists";
 import { useEntryProjects, useProjects, useToggleProjectMembership } from "@/hooks/useProjects";
 import { useGameSeries } from "@/hooks/useSeries";
-import { STATUSES, type Entry, type Game, type RelatedGame } from "@/lib/types";
+import { STATUSES, type Game, type GameEntry, type RelatedGame, isGameEntry } from "@/lib/types";
 import {
   accentStyle,
   formatDate,
@@ -46,7 +46,8 @@ export function GameDetailPage() {
 
   if (isLoading) return <DetailSkeleton />;
 
-  if (!entry) {
+  // This is the games detail route; a book id simply is not this page's item.
+  if (!entry || !isGameEntry(entry)) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-20 text-center">
         <p className="text-ink-300">That game isn't in your library.</p>
@@ -366,7 +367,7 @@ export function GameDetailPage() {
  * Manual-list membership for this game. Smart lists are excluded: their
  * contents are decided by rules, so a checkbox here would be a lie.
  */
-function ListMembership({ entry }: { entry: Entry }) {
+function ListMembership({ entry }: { entry: GameEntry }) {
   const { data: listData } = useLists();
   const { data: membership } = useEntryLists(entry.id);
   const toggle = useToggleListMembership(entry.id);
@@ -422,7 +423,7 @@ function ListMembership({ entry }: { entry: Entry }) {
  * Checklist-project membership for this game. Goal projects are excluded:
  * their target is the whole library or a rule set, not a curated list.
  */
-function ProjectMembership({ entry }: { entry: Entry }) {
+function ProjectMembership({ entry }: { entry: GameEntry }) {
   const { data: projectData } = useProjects();
   const { data: membership } = useEntryProjects(entry.id);
   const toggle = useToggleProjectMembership(entry.id);

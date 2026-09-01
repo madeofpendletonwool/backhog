@@ -68,6 +68,9 @@ type BookProvider interface {
 	Search(ctx context.Context, query string, limit int) ([]Book, error)
 	GetByWorkKey(ctx context.Context, key string) (Book, error)
 	GetByISBN(ctx context.Context, isbn string) (Book, error)
+	// GetEditions lists the printings of a work — what the add dialog offers
+	// as the edition picker.
+	GetEditions(ctx context.Context, key string) ([]BookEdition, error)
 }
 
 // isbnPattern accepts ISBN-10 (last digit may be X) and ISBN-13 after
@@ -307,6 +310,31 @@ func (c *OpenLibrary) GetByISBN(ctx context.Context, isbn string) (Book, error) 
 	}
 	book.Edition = &edition
 	return book, nil
+}
+
+// GetEditions lists a work's printings from /works/{key}/editions.json. The
+// records are the same edition shape /isbn/{isbn}.json serves, minus the
+// works back-reference (the work is the thing being asked about).
+func (c *OpenLibrary) GetEditions(ctx context.Context, key string) ([]BookEdition, error) {
+	key = workKey(key)
+	if key == "" {
+		return nil, fmt.Errorf("openlibrary: empty work key")
+	}
+
+	var payload struct {
+		Entries []olEdition `json:"entries"`
+	}
+	if err := c.getJSON(ctx, "/works/"+url.PathEscape(key)+"/editions.json", &payload); err != nil {
+		return nil, err
+	}
+
+	eds := make([]BookEdition, 0, len(payload.Entries))
+	for _, ed := range payload.Entries {
+		out := editionFromOL(ed)
+		out.BookID = key
+		eds = append(eds, out)
+	}
+	return eds, nil
 }
 
 // editionFromOL maps a raw edition record onto the provider-agnostic shape.

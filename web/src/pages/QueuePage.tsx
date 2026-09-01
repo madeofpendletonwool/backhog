@@ -23,6 +23,7 @@ import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useEggUnlock } from "@/hooks/useAchievements";
 import { useQueue, useReorderQueue } from "@/hooks/useLibrary";
 import { formatHours, toHours } from "@/lib/format";
+import { isGameEntry } from "@/lib/types";
 
 export function QueuePage() {
   const { openAddDialog } = useOutletContext<{ openAddDialog: () => void }>();
@@ -44,7 +45,9 @@ export function QueuePage() {
     topMoves.current.set(entryId, count);
   };
 
-  const entries = data?.entries ?? [];
+  // The queue is shared across media; this page speaks games until the books
+  // UI lands, so book entries stay in the queue but out of the list.
+  const entries = (data?.entries ?? []).filter(isGameEntry);
 
   const sensors = useSensors(
     // A small distance threshold keeps clicks on the row from starting a drag.

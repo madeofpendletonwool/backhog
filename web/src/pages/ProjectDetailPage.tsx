@@ -37,10 +37,12 @@ import {
 import { formatDate, formatDuration, formatHours, releaseYear } from "@/lib/format";
 import {
   PROJECT_KIND_LABELS,
+  type GameEntry,
   type Project,
   type ProjectItem,
   type ProjectKind,
   type RuleSet,
+  isGameEntry,
 } from "@/lib/types";
 
 const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
@@ -60,7 +62,11 @@ export function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const project = data?.project;
-  const items = data?.items ?? [];
+  // Checklist membership is shared across media; this page renders games
+  // until the books UI lands, so book members stay counted but unrendered.
+  const items = (data?.items ?? []).filter((item): item is ProjectItem & { entry: GameEntry } =>
+    isGameEntry(item.entry),
+  );
   const { progress } = project ?? { progress: null };
   const complete = Boolean(project?.completed_at);
 
@@ -307,7 +313,7 @@ function ChecklistRow({
   onSetDone,
   onRemove,
 }: {
-  item: ProjectItem;
+  item: ProjectItem & { entry: GameEntry };
   onSetDone: (done: boolean | null) => void;
   onRemove: () => void;
 }) {

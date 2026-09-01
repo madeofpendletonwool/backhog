@@ -145,12 +145,15 @@ type BookEdition struct {
 	CoverURL      string `json:"cover_url"`
 }
 
-// Entry is one item in one user's library. Media type says which subject
-// column carries the item: Game for 'game' entries; books arrive later.
+// Entry is one item in one user's library. Media type says which subject is
+// embedded: Game for 'game' entries, Book for 'book' ones. Exactly one of the
+// two is set — the other is omitted from the payload rather than serialised
+// as an empty object.
 type Entry struct {
 	ID            string     `json:"id"`
 	MediaType     string     `json:"media_type"`
-	Game          Game       `json:"game"`
+	Game          *Game      `json:"game,omitempty"`
+	Book          *Book      `json:"book,omitempty"`
 	Status        string     `json:"status"`
 	PlatformID    *int64     `json:"platform_id"`
 	UserRating    *int       `json:"user_rating"`
@@ -207,6 +210,32 @@ type Stats struct {
 	// crowd-sourced estimates the other two are built from.
 	LoggedHours float64 `json:"logged_hours"`
 	Completion  float64 `json:"completion"`
+}
+
+// BookStats summarises a user's book library for the books library strip.
+// Deliberately lean: the reading dashboard (pages read, reading pace) is a
+// later stage — this is only what the library page's header needs.
+type BookStats struct {
+	Total    int     `json:"total"`
+	Backlog  int     `json:"backlog"`
+	Reading  int     `json:"reading"`
+	Read     int     `json:"read"`
+	Dropped  int     `json:"dropped"`
+	Ignored  int     `json:"ignored"`
+	Wishlist int     `json:"wishlist"`
+	// Completion mirrors the games definition: read / owned, with wishlist
+	// and ignored excluded from the denominator.
+	Completion float64 `json:"completion"`
+}
+
+// BookFacets carries the book library's filter rail: the authors, subjects
+// and languages present on the user's shelves, plus the statuses actually in
+// use. Only values that would match anything are returned.
+type BookFacets struct {
+	Authors   []string `json:"authors"`
+	Subjects  []string `json:"subjects"`
+	Languages []string `json:"languages"`
+	Statuses  []string `json:"statuses"`
 }
 
 // Pace is how fast the user is actually playing, from logged sessions. Null

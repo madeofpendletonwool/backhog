@@ -11,7 +11,7 @@ import { Dialog } from "./ui/Dialog";
 import { useUpdateEntry } from "@/hooks/useLibrary";
 import { ApiError, api } from "@/lib/api";
 import { accentStyle, formatDuration } from "@/lib/format";
-import type { Entry, TonightPick } from "@/lib/types";
+import type { GameEntry, TonightPick } from "@/lib/types";
 
 const PRESETS = [30, 60, 90, 120, 180];
 
@@ -64,7 +64,7 @@ export function PickDialog({ open, onClose }: { open: boolean; onClose: () => vo
     setExcludes((prev) => ({ ...prev, [key]: [...prev[key], current.entry.id] }));
   };
 
-  const play = (entry: Entry) => {
+  const play = (entry: GameEntry) => {
     update.mutate(
       { id: entry.id, patch: { status: "playing" } },
       {
@@ -189,7 +189,7 @@ function PickCard({
   icon: React.ReactNode;
   pick?: TonightPick | null;
   onReroll?: () => void;
-  onPlay: (entry: Entry) => void;
+  onPlay: (entry: GameEntry) => void;
   playing: boolean;
 }) {
   return (

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button, Input, Panel, Gi } from "./ui/primitives";
 import { useAddSession, useDeleteSession, useSessions } from "@/hooks/useSessions";
 import { formatHours } from "@/lib/format";
-import type { Entry } from "@/lib/types";
+import type { GameEntry } from "@/lib/types";
 
 /** Common session lengths, so the usual case is one tap. */
 const PRESETS = [15, 30, 45, 60, 90, 120, 180];
@@ -43,7 +43,7 @@ function today(): string {
  * come back an hour later. Logging a rough figure after the fact is less
  * precise and much more honest.
  */
-export function SessionLog({ entry }: { entry: Entry }) {
+export function SessionLog({ entry }: { entry: GameEntry }) {
   const { data } = useSessions(entry.id);
   const addSession = useAddSession(entry.id);
   const deleteSession = useDeleteSession(entry.id);

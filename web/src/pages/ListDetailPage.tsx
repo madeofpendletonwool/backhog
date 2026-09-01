@@ -27,13 +27,14 @@ import { Button, EmptyState, Input } from "@/components/ui/primitives";
 import { Dialog } from "@/components/ui/Dialog";
 import { useDeleteList, useList, useReorderListItem, useUpdateList } from "@/hooks/useLists";
 import { formatHours, toHours } from "@/lib/format";
-import type { Entry, RuleSet } from "@/lib/types";
+import type { GameEntry, RuleSet } from "@/lib/types";
+import { isGameEntry } from "@/lib/types";
 
 /**
  * A GameCard that can be dragged. The handle is a small overlay button rather
  * than the whole card, so clicking the cover still navigates to the game.
  */
-function SortableGameCard({ entry }: { entry: Entry }) {
+function SortableGameCard({ entry }: { entry: GameEntry }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: entry.id });
 
@@ -70,7 +71,9 @@ export function ListDetailPage() {
   const [draftRules, setDraftRules] = useState<RuleSet | null>(null);
 
   const list = data?.list;
-  const entries = data?.entries ?? [];
+  // Lists are shared across media; this page renders games until the books UI
+  // lands, so a book in a list stays counted but unrendered here.
+  const entries = (data?.entries ?? []).filter(isGameEntry);
   const totalHours = entries.reduce((sum, entry) => sum + toHours(entry.game.time_to_beat_main), 0);
 
   const reorder = useReorderListItem(listId);

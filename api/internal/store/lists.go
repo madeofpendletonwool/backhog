@@ -226,7 +226,11 @@ func (s *Store) countSmart(ctx context.Context, userID string, rs models.RuleSet
 	if err != nil {
 		return 0, err
 	}
-	query := `SELECT COUNT(*) FROM library_entries e JOIN games g ON g.id = e.game_id
+	// Same shape evaluateSmart queries: LEFT JOINs so entry-level rules can
+	// match book rows too, keeping the count honest against the live list.
+	query := `SELECT COUNT(*) FROM library_entries e
+	          LEFT JOIN games g ON g.id = e.game_id
+	          LEFT JOIN books b ON b.id = e.book_id
 	          WHERE e.user_id = ? AND ` + where
 	var count int
 	err = s.db.QueryRowContext(ctx, query, append([]any{userID}, args...)...).Scan(&count)

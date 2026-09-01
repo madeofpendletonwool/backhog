@@ -8,7 +8,7 @@ import { GameCover } from "./GameCover";
 import { Button, Gi } from "./ui/primitives";
 import { useUpdateEntry } from "@/hooks/useLibrary";
 import { accentStyle, formatDuration, formatHours, releaseYear } from "@/lib/format";
-import type { Entry } from "@/lib/types";
+import type { GameEntry } from "@/lib/types";
 
 /**
  * One draggable row of the play queue. The drag handle is a dedicated control
@@ -25,7 +25,7 @@ export function QueueRow({
   isLast,
   onMove,
 }: {
-  entry: Entry;
+  entry: GameEntry;
   position: number;
   cumulativeHours: number;
   isFirst: boolean;

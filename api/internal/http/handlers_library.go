@@ -31,6 +31,9 @@ func (s *Server) handleListLibrary(w http.ResponseWriter, r *http.Request) {
 		MediaType:  q.Get("media"),
 		Query:      q.Get("q"),
 		ListID:     q.Get("list"),
+		Author:     q.Get("author"),
+		Subject:    q.Get("subject"),
+		Language:   q.Get("language"),
 		Sort:       q.Get("sort"),
 		PlatformID: optionalInt64(q.Get("platform")),
 		GenreID:    optionalInt64(q.Get("genre")),
@@ -52,13 +55,16 @@ func (s *Server) handleListLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 type addEntryRequest struct {
-	GameID     int64  `json:"game_id"`
-	Status     string `json:"status"`
-	PlatformID *int64 `json:"platform_id"`
+	GameID     int64   `json:"game_id"`
+	BookID     string  `json:"book_id"`
+	EditionID  *string `json:"edition_id"`
+	Status     string  `json:"status"`
+	PlatformID *int64  `json:"platform_id"`
 }
 
-// handleAddToLibrary adds a game, fetching and caching its metadata and cover
-// first if we have not seen it before.
+// handleAddToLibrary adds a game or a book, fetching and caching its metadata
+// and cover first if we have not seen it before. Exactly one subject must be
+// supplied — game_id or book_id, never both, never neither.
 func (s *Server) handleAddToLibrary(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {
@@ -71,8 +77,22 @@ func (s *Server) handleAddToLibrary(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if body.GameID <= 0 {
-		fail(w, errorf(http.StatusBadRequest, "game_id is required"))
+	if body.GameID > 0 && body.BookID != "" {
+		fail(w, errorf(http.StatusBadRequest, "supply either game_id or book_id, not both"))
+		return
+	}
+	if body.GameID <= 0 && body.BookID == "" {
+		fail(w, errorf(http.StatusBadRequest, "game_id or book_id is required"))
+		return
+	}
+
+	status := body.Status
+	if status == "" {
+		status = models.StatusBacklog
+	}
+
+	if body.BookID != "" {
+		s.addBookToLibrary(w, r, userID, body, status)
 		return
 	}
 
@@ -101,10 +121,6 @@ func (s *Server) handleAddToLibrary(w http.ResponseWriter, r *http.Request) {
 
 	s.cacheCover(r, body.GameID)
 
-	status := body.Status
-	if status == "" {
-		status = models.StatusBacklog
-	}
 	entry, err := s.store.AddEntry(r.Context(), userID, body.GameID, status, body.PlatformID)
 	if errors.Is(err, store.ErrConflict) {
 		fail(w, errorf(http.StatusConflict, "that game is already in your library"))
@@ -113,6 +129,82 @@ func (s *Server) handleAddToLibrary(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+// addBookToLibrary is the book half of the add path. The work is enriched on
+// the way in — a search hit is cached lean, so a book missing from the cache
+// is fetched from the provider, and one cached without editions gets its
+// edition list pulled too: the printing picker needs it and it must not cost
+// the add dialog a second round trip.
+func (s *Server) addBookToLibrary(w http.ResponseWriter, r *http.Request, userID string, body addEntryRequest, status string) {
+	if !workKeyPattern.MatchString(body.BookID) {
+		fail(w, errorf(http.StatusBadRequest, "invalid book id"))
+		return
+	}
+
+	book, err := s.store.GetBook(r.Context(), body.BookID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		if s.books == nil {
+			fail(w, errorf(http.StatusServiceUnavailable, "book lookup is unavailable"))
+			return
+		}
+		fetched, ferr := s.books.GetByWorkKey(r.Context(), body.BookID)
+		if ferr != nil {
+			fail(w, errorf(http.StatusBadGateway, "could not look up that book"))
+			return
+		}
+		if uerr := s.store.UpsertBook(r.Context(), fetched, ""); uerr != nil {
+			fail(w, uerr)
+			return
+		}
+		book, err = s.store.GetBook(r.Context(), body.BookID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+	case err != nil:
+		fail(w, err)
+		return
+	}
+
+	// The edition list is the one thing a work lookup does not carry.
+	if len(book.Editions) == 0 && s.books != nil {
+		eds, ferr := s.books.GetEditions(r.Context(), body.BookID)
+		if ferr != nil {
+			// The work itself is good enough to add; the picker just stays
+			// empty until the detail page fills it.
+			slog.Warn("enrich editions on add", "book_id", body.BookID, "error", ferr)
+		} else if uerr := s.store.UpsertEditions(r.Context(), body.BookID, eds); uerr != nil {
+			fail(w, uerr)
+			return
+		} else {
+			book.Editions = nil // reloaded below, with the fresh editions
+		}
+	}
+
+	entry, err := s.store.AddBookEntry(r.Context(), userID, body.BookID, body.EditionID, status)
+	if errors.Is(err, store.ErrConflict) {
+		fail(w, errorf(http.StatusConflict, "that book is already in your library"))
+		return
+	}
+	if errors.Is(err, store.ErrEditionMismatch) {
+		fail(w, errorf(http.StatusBadRequest, "that edition does not belong to this book"))
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+
+	// Attach the editions to the response's embedded work so the add dialog
+	// can offer the printing picker without another request.
+	if entry.Book != nil {
+		if reloaded, rerr := s.store.GetBook(r.Context(), body.BookID); rerr == nil {
+			entry.Book.Editions = reloaded.Editions
+		}
 	}
 	writeJSON(w, http.StatusCreated, entry)
 }
@@ -137,7 +229,7 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 	// added via the lean search/import path) have no extras, so backfill them the
 	// first time their detail page is opened. Best-effort — a lookup failure or
 	// missing IGDB credentials just serves what we already have.
-	if len(entry.Game.Extras) == 0 {
+	if entry.MediaType == models.MediaGame && entry.Game != nil && len(entry.Game.Extras) == 0 {
 		entry = s.backfillGameExtras(r, userID, entry)
 	}
 
@@ -229,6 +321,15 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		fail(w, errUnauthorized)
 		return
 	}
+	if r.URL.Query().Get("media") == models.MediaBook {
+		stats, err := s.store.BookStats(r.Context(), userID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, stats)
+		return
+	}
 	stats, err := s.store.Stats(r.Context(), userID)
 	if err != nil {
 		fail(w, err)
@@ -302,6 +403,15 @@ func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {
 		fail(w, errUnauthorized)
+		return
+	}
+	if r.URL.Query().Get("media") == models.MediaBook {
+		facets, err := s.store.BookFacets(r.Context(), userID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, facets)
 		return
 	}
 	platforms, genres, err := s.store.Facets(r.Context(), userID)

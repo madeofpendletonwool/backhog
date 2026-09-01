@@ -19,8 +19,9 @@ import { cn } from "@/lib/cn";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { GameCard } from "@/components/GameCard";
-import { GameCover } from "@/components/GameCover";
+import { EntryCard } from "@/components/EntryCard";
+import { EntryCover } from "@/components/EntryCover";
+import { MediaFilter, useMediaFilter } from "@/components/MediaFilter";
 import { ProgressBar } from "@/components/ProgressBar";
 import { SmartListBuilder } from "@/components/SmartListBuilder";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -34,15 +35,16 @@ import {
   useReorderProjectItem,
   useUpdateProject,
 } from "@/hooks/useProjects";
-import { formatDate, formatDuration, formatHours, releaseYear } from "@/lib/format";
+import { entryHref, entrySubtitle, entryTitle, matchesMedia } from "@/lib/entry";
+import { formatDate, formatDuration, formatHours } from "@/lib/format";
 import {
   PROJECT_KIND_LABELS,
-  type GameEntry,
+  isBookEntry,
+  isGameEntry,
   type Project,
   type ProjectItem,
   type ProjectKind,
   type RuleSet,
-  isGameEntry,
 } from "@/lib/types";
 
 const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
@@ -54,6 +56,7 @@ const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const [media, setMedia] = useMediaFilter();
   const { data, isLoading } = useProject(projectId);
   const update = useUpdateProject();
   const remove = useDeleteProject();
@@ -62,11 +65,12 @@ export function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const project = data?.project;
-  // Checklist membership is shared across media; this page renders games
-  // until the books UI lands, so book members stay counted but unrendered.
-  const items = (data?.items ?? []).filter((item): item is ProjectItem & { entry: GameEntry } =>
-    isGameEntry(item.entry),
-  );
+  // A project can span both arenas — "finish the trilogy and the games it
+  // spun off" is one objective — so the filter picks the half you are looking
+  // at rather than the page picking one for you.
+  const members = data?.items ?? [];
+  const items = members.filter((item) => matchesMedia(item.entry, media));
+  const showFilter = media !== "game" || members.some((item) => isBookEntry(item.entry));
   const { progress } = project ?? { progress: null };
   const complete = Boolean(project?.completed_at);
 
@@ -144,7 +148,8 @@ export function ProjectDetailPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {showFilter && <MediaFilter value={media} onChange={setMedia} />}
           <Button onClick={toggleComplete} loading={update.isPending}>
             <Gi name="check" className="size-4" />
             {complete ? "Reopen" : "Mark done"}
@@ -170,8 +175,8 @@ export function ProjectDetailPage() {
         items.length === 0 ? (
           <EmptyState
             icon={<Gi name="list-checks" className="size-7" />}
-            title="No games in this project yet"
-            description="Open a game's page and check it into this project to start building the list."
+            title="Nothing in this project yet"
+            description="Open a game or a book and check it into this project to start building the list."
             action={
               <Button variant="secondary" onClick={() => navigate("/library")}>
                 Browse library
@@ -199,7 +204,7 @@ export function ProjectDetailPage() {
             </DndContext>
             {items.length > 1 && (
               <p className="mt-4 text-center text-xs text-ink-600">
-                Drag the handle to reorder · click the circle to override a game's done state
+                Drag the handle to reorder · click the circle to override an item's done state
               </p>
             )}
           </>
@@ -208,8 +213,8 @@ export function ProjectDetailPage() {
         items.length === 0 ? (
           <EmptyState
             icon={<Gi name="sparkles" className="size-7" />}
-            title="No games match these rules right now"
-            description="Loosen them, or add more games to your library."
+            title="Nothing matches these rules right now"
+            description="Loosen them, or add more to your library."
             action={
               <Button variant="secondary" onClick={() => setEditing(true)}>
                 Edit rules
@@ -223,7 +228,7 @@ export function ProjectDetailPage() {
             </p>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
               {items.map((item) => (
-                <GameCard key={item.entry.id} entry={item.entry} />
+                <EntryCard key={item.entry.id} entry={item.entry} />
               ))}
             </div>
           </>
@@ -243,7 +248,7 @@ export function ProjectDetailPage() {
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Confirm deletion">
         <h2 className="text-lg font-semibold text-ink-100">Delete "{project.name}"?</h2>
         <p className="mt-2 text-sm text-ink-400">
-          The project goes away, but the games in it stay in your library.
+          The project goes away, but everything in it stays in your library.
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
@@ -313,7 +318,7 @@ function ChecklistRow({
   onSetDone,
   onRemove,
 }: {
-  item: ProjectItem & { entry: GameEntry };
+  item: ProjectItem;
   onSetDone: (done: boolean | null) => void;
   onRemove: () => void;
 }) {
@@ -344,7 +349,7 @@ function ChecklistRow({
         ref={setActivatorNodeRef}
         {...attributes}
         {...listeners}
-        aria-label={`Reorder ${entry.game.name}`}
+        aria-label={`Reorder ${entryTitle(entry)}`}
         className="shrink-0 cursor-grab touch-none rounded-lg p-1 text-ink-600 transition-colors hover:text-ink-300 focus-visible:focus-ring active:cursor-grabbing"
       >
         <Gi name="grab" className="size-5" />
@@ -375,10 +380,10 @@ function ChecklistRow({
       </button>
 
       <Link
-        to={`/game/${entry.id}`}
+        to={entryHref(entry)}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-lg focus-visible:focus-ring"
       >
-        <GameCover game={entry.game} className="w-11 shrink-0 rounded-lg" />
+        <EntryCover entry={entry} className="w-11 shrink-0 rounded-lg" />
         <div className="min-w-0">
           <p
             className={cn(
@@ -386,21 +391,21 @@ function ChecklistRow({
               effectiveDone && "line-through decoration-ink-500",
             )}
           >
-            {entry.game.name}
+            {entryTitle(entry)}
           </p>
           <p className="mt-0.5 flex items-center gap-2.5 text-xs text-ink-500">
-            {releaseYear(entry.game) && <span>{releaseYear(entry.game)}</span>}
-            <span>{formatDuration(entry.game.time_to_beat_main)}</span>
+            {entrySubtitle(entry) && <span className="truncate">{entrySubtitle(entry)}</span>}
+            {isGameEntry(entry) && <span>{formatDuration(entry.game.time_to_beat_main)}</span>}
           </p>
         </div>
       </Link>
 
-      <StatusBadge status={entry.status} showLabel />
+      <StatusBadge status={entry.status} media={entry.media_type} showLabel />
 
       <button
         type="button"
         onClick={onRemove}
-        aria-label={`Remove ${entry.game.name} from this project`}
+        aria-label={`Remove ${entryTitle(entry)} from this project`}
         className="shrink-0 rounded-lg p-1.5 text-ink-600 opacity-0 transition-all hover:bg-white/[0.06] hover:text-red-400 focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <Gi name="x" className="size-4" />

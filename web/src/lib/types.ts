@@ -1,3 +1,5 @@
+export type MediaType = "game" | "book";
+
 export type Status = "backlog" | "playing" | "played" | "dropped" | "ignored" | "wishlist";
 
 /** Every status, for the full picker on the detail page. */
@@ -18,6 +20,25 @@ export const STATUS_LABELS: Record<Status, string> = {
   ignored: "Ignored",
   wishlist: "Wishlist",
 };
+
+/**
+ * The same six states, said the way a reader says them. Status is one column
+ * in the database and one set of colours on screen; only the words change,
+ * because "Playing" a book and "Played" a book are not English.
+ */
+export const BOOK_STATUS_LABELS: Record<Status, string> = {
+  backlog: "To read",
+  playing: "Reading",
+  played: "Read",
+  dropped: "Abandoned",
+  ignored: "Ignored",
+  wishlist: "Wishlist",
+};
+
+/** The label for a status in the arena it is being shown in. */
+export function statusLabel(status: Status, media: MediaType = "game"): string {
+  return media === "book" ? BOOK_STATUS_LABELS[status] : STATUS_LABELS[status];
+}
 
 export interface NamedRef {
   id: number;
@@ -96,8 +117,6 @@ export interface GameExtras {
   dlcs: RelatedGame[];
   expansions: RelatedGame[];
 }
-
-export type MediaType = "game" | "book";
 
 /** A book work: "The Hobbit", not any particular printing of it. */
 export interface Book {
@@ -312,6 +331,14 @@ export interface SmartField {
 export interface SearchResult {
   game: Game;
   in_library: boolean;
+}
+
+/** One hit from GET /api/books/search. */
+export interface BookSearchResult {
+  book: Book;
+  in_library: boolean;
+  /** Present when the work is already owned — the attach APIs are entry-keyed. */
+  entry_id?: string;
 }
 
 /** A franchise or collection ("Mass Effect"), shared across users. */

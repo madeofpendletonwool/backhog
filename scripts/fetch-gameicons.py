@@ -71,6 +71,10 @@ ICONS = {
     "refresh":       "delapouite/clockwise-rotation",
     "rows":          "delapouite/hamburger-menu",
     "search":        "lorc/magnifying-glass",
+    # the books arena's ISBN scanner: the viewfinder tab, and the fallback
+    # message that sends you to the keyboard when the browser has no
+    # BarcodeDetector
+    "camera":        "delapouite/photo-camera",
     "settings":      "lorc/gears",
     "sliders":       "delapouite/settings-knobs",
     "trash":         "delapouite/trash-can",

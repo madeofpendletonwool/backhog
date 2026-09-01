@@ -1,6 +1,9 @@
 import type {
   AchievementStatus,
   Book,
+  BookFacets,
+  BookSearchResult,
+  BookStats,
   DebtReport,
   Entry,
   GameList,
@@ -308,12 +311,35 @@ export const api = {
 
   // --- books / media attach ---------------------------------------------
   searchBooks: (q: string, signal?: AbortSignal) =>
-    request<{
-      results: { book: Book; in_library: boolean; entry_id?: string }[];
-    }>(`/books/search?q=${encodeURIComponent(q)}`, { signal }),
+    request<{ results: BookSearchResult[] }>(`/books/search?q=${encodeURIComponent(q)}`, { signal }),
 
-  addBookToLibrary: (bookId: string) =>
-    request<Entry>("/library", { method: "POST", body: body({ book_id: bookId }) }),
+  /** Resolves a barcode or hand-typed ISBN to the work it is a printing of. */
+  bookByISBN: (isbn: string, signal?: AbortSignal) =>
+    request<Book>(`/books/isbn/${encodeURIComponent(isbn)}`, { signal }),
+
+  /** A work by its Open Library key, editions included. */
+  getBook: (bookId: string) => request<Book>(`/books/${bookId}`),
+
+  /**
+   * Adds a work. `editionId` names the printing the reader actually owns —
+   * page counts and (later) page maps hang off the edition, not the work.
+   */
+  addBookToLibrary: (
+    bookId: string,
+    options: { editionId?: string | null; status?: Status } = {},
+  ) =>
+    request<Entry>("/library", {
+      method: "POST",
+      body: body({
+        book_id: bookId,
+        edition_id: options.editionId ?? undefined,
+        status: options.status,
+      }),
+    }),
+
+  bookStats: () => request<BookStats>("/library/stats?media=book"),
+
+  bookFacets: () => request<BookFacets>("/library/facets?media=book"),
 
   /** The attach review queue: unattached groups with ranked suggestions. */
   mediaCandidates: () => request<MediaCandidatesResponse>("/media/candidates"),
@@ -351,4 +377,7 @@ export const api = {
 };
 
 /** Cover images are served by our own API from the local cache. */
-export const coverUrl = (gameId: number) => `/api/covers/${gameId}`;
+export const coverUrl = (gameId: number) => `/api/covers/game/${gameId}`;
+
+/** The books half of the same cache, keyed by Open Library work id. */
+export const bookCoverUrl = (bookId: string) => `/api/covers/book/${bookId}`;

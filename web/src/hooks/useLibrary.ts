@@ -7,6 +7,8 @@ import type { Entry, Status } from "@/lib/types";
 
 export interface LibraryParams {
   status?: string;
+  /** "game" | "book"; omitted means every media type. */
+  media?: string;
   q?: string;
   platform?: number;
   genre?: number;

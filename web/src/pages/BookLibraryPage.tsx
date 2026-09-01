@@ -2,40 +2,45 @@ import { cn } from "@/lib/cn";
 import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
-import { GameCard, GameCardSkeleton } from "@/components/GameCard";
-import { GameTable } from "@/components/GameTable";
-import { StatsStrip } from "@/components/StatsStrip";
+import { BookCard, BookCardSkeleton } from "@/components/BookCard";
+import { BookStatsStrip } from "@/components/BookStatsStrip";
+import { BookTable } from "@/components/BookTable";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Select } from "@/components/ui/primitives";
-import { useDebounced, useFacets, useLibrary } from "@/hooks/useLibrary";
+import { useBookFacets, useBookLibrary } from "@/hooks/useBooks";
+import { useDebounced } from "@/hooks/useLibrary";
 import { usePersistentState } from "@/hooks/usePersistentState";
-import { QUICK_STATUSES, STATUS_LABELS, isGameEntry } from "@/lib/types";
+import { BOOK_STATUS_LABELS, QUICK_STATUSES, isBookEntry } from "@/lib/types";
 
 const SORTS = [
   { value: "added", label: "Recently added" },
-  { value: "name", label: "Title A–Z" },
-  { value: "released", label: "Newest release" },
-  { value: "rating", label: "Highest rated" },
-  { value: "shortest", label: "Shortest first" },
-  { value: "longest", label: "Longest first" },
+  { value: "title", label: "Title A–Z" },
+  { value: "author", label: "Author A–Z" },
+  { value: "published", label: "Newest first" },
+  { value: "pages", label: "Shortest first" },
   { value: "updated", label: "Recently updated" },
 ];
 
-export function LibraryPage() {
+/**
+ * The shelf. Deliberately the same page as LibraryPage — same status tabs,
+ * same grid/table toggle, same persisted filters — because the two arenas are
+ * one app and a reader should not have to learn a second set of controls. The
+ * axes are the ones a shelf actually has: author, subject, language.
+ */
+export function BookLibraryPage() {
   const { openAddDialog } = useOutletContext<{ openAddDialog: () => void }>();
 
-  // These persist across navigation and reload — see usePersistentState. The
-  // search box and the filters-panel toggle are intentionally transient.
-  const [status, setStatus] = usePersistentState("backhog:library:status", "");
-  const [sort, setSort] = usePersistentState("backhog:library:sort", "name");
-  const [platform, setPlatform] = usePersistentState<string>("backhog:library:platform", "");
-  const [genre, setGenre] = usePersistentState<string>("backhog:library:genre", "");
-  const [view, setView] = usePersistentState<"grid" | "table">("backhog:library:view", "grid");
+  const [status, setStatus] = usePersistentState("backhog:books:status", "");
+  const [sort, setSort] = usePersistentState("backhog:books:sort", "title");
+  const [author, setAuthor] = usePersistentState<string>("backhog:books:author", "");
+  const [subject, setSubject] = usePersistentState<string>("backhog:books:subject", "");
+  const [language, setLanguage] = usePersistentState<string>("backhog:books:language", "");
+  const [view, setView] = usePersistentState<"grid" | "table">("backhog:books:view", "grid");
   const [search, setSearch] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const debouncedSearch = useDebounced(search, 250);
-  const { data: facets } = useFacets();
+  const { data: facets } = useBookFacets();
 
   const {
     data,
@@ -44,71 +49,73 @@ export function LibraryPage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useLibrary({
+  } = useBookLibrary({
     status,
-    // Both arenas page the same endpoint; without this the page count and the
-    // "showing N of M" line would be counting books it never renders.
-    media: "game",
     q: debouncedSearch,
     sort,
-    platform: platform ? Number(platform) : undefined,
-    genre: genre ? Number(genre) : undefined,
+    author: author || undefined,
+    subject: subject || undefined,
+    language: language || undefined,
   });
 
-  // media=game is pinned on the query, so the guard is a type narrowing rather
+  // media=book is pinned on the query, so the guard is a type narrowing rather
   // than a filter that does any work.
-  const entries = (data?.pages.flatMap((page) => page.entries) ?? []).filter(isGameEntry);
+  const entries = (data?.pages.flatMap((page) => page.entries) ?? []).filter(isBookEntry);
   const total = data?.pages[0]?.total ?? 0;
-  const hasFilters = Boolean(status || debouncedSearch || platform || genre);
+  const hasFilters = Boolean(status || debouncedSearch || author || subject || language);
 
   const clearFilters = () => {
     setStatus("");
     setSearch("");
-    setPlatform("");
-    setGenre("");
+    setAuthor("");
+    setSubject("");
+    setLanguage("");
   };
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Library</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Shelf</h1>
         <p className="mt-1 text-sm text-ink-400">
-          {data ? `${total} game${total === 1 ? "" : "s"}` : "Loading…"}
+          {data ? `${total} book${total === 1 ? "" : "s"}` : "Loading…"}
           {hasFilters && " matching your filters"}
           {entries.length < total && ` · showing ${entries.length}`}
         </p>
       </header>
 
       <div className="mb-6">
-        <StatsStrip />
+        <BookStatsStrip />
       </div>
 
-      {/* Status tabs — the primary axis people slice by. */}
+      {/* Status tabs — the shelf you are looking at. */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <StatusTab active={status === ""} onClick={() => setStatus("")}>
           All
         </StatusTab>
         {QUICK_STATUSES.map((value) => (
           <StatusTab key={value} active={status === value} onClick={() => setStatus(value)}>
-            {STATUS_LABELS[value]}
+            {BOOK_STATUS_LABELS[value]}
           </StatusTab>
         ))}
 
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
-            <Gi name="search" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-500" />
+            <Gi
+              name="search"
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-500"
+            />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Filter by title…"
-              aria-label="Filter library by title"
+              aria-label="Filter shelf by title"
               className="w-44 pl-9 sm:w-56"
             />
           </div>
 
           <Button
             size="icon"
-            variant={filtersOpen || platform || genre ? "primary" : "secondary"}
+            variant={filtersOpen || author || subject || language ? "primary" : "secondary"}
             onClick={() => setFiltersOpen((open) => !open)}
             aria-label="More filters"
             aria-expanded={filtersOpen}
@@ -129,25 +136,27 @@ export function LibraryPage() {
 
       {filtersOpen && (
         <div className="animate-fade-rise panel mb-5 flex flex-wrap items-end gap-3 p-4">
+          <FilterSelect label="Sort by" value={sort} onChange={setSort} options={SORTS} />
           <FilterSelect
-            label="Sort by"
-            value={sort}
-            onChange={setSort}
-            options={SORTS.map((s) => ({ value: s.value, label: s.label }))}
+            label="Author"
+            value={author}
+            onChange={setAuthor}
+            placeholder="Any author"
+            options={(facets?.authors ?? []).map((name) => ({ value: name, label: name }))}
           />
           <FilterSelect
-            label="Platform"
-            value={platform}
-            onChange={setPlatform}
-            placeholder="Any platform"
-            options={(facets?.platforms ?? []).map((p) => ({ value: String(p.id), label: p.name }))}
+            label="Subject"
+            value={subject}
+            onChange={setSubject}
+            placeholder="Any subject"
+            options={(facets?.subjects ?? []).map((name) => ({ value: name, label: name }))}
           />
           <FilterSelect
-            label="Genre"
-            value={genre}
-            onChange={setGenre}
-            placeholder="Any genre"
-            options={(facets?.genres ?? []).map((g) => ({ value: String(g.id), label: g.name }))}
+            label="Language"
+            value={language}
+            onChange={setLanguage}
+            placeholder="Any language"
+            options={(facets?.languages ?? []).map((code) => ({ value: code, label: code }))}
           />
           {hasFilters && (
             <Button variant="ghost" onClick={clearFilters}>
@@ -161,15 +170,15 @@ export function LibraryPage() {
       {isLoading ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
           {Array.from({ length: 14 }).map((_, index) => (
-            <GameCardSkeleton key={index} />
+            <BookCardSkeleton key={index} />
           ))}
         </div>
       ) : entries.length === 0 ? (
         hasFilters ? (
           <EmptyState
             icon={<Gi name="search" className="size-7" />}
-            title="No games match"
-            description="Try loosening the filters, or search for something new to add."
+            title="No books match"
+            description="Try loosening the filters, or add something new to the shelf."
             action={
               <Button variant="secondary" onClick={clearFilters}>
                 Clear filters
@@ -178,12 +187,12 @@ export function LibraryPage() {
           />
         ) : (
           <EmptyState
-            icon={<Gi name="gamepad" className="size-7 text-ink-500" />}
-            title="Your backlog is empty"
-            description="Suspiciously empty. Add the games you own but haven't gotten around to — that's what this is for."
+            icon={<Gi name="book-pile" className="size-7 text-ink-500" />}
+            title="Nothing on the shelf yet"
+            description="Point the camera at the barcode on the back of a book you own — or type the ISBN, or search for it by title."
             action={
               <Button variant="primary" size="lg" onClick={openAddDialog}>
-                Add your first game
+                Add your first book
               </Button>
             }
           />
@@ -193,11 +202,11 @@ export function LibraryPage() {
           {view === "grid" ? (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
               {entries.map((entry) => (
-                <GameCard key={entry.id} entry={entry} />
+                <BookCard key={entry.id} entry={entry} />
               ))}
             </div>
           ) : (
-            <GameTable entries={entries} />
+            <BookTable entries={entries} />
           )}
 
           {hasNextPage && (

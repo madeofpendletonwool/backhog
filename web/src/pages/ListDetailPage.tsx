@@ -20,21 +20,23 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { cn } from "@/lib/cn";
 
-import { GameCard, GameCardSkeleton } from "@/components/GameCard";
+import { EntryCard } from "@/components/EntryCard";
+import { GameCardSkeleton } from "@/components/GameCard";
+import { MediaFilter, useMediaFilter } from "@/components/MediaFilter";
 import { SmartListBuilder } from "@/components/SmartListBuilder";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input } from "@/components/ui/primitives";
 import { Dialog } from "@/components/ui/Dialog";
 import { useDeleteList, useList, useReorderListItem, useUpdateList } from "@/hooks/useLists";
-import { formatHours, toHours } from "@/lib/format";
-import type { GameEntry, RuleSet } from "@/lib/types";
-import { isGameEntry } from "@/lib/types";
+import { entryHours, entryTitle, matchesMedia } from "@/lib/entry";
+import { formatHours } from "@/lib/format";
+import { isBookEntry, type Entry, type RuleSet } from "@/lib/types";
 
 /**
- * A GameCard that can be dragged. The handle is a small overlay button rather
- * than the whole card, so clicking the cover still navigates to the game.
+ * An entry card that can be dragged. The handle is a small overlay button
+ * rather than the whole card, so clicking the cover still navigates.
  */
-function SortableGameCard({ entry }: { entry: GameEntry }) {
+function SortableEntryCard({ entry }: { entry: Entry }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: entry.id });
 
@@ -44,12 +46,12 @@ function SortableGameCard({ entry }: { entry: GameEntry }) {
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn("group", isDragging ? "relative z-10 opacity-80" : "relative")}
     >
-      <GameCard entry={entry} />
+      <EntryCard entry={entry} />
       <button
         ref={setActivatorNodeRef}
         {...attributes}
         {...listeners}
-        aria-label={`Reorder ${entry.game.name}`}
+        aria-label={`Reorder ${entryTitle(entry)}`}
         className="absolute right-1.5 top-1.5 cursor-grab touch-none rounded-lg bg-ink-950/75 p-1 text-ink-300 opacity-0 backdrop-blur-sm transition-opacity hover:text-white focus-visible:opacity-100 focus-visible:focus-ring active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <Gi name="grab" className="size-4" />
@@ -61,6 +63,7 @@ function SortableGameCard({ entry }: { entry: GameEntry }) {
 export function ListDetailPage() {
   const { listId } = useParams<{ listId: string }>();
   const navigate = useNavigate();
+  const [media, setMedia] = useMediaFilter();
   const { data, isLoading } = useList(listId);
   const update = useUpdateList();
   const remove = useDeleteList();
@@ -71,10 +74,13 @@ export function ListDetailPage() {
   const [draftRules, setDraftRules] = useState<RuleSet | null>(null);
 
   const list = data?.list;
-  // Lists are shared across media; this page renders games until the books UI
-  // lands, so a book in a list stays counted but unrendered here.
-  const entries = (data?.entries ?? []).filter(isGameEntry);
-  const totalHours = entries.reduce((sum, entry) => sum + toHours(entry.game.time_to_beat_main), 0);
+  // A list can hold both arenas at once; the filter says which half you are
+  // looking at, and "Both" shows the list as it actually is.
+  const members = data?.entries ?? [];
+  const entries = members.filter((entry) => matchesMedia(entry, media));
+  const showFilter = media !== "game" || members.some(isBookEntry);
+  const totalHours = entries.reduce((sum, entry) => sum + entryHours(entry), 0);
+  const noun = media === "book" ? "book" : media === "all" ? "item" : "game";
 
   const reorder = useReorderListItem(listId);
   const sensors = useSensors(
@@ -160,13 +166,15 @@ export function ListDetailPage() {
             {list.name}
           </h1>
           <p className="mt-1 text-sm text-ink-400">
-            {entries.length} game{entries.length === 1 ? "" : "s"}
+            {entries.length} {noun}
+            {entries.length === 1 ? "" : "s"}
             {totalHours > 0 && ` · ${formatHours(totalHours)} of playing`}
             {list.description && ` · ${list.description}`}
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {showFilter && <MediaFilter value={media} onChange={setMedia} />}
           <Button onClick={openEditor}>
             <Gi name="pencil" className="size-4" />
             Edit
@@ -188,8 +196,8 @@ export function ListDetailPage() {
           title="Nothing here yet"
           description={
             list.kind === "smart"
-              ? "No games match these rules right now. Loosen them, or add more games to your library."
-              : "This list is empty. Open a game and add it to this list to get started."
+              ? "Nothing matches these rules right now. Loosen them, or add more to your library."
+              : "This list is empty. Open a game or a book and add it to this list to get started."
           }
           action={
             list.kind === "smart" ? (
@@ -210,7 +218,7 @@ export function ListDetailPage() {
           <SortableContext items={entries.map((entry) => entry.id)} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
               {entries.map((entry) => (
-                <SortableGameCard key={entry.id} entry={entry} />
+                <SortableEntryCard key={entry.id} entry={entry} />
               ))}
             </div>
           </SortableContext>
@@ -218,7 +226,7 @@ export function ListDetailPage() {
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
           {entries.map((entry) => (
-            <GameCard key={entry.id} entry={entry} />
+            <EntryCard key={entry.id} entry={entry} />
           ))}
         </div>
       )}

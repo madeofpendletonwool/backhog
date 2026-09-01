@@ -1,4 +1,4 @@
-import type { Game } from "./types";
+import type { Book, BookEdition, Game } from "./types";
 
 /** Formats a seconds duration as a compact "12h" / "1h 30m" / "45m". */
 export function formatDuration(seconds: number | null | undefined): string {
@@ -152,9 +152,66 @@ export function relativeTime(iso: string | null): string {
 
 /**
  * Builds a translucent accent from the cover's sampled colour, falling back to
- * the brand purple when a game has no cover to sample.
+ * the brand purple when the subject has no cover to sample. Games and books
+ * both carry one, sampled server-side from their own artwork.
  */
-export function accentStyle(game: Game): React.CSSProperties {
-  const accent = game.accent_hex || "#8b5cf6";
+export function accentStyle(subject: { accent_hex: string }): React.CSSProperties {
+  const accent = subject.accent_hex || "#8b5cf6";
   return { ["--accent" as string]: accent };
+}
+
+/** "Ursula K. Le Guin", "Gaiman & Pratchett", "" — the byline, one line long. */
+export function byline(book: Book): string {
+  const authors = book.authors ?? [];
+  if (authors.length === 0) return "";
+  if (authors.length === 1) return authors[0];
+  if (authors.length === 2) return `${authors[0]} & ${authors[1]}`;
+  return `${authors[0]} & ${authors.length - 1} others`;
+}
+
+/** The year the work first appeared, as a string; "" when unknown. */
+export function publishYear(book: Book): string {
+  return book.first_publish_year ? String(book.first_publish_year) : "";
+}
+
+/** "384 pages" / "" — page counts belong to a printing, not to the work. */
+export function formatPages(pages: number | null | undefined): string {
+  if (!pages || pages <= 0) return "";
+  return `${pages.toLocaleString()} page${pages === 1 ? "" : "s"}`;
+}
+
+/**
+ * A one-line description of a printing for the edition picker: publisher,
+ * year, binding and page count, with the empty parts dropped rather than
+ * rendered as dashes.
+ */
+export function editionLabel(edition: BookEdition): string {
+  return [
+    edition.publisher,
+    edition.published_year ? String(edition.published_year) : "",
+    edition.binding,
+    formatPages(edition.page_count),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The ISBN to show for a printing; ISBN-13 wins when both are known. */
+export function editionISBN(edition: BookEdition): string {
+  return edition.isbn13 || edition.isbn10 || "";
+}
+
+/**
+ * Strips the separators people type or scanners emit, so "978-0-14-118776-1"
+ * and "9780141187761" are the same lookup. Validation is the API's job — this
+ * only normalises what gets sent.
+ */
+export function normalizeISBN(raw: string): string {
+  return raw.replace(/[\s-]/g, "").toUpperCase();
+}
+
+/** ISBN-10 (last digit may be X) or ISBN-13, once separators are gone. */
+export function looksLikeISBN(raw: string): boolean {
+  const isbn = normalizeISBN(raw);
+  return /^\d{9}[\dX]$/.test(isbn) || /^\d{13}$/.test(isbn);
 }

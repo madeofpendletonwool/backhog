@@ -131,6 +131,12 @@ func TestListMediaFilesFilters(t *testing.T) {
 	files := insertTestFiles(t, s, 4)
 	ctx := context.Background()
 
+	// book_id carries a real foreign key since 00015, so the attachment
+	// needs a real books row to point at.
+	if _, err := s.DB().ExecContext(ctx,
+		`INSERT INTO books (id, title) VALUES ('b1', 'Attached Book')`); err != nil {
+		t.Fatalf("seed book: %v", err)
+	}
 	if _, err := s.DB().ExecContext(ctx,
 		`UPDATE media_files SET book_id = 'b1' WHERE path = ?`, timeSlot(1)); err != nil {
 		t.Fatalf("attach: %v", err)

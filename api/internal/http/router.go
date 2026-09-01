@@ -35,6 +35,7 @@ type Server struct {
 	steam      *metadata.Steam
 	backfill   *backfill.Runner
 	media      *media.Runner
+	matcher    *media.Matcher
 	epubs      *booktext.Ingester
 	eggLimiter eggLimiter
 }
@@ -52,6 +53,7 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 	return &Server{
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
+		matcher:    media.NewMatcher(st, books),
 		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
 	}
 }
@@ -101,6 +103,12 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/books/{entryID}/text/chapters", s.handleBookTextChapters)
 			r.Get("/books/{entryID}/text", s.handleBookText)
 
+			// The attach flow: files on the NAS become this book's audio
+			// timeline and canonical text.
+			r.Get("/books/{entryID}/files", s.handleBookFiles)
+			r.Post("/books/{entryID}/files", s.handleAttachFiles)
+			r.Delete("/books/{entryID}/files/{fileID}", s.handleDetachFile)
+
 			r.Route("/series", func(r chi.Router) {
 				r.Get("/", s.handleSeriesIndex)
 				// Static path first: chi routes it before the {seriesID} param.
@@ -132,12 +140,16 @@ func (s *Server) Routes() http.Handler {
 				r.Delete("/{entryID}", s.handleDeleteEntry)
 			})
 
-			// The scanned NAS library: kick and poll the inventory walk, and
-			// list files for the attach UI.
+			// The scanned NAS library: kick and poll the inventory walk,
+			// list files for the attach UI, and serve the attach review
+			// queue.
 			r.Route("/media", func(r chi.Router) {
 				r.Get("/scan", s.handleMediaScan)
 				r.Post("/scan", s.handleMediaScan)
 				r.Get("/files", s.handleMediaFiles)
+				r.Get("/candidates", s.handleMediaCandidates)
+				r.Post("/ignore", s.handleMediaIgnore)
+				r.Delete("/ignore/{fileID}", s.handleMediaUnignore)
 			})
 
 			r.Route("/achievements", func(r chi.Router) {

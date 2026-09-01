@@ -61,6 +61,16 @@ func (s *Server) handleBookSearch(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+	entryIDs, err := s.store.BookEntryIDs(r.Context(), userID, ids)
+	if err != nil {
+		fail(w, err)
+		return
+	}
 
 	// Preserve the provider's relevance ordering, which the map lookup loses.
 	out := make([]map[string]any, 0, len(ids))
@@ -69,7 +79,13 @@ func (s *Server) handleBookSearch(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		out = append(out, map[string]any{"book": b, "in_library": owned[id]})
+		out = append(out, map[string]any{
+			"book":       b,
+			"in_library": owned[id],
+			// The attach flow is entry-keyed; hand the entry over when the
+			// book is owned so confirming needs no second lookup.
+			"entry_id": entryIDs[id],
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": out})
 }

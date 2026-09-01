@@ -139,6 +139,30 @@ func TestScanInventoriesLibrary(t *testing.T) {
 		t.Errorf("m4b tags = %v", m4bTags)
 	}
 
+	// Skipped files are remembered with their reason, so the attach UI can
+	// explain the missing half of a library. Hidden and housekeeping names
+	// (.hidden.epub, @eaDir) are never recorded.
+	skipped, err := st.ListMediaSkipped(context.Background())
+	if err != nil {
+		t.Fatalf("list skipped: %v", err)
+	}
+	skipReason := map[string]string{}
+	for _, f := range skipped {
+		skipReason[f.Path] = f.Reason
+	}
+	if len(skipped) != 3 {
+		t.Fatalf("got %d skipped rows, want 3: %+v", len(skipped), skipped)
+	}
+	if skipReason["locked.aax"] != "unsupported_extension" {
+		t.Errorf("locked.aax reason = %q", skipReason["locked.aax"])
+	}
+	if skipReason["cover.pdf"] != "unsupported_extension" {
+		t.Errorf("cover.pdf reason = %q", skipReason["cover.pdf"])
+	}
+	if skipReason["wrapped.epub"] != "drm_epub" {
+		t.Errorf("wrapped.epub reason = %q", skipReason["wrapped.epub"])
+	}
+
 	// Status reports the finished result with the four headline counts.
 	status := runner.Status()
 	if status.Running || status.Last == nil {
@@ -146,6 +170,23 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	}
 	if status.Last.Found != 3 || status.Last.New != 3 || status.Last.Unsupported != 3 || status.Last.Missing != 0 {
 		t.Errorf("status last counts: %+v", status.Last)
+	}
+
+	// A skip that goes away disappears from the inventory on rescan.
+	if err := os.Remove(filepath.Join(booksDir, "cover.pdf")); err != nil {
+		t.Fatalf("remove pdf: %v", err)
+	}
+	if _, err := runner.Run(context.Background()); err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
+	skipped, err = st.ListMediaSkipped(context.Background())
+	if err != nil {
+		t.Fatalf("list skipped again: %v", err)
+	}
+	for _, f := range skipped {
+		if f.Path == "cover.pdf" {
+			t.Error("cover.pdf still listed as skipped after removal")
+		}
 	}
 }
 
@@ -227,8 +268,12 @@ func TestMissingAndRestore(t *testing.T) {
 		t.Fatalf("mp3 not found in scan results: %+v", files)
 	}
 
-	// The attach stage (a later task) owns book_id; set one directly to prove
-	// associations survive a disappearance.
+	// The attach stage owns book_id through the API; seed a real books row
+	// so the direct write below satisfies the foreign key 00015 added.
+	if _, err := st.DB().ExecContext(context.Background(),
+		`INSERT INTO books (id, title) VALUES ('book-1', 'Some Book')`); err != nil {
+		t.Fatalf("seed book: %v", err)
+	}
 	if _, err := st.DB().ExecContext(context.Background(),
 		`UPDATE media_files SET book_id = ? WHERE id = ?`, "book-1", gone.id); err != nil {
 		t.Fatalf("attach: %v", err)

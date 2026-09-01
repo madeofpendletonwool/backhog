@@ -1,11 +1,15 @@
 import type {
   AchievementStatus,
+  Book,
   DebtReport,
   Entry,
   GameList,
   Game,
   GameEntry,
   Insights,
+  MediaCandidatesResponse,
+  MediaFile,
+  MediaScanStatus,
   NamedRef,
   PlayOrder,
   PlaySession,
@@ -301,6 +305,49 @@ export const api = {
   /** Which checklist projects a given entry belongs to. */
   entryProjects: (id: string) =>
     request<{ project_ids: string[] }>(`/library/${id}/projects`),
+
+  // --- books / media attach ---------------------------------------------
+  searchBooks: (q: string, signal?: AbortSignal) =>
+    request<{
+      results: { book: Book; in_library: boolean; entry_id?: string }[];
+    }>(`/books/search?q=${encodeURIComponent(q)}`, { signal }),
+
+  addBookToLibrary: (bookId: string) =>
+    request<Entry>("/library", { method: "POST", body: body({ book_id: bookId }) }),
+
+  /** The attach review queue: unattached groups with ranked suggestions. */
+  mediaCandidates: () => request<MediaCandidatesResponse>("/media/candidates"),
+
+  mediaScanStatus: () => request<MediaScanStatus>("/media/scan"),
+
+  kickMediaScan: () =>
+    request<{ started: boolean }>("/media/scan", { method: "POST" }),
+
+  /** file_ids order is the explicit track order for audio. */
+  attachFiles: (entryId: string, fileIds: number[], kind: "audio" | "epub") =>
+    request<{ attached: number; files: MediaFile[] }>(
+      `/books/${entryId}/files`,
+      { method: "POST", body: body({ file_ids: fileIds, kind }) },
+    ),
+
+  detachFile: (entryId: string, fileId: number) =>
+    request<{ detached: boolean }>(`/books/${entryId}/files/${fileId}`, {
+      method: "DELETE",
+    }),
+
+  bookFiles: (entryId: string) =>
+    request<{ files: MediaFile[] }>(`/books/${entryId}/files`),
+
+  ignoreMediaFiles: (fileIds: number[]) =>
+    request<{ ignored: number }>("/media/ignore", {
+      method: "POST",
+      body: body({ file_ids: fileIds }),
+    }),
+
+  unignoreMediaFile: (fileId: number) =>
+    request<{ ignored: boolean }>(`/media/ignore/${fileId}`, {
+      method: "DELETE",
+    }),
 };
 
 /** Cover images are served by our own API from the local cache. */

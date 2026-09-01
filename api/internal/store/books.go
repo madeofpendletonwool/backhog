@@ -207,6 +207,33 @@ func (s *Store) OwnedBookIDs(ctx context.Context, userID string, ids []string) (
 	return owned, rows.Err()
 }
 
+// BookEntryIDs maps work ids to the user's entry ids for them — the attach
+// flow is entry-keyed, so search results and suggestions carry the entry
+// when the book is already owned.
+func (s *Store) BookEntryIDs(ctx context.Context, userID string, ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders, args := inClauseStr(ids)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT book_id, id FROM library_entries WHERE user_id = ? AND media_type = 'book' AND book_id IN (`+placeholders+`)`,
+		append([]any{userID}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var bookID, entryID string
+		if err := rows.Scan(&bookID, &entryID); err != nil {
+			return nil, err
+		}
+		out[bookID] = entryID
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) bookByID(ctx context.Context, id string) (models.Book, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, title, authors_json, COALESCE(description, ''), COALESCE(cover_url, ''),

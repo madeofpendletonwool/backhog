@@ -7,10 +7,10 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// TestMediaFilesMigration verifies 00012: the media_files inventory table
-// lands after the pre-change schema, kind and (root, path) uniqueness hold,
-// book_id is deliberately FK-free until the books table exists, and the down
-// half removes the table cleanly.
+// TestMediaFilesMigration verifies 00012 as landed: the media_files
+// inventory table, kind and (root, path) uniqueness, and book_id plain
+// nullable TEXT with no foreign key — the deferred-FK contract at version
+// 12. (00015 later adds the FK; migration_attach_test.go covers that.)
 func TestMediaFilesMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "media_files_test.db")
 	database, err := Open(path)
@@ -25,12 +25,8 @@ func TestMediaFilesMigration(t *testing.T) {
 		t.Fatalf("set dialect: %v", err)
 	}
 
-	if err := goose.UpTo(database, "migrations", 10); err != nil {
-		t.Fatalf("migrate to 10: %v", err)
-	}
-
-	if err := Migrate(database); err != nil {
-		t.Fatalf("migrate up: %v", err)
+	if err := goose.UpTo(database, "migrations", 12); err != nil {
+		t.Fatalf("migrate to 12: %v", err)
 	}
 
 	insert := `INSERT INTO media_files (root, path, kind, size_bytes, mtime, scanned_at)
@@ -88,8 +84,8 @@ func TestMediaFilesMigration(t *testing.T) {
 	}
 
 	// Down: the inventory is derived data; it drops whole.
-	if err := goose.DownTo(database, "migrations", 10); err != nil {
-		t.Fatalf("migrate down to 10: %v", err)
+	if err := goose.DownTo(database, "migrations", 11); err != nil {
+		t.Fatalf("migrate down to 11: %v", err)
 	}
 	var count int
 	if err := database.QueryRow(

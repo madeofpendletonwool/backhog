@@ -134,7 +134,8 @@ func (r *Runner) Run(ctx context.Context) (ScanResult, error) {
 	roots := append([]string(nil), r.roots...)
 	r.reset(roots)
 
-	s := &scan{runner: r, roots: roots, seen: map[string]map[string]bool{}}
+	s := &scan{runner: r, roots: roots, seen: map[string]map[string]bool{},
+		skipped: map[string][]models.MediaSkipped{}}
 	s.mutate(func(l *ScanResult) { l.StartedAt = time.Now(); l.Roots = roots })
 
 	var err error
@@ -162,6 +163,13 @@ func (r *Runner) Run(ctx context.Context) (ScanResult, error) {
 	}
 	if err == nil {
 		err = r.store.InsertMediaFiles(ctx, s.inserts)
+	}
+	if err == nil {
+		for root, files := range s.skipped {
+			if err = r.store.ReplaceMediaSkipped(ctx, root, files); err != nil {
+				break
+			}
+		}
 	}
 	if err == nil && len(s.restores) > 0 {
 		err = r.store.RestoreMediaFiles(ctx, s.restores, s.live().StartedAt)
@@ -195,6 +203,9 @@ type scan struct {
 	seen     map[string]map[string]bool
 	inserts  []models.MediaFile
 	restores []int64
+	// skipped accumulates this run's unsupported-file rows per root, so the
+	// attach UI can explain the missing half of a library.
+	skipped map[string][]models.MediaSkipped
 }
 
 // walkRoot walks one root, classifying files and queueing writes. Errors on
@@ -231,13 +242,6 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		if !supported {
-			// Includes .aax/.aaxc and any other format: skipped and reported
-			// in the summary, never inventoried.
-			s.mutate(func(l *ScanResult) { l.Unsupported++ })
-			return nil
-		}
-
 		info, err := d.Info()
 		if err != nil {
 			slog.Warn("media scan stat", "path", path, "error", err)
@@ -245,6 +249,15 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 			return nil
 		}
 		size, mtime := info.Size(), info.ModTime().UnixNano()
+
+		if !supported {
+			// Includes .aax/.aaxc and any other format: skipped and reported
+			// in the summary, never inventoried — but remembered, so the
+			// attach UI can show *why* they are missing.
+			s.recordSkip(root, rel, ext, models.MediaSkipUnsupported, size, mtime)
+			s.mutate(func(l *ScanResult) { l.Unsupported++ })
+			return nil
+		}
 
 		if stamp, ok := s.index[root][rel]; ok && stamp.Size == size && stamp.Mtime == mtime {
 			// Cheap path: (size, mtime) unchanged, so the file is not opened
@@ -280,6 +293,7 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 				// DRM-wrapped epub: unsupported after all. The path stays out
 				// of the seen set, so an existing row is flagged missing by
 				// the end-of-scan pass instead of being deleted.
+				s.recordSkip(root, rel, ext, models.MediaSkipDRM, size, mtime)
 				s.mutate(func(l *ScanResult) { l.Unsupported++ })
 				return nil
 			}
@@ -337,6 +351,14 @@ func (s *scan) live() ScanResult {
 	s.runner.mu.Lock()
 	defer s.runner.mu.Unlock()
 	return s.runner.live
+}
+
+// recordSkip queues one unsupported-file row for the root's inventory swap.
+func (s *scan) recordSkip(root, rel, ext, reason string, size, mtime int64) {
+	s.skipped[root] = append(s.skipped[root], models.MediaSkipped{
+		Root: root, Path: rel, Ext: ext, Reason: reason,
+		SizeBytes: size, Mtime: mtime, SeenAt: s.live().StartedAt,
+	})
 }
 
 func (s *scan) mutate(fn func(*ScanResult)) {

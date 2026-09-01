@@ -21,6 +21,11 @@ type Config struct {
 	// — which looks exactly like "login does nothing". Turn it on when serving
 	// through an HTTPS reverse proxy.
 	CookieSecure bool
+	// MediaDirs are the read-only library roots for the Books arena, in
+	// PATH-style colon-separated form (MEDIA_DIR=/media/audiobooks:/media/ebooks).
+	// The directories are bind-mounted into the container and are never written
+	// to. Empty means the Books arena scanner is disabled.
+	MediaDirs []string
 }
 
 // Load reads configuration from the environment, applying defaults.
@@ -34,6 +39,12 @@ func Load() (Config, error) {
 		SteamAPIKey:  os.Getenv("STEAM_API_KEY"),
 		Production:   strings.EqualFold(env("APP_ENV", "development"), "production"),
 		CookieSecure: strings.EqualFold(env("COOKIE_SECURE", "false"), "true"),
+	}
+	// BOOK_LIBRARY_DIR is the older spelling; it still works when MEDIA_DIR
+	// is unset so existing deployments keep scanning after an upgrade.
+	c.MediaDirs = splitPaths(os.Getenv("MEDIA_DIR"))
+	if len(c.MediaDirs) == 0 {
+		c.MediaDirs = splitPaths(os.Getenv("BOOK_LIBRARY_DIR"))
 	}
 	if c.DatabasePath == "" {
 		return c, errors.New("DATABASE_PATH must not be empty")
@@ -52,4 +63,19 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitPaths splits a colon-separated path list, dropping empty segments.
+func splitPaths(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	parts := strings.Split(v, ":")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

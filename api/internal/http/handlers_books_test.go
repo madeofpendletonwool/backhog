@@ -94,7 +94,7 @@ func newBooksTestApp(t *testing.T) *booksTestApp {
 
 	ston := store.New(database)
 	srv := NewServer(config.Config{}, ston, nil,
-		metadata.NewOpenLibraryAt(upstream.URL), covers, nil, &backfill.Runner{})
+		metadata.NewOpenLibraryAt(upstream.URL), covers, nil, &backfill.Runner{}, nil)
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 

@@ -44,6 +44,23 @@ func ValidMediaType(s string) bool {
 	return false
 }
 
+// Media file kinds for the scanned Books arena library. Audio covers mp3,
+// m4a and m4b; epub is text. Anything else (.aax, .aaxc, DRM-wrapped epub,
+// ...) is unsupported and never inventoried.
+const (
+	MediaFileAudio = "audio"
+	MediaFileEpub  = "epub"
+)
+
+// ValidMediaFileKind reports whether s is a tracked media file kind.
+func ValidMediaFileKind(s string) bool {
+	switch s {
+	case MediaFileAudio, MediaFileEpub:
+		return true
+	}
+	return false
+}
+
 // ValidStatus reports whether s is a tracked status.
 func ValidStatus(s string) bool {
 	switch s {
@@ -508,4 +525,33 @@ type Season struct {
 	FranchisesCleared int     `json:"franchises_cleared"`
 	// Rescues counts games finished after sitting owned for a year or more.
 	Rescues int `json:"rescues"`
+}
+
+// MediaFile is one file the scanner found under a configured media root.
+// The library lives on the NAS, mounted read-only — Backhog points at these
+// files, it never owns them. Path is relative to Root, slash-separated.
+type MediaFile struct {
+	ID        int64  `json:"id"`
+	Root      string `json:"root"`
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	SizeBytes int64  `json:"size_bytes"`
+	// Mtime is unix nanoseconds, kept exactly as the filesystem reported it so
+	// (size, mtime) change detection has no format round-trips.
+	Mtime int64 `json:"mtime"`
+	// SHA256 is computed lazily by the attach flow, not by the scanner.
+	SHA256 *string `json:"sha256,omitempty"`
+	// DurationSeconds is audio-only and NULL when the tags did not yield it.
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	// ContainerMetadata is the embedded ID3/MP4 tag set as a JSON object
+	// (see internal/media), or NULL when the file carries none.
+	ContainerMetadata json.RawMessage `json:"container_metadata,omitempty"`
+	// BookID is the attached book. Plain TEXT with no FK by design: the books
+	// table arrives in migration 00011 and the FK is added once it is
+	// guaranteed present. NULL means not attached yet.
+	BookID    *string   `json:"book_id,omitempty"`
+	ScannedAt time.Time `json:"scanned_at"`
+	// MissingAt is set when the path disappeared from its root; the row is
+	// kept so the BookID association survives a temporarily-unmounted NAS.
+	MissingAt *time.Time `json:"missing_at,omitempty"`
 }

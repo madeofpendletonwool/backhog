@@ -172,6 +172,22 @@
   animation: blink 0.9s steps(2) infinite;
 }
 
+/* ---------- The brand mark ----------
+   Square, unlike the 32x64 sprite cells, so it is its own class rather
+   than a cell index. Authored in scripts/build-mark.py; whole-number
+   scales only, same as everything else here. */
+
+.mark-hog {
+  display: inline-block;
+  flex: none;
+  width: calc(32px * var(--s, 1));
+  height: calc(32px * var(--s, 1));
+  background-image: url("/assets/sprites/hog.png");
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+}
+
 /* ---------- The parlour ----------
    A room the app sits in, not a texture on the wall. The scene is fixed
    and z-0; #root rides above it (see index.css). Scale is chosen from the
@@ -182,7 +198,14 @@
 .scene {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  /* Negative, not 0. The scene is a child of #root, which is its own
+     stacking context (index.css). At z-index 0 it is a *positioned*
+     element, so it paints above every static sibling — which is all of
+     the page content — and the app rendered as a backdrop with a few
+     `relative` panels poking through: page headings vanished entirely.
+     A negative index puts it behind the in-flow content while still
+     inside #root, so it stays a room rather than a curtain. */
+  z-index: -1;
   overflow: hidden;
   pointer-events: none;
   background: var(--scene-sky, var(--c-900));
@@ -199,22 +222,31 @@
   background-position: 50% 100%;
   background-size: auto calc(var(--scene-height, 216) * var(--scene-scale, 3) * 1px);
   image-rendering: pixelated;
-  filter: saturate(0.9) brightness(0.72);
+  /* Pushed well down: the art is atmosphere, and it competes with cover
+     art the moment it is bright enough to read as a picture. */
+  filter: saturate(0.75) brightness(0.5);
   will-change: transform;
   transition: opacity 0.4s ease;
 }
 
-/* The floor under text contrast. Whatever scene is chosen, this is what
-   everything above is guaranteed to sit on: light in the middle where the
-   content is, heavier at the edges where the chrome separates from the
-   room. */
+/* The floor under text contrast, and the single biggest lever on whether
+   this theme is usable.
+
+   It used to sit at 12% in the middle, which put a lit pixel skyline
+   directly behind the content column: every gutter between two panels
+   showed a building, and the page read as cards floating on wallpaper
+   rather than an interface in a room. The scene has to stay *behind*.
+
+   So: heavy under the content, lighter toward the edges where the art can
+   still be seen doing its job. The gradient runs the opposite way round
+   from the usual vignette for exactly that reason. */
 .scene-veil {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 100% 78% at 50% 46%,
-      rgba(6, 5, 9, 0.12) 0%, rgba(4, 3, 7, 0.74) 100%),
-    linear-gradient(180deg, rgba(8, 7, 12, 0.12), rgba(8, 7, 12, 0.44));
+    radial-gradient(ellipse 120% 90% at 50% 42%,
+      rgba(5, 4, 7, 0.86) 0%, rgba(5, 4, 7, 0.78) 45%, rgba(4, 3, 6, 0.9) 100%),
+    linear-gradient(180deg, rgba(8, 7, 12, 0.3), rgba(8, 7, 12, 0.62));
 }
 
 /* A marquee somewhere off-screen, humming. */
@@ -222,7 +254,7 @@
   position: absolute;
   inset: 0;
   background: radial-gradient(ellipse 900px 560px at 50% -8%,
-    rgba(255, 208, 113, 0.12), transparent 70%);
+    rgba(255, 208, 113, 0.07), transparent 70%);
   animation: gutter 7s ease-in-out infinite;
 }
 @keyframes gutter {

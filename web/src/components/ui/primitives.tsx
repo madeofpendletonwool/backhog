@@ -29,15 +29,19 @@ const buttonVariants: Record<ThemeFamily, Record<ButtonVariant, string>> = {
 
 const buttonBase: Record<ThemeFamily, string> = {
   // The arcade button sinks by a pixel; the flat one squashes.
-  pixel: "font-bold active:translate-y-px disabled:active:translate-y-0",
+  pixel: "font-bold leading-tight text-center active:translate-y-px disabled:active:translate-y-0",
   flat: "font-medium active:scale-[0.98] disabled:active:scale-100",
 };
 
 const buttonSizes: Record<ThemeFamily, Record<ButtonSize, string>> = {
+  /* min-h, not h: the arcade's frames are 12px of sprite a side, so a
+     two-line label inside a fixed 48px button has 24px of content box and
+     spills straight out through the bottom edge. Growing the frame is
+     what a nine-slice is for. */
   pixel: {
-    sm: "h-10 px-3 gap-1.5",
-    md: "h-12 px-4 gap-2",
-    lg: "h-14 px-5 gap-2",
+    sm: "min-h-10 px-3 py-1.5 gap-1.5",
+    md: "min-h-12 px-4 py-2 gap-2",
+    lg: "min-h-14 px-5 py-2.5 gap-2",
     icon: "h-11 w-11",
   },
   flat: {

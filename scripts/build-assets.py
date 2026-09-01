@@ -17,9 +17,10 @@ frames.
 The recipe follows the grimoire project's asset pipeline:
 
 - A theme is a backdrop. Each scene's hue is measured from its own art
-  and applied to a fixed lightness ladder, so a retinted chrome is exactly
-  as legible as the default: only the hue moves, never the contrast
-  between two steps.
+  and applied to the chrome ladder, so a retinted chrome is exactly as
+  legible as the default: only the hue moves, never the contrast.
+- The ladder has two halves, derived two different ways, because they are
+  doing two different jobs. See CHROME below.
 - What never changes is the game: coin-gold action buttons, the danger
   red, and the per-game accent all stay constant, because the chrome is
   the room and the game is the point.
@@ -44,15 +45,86 @@ THEMES_CSS = os.path.join(ROOT, "web", "src", "pixel", "themes.css")
 
 # ---------------------------------------------------------------- palettes
 
-# The lightness ladder the chrome walks, at every step from the deepest
-# inset (950) to the brightest text (100). A theme borrows a scene's hue
-# and applies it to these exact steps — contrast between any two steps is
-# a property of this ladder, not of the theme.
-CHROME_L = {
-    "950": 0.035, "900": 0.059, "850": 0.072, "800": 0.084,
-    "750": 0.098, "700": 0.112, "600": 0.145, "500": 0.192,
-    "400": 0.270, "300": 0.420, "200": 0.580, "100": 0.800,
+# The ink ladder, in two halves.
+#
+# 950-700 are SURFACES: panel fills, inset fields, the console plastic the
+# frame sprites are recoloured from. They are HLS lightnesses, because a
+# sprite is recoloured by lightness and the token has to name the same
+# colour the sprite baked in.
+#
+# 600-100 are TEXT, and they are NOT lightnesses. HLS lightness is not
+# perceptual: at L=0.27 a near-neutral grey and a saturated purple differ
+# by 2x in actual luminance, so a "fixed lightness ladder" silently made
+# the saturated themes' text 2-4x darker than the neutral one's. Arcade's
+# body text landed at 1.7:1 against its own panel — unreadable, and the
+# whole reason this file now solves for contrast instead.
+#
+# Each text step names the contrast ratio it must hit against that theme's
+# own panel fill (--c-800). Solving per theme is what actually makes the
+# promise true: every theme's ink-400 is the same *readability*, whatever
+# hue it wears.
+SURFACE_L = {
+    "950": 0.035, "900": 0.059, "850": 0.072,
+    "800": 0.084, "750": 0.098, "700": 0.112,
 }
+
+# The frame sprites' own edge step. It is a surface — it has to match the
+# bevel the sprite baked in — so it keeps the old 600 lightness even
+# though the 600 *token* is now text.
+LINE_L = 0.145
+
+# WCAG contrast against --c-800. 4.5 is the AA floor for body text; 600 is
+# below it on purpose, being decorative only ("(optional)", em-dashes).
+TEXT_CONTRAST = {
+    "600": 3.5, "500": 4.8, "400": 6.5,
+    "300": 8.5, "200": 11.0, "100": 14.5,
+}
+
+
+def _lin(c):
+    c /= 255
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def luminance(rgb):
+    """WCAG relative luminance of an (r, g, b) 0-255 triple."""
+    r, g, b = rgb
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def contrast(a, b):
+    ya, yb = luminance(a), luminance(b)
+    hi, lo = max(ya, yb), min(ya, yb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _rgb(hue, lightness, sat):
+    r, g, b = colorsys.hls_to_rgb(hue, lightness, sat)
+    return round(r * 255), round(g * 255), round(b * 255)
+
+
+def solve_lightness(hue, sat, bg, target):
+    """The lightest-to-darkest HLS lightness hitting `target` contrast on `bg`.
+
+    Contrast rises monotonically with lightness once we are above the
+    background, so a bisection is exact. If the hue cannot get there even
+    at full lightness (a deeply saturated hue has a luminance ceiling), the
+    saturation is walked down until it can — a slightly paler tint beats an
+    illegible one.
+    """
+    while sat >= 0:
+        lo, hi = 0.0, 1.0
+        if contrast(_rgb(hue, hi, sat), bg) < target:
+            sat = round(sat - 0.02, 2)
+            continue
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            if contrast(_rgb(hue, mid, sat), bg) < target:
+                lo = mid
+            else:
+                hi = mid
+        return _rgb(hue, hi, sat)
+    return (255, 255, 255)
 
 # Bare console plastic: a cool, almost-neutral grey for when no backdrop
 # is picked. The themes are the same ladder wearing a scene's colours.
@@ -71,12 +143,21 @@ RED = {"pale": "#ea7a7c", "bright": "#d04648", "mid": "#992e30", "dim": "#6b1f21
 
 
 def ramp(hue, sat):
-    """The chrome ladder at a given hue. Returns {step: "#rrggbb"}."""
+    """The full ink ladder at a given hue. Returns {step: "#rrggbb"}.
+
+    Surfaces first, because the text half is solved *against* one of them
+    (--c-800, the panel fill, which is where most text in the app sits).
+    """
     out = {}
-    for step, lightness in CHROME_L.items():
-        r, g, b = colorsys.hls_to_rgb(hue, lightness, sat)
-        out[step] = "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
-    return out
+    for step, lightness in SURFACE_L.items():
+        out[step] = _rgb(hue, lightness, sat)
+    out["line"] = _rgb(hue, LINE_L, sat)
+
+    bg = out["800"]
+    for step, target in TEXT_CONTRAST.items():
+        out[step] = solve_lightness(hue, sat, bg, target)
+
+    return {k: "#%02x%02x%02x" % v for k, v in out.items()}
 
 
 # ---------------------------------------------------------------- unpacking
@@ -308,11 +389,12 @@ def build_arcade(src):
     os.makedirs(os.path.join(OUT, "sprites"), exist_ok=True)
     pngkit.write(os.path.join(OUT, "sprites", "arcade.png"), out)
 
-    # Favicons: the arcade button's red crown, at tab and home-screen size.
-    bx, by = SPRITES[index["button"]][1:3]
-    mark = sheet.crop(bx + 6, by + 2, 16, 16)
-    pngkit.write(os.path.join(OUT, "favicon-32.png"), mark)
-    pngkit.write(os.path.join(OUT, "icon-192.png"), mark.scale(6))
+    # The favicon is NOT cut from this sheet. It used to be a 16x16 crop of
+    # the arcade button's red crown, which shipped as a plain red square
+    # with four dark pixels in it and said nothing about the product (and
+    # was 16px despite the -32 in its name). The mark is Backhog's own
+    # now — see scripts/build-mark.py, which owns favicon-32.png,
+    # icon-192.png and sprites/hog.png. Do not write them from here.
     return index
 
 
@@ -396,10 +478,14 @@ def top_colour(path):
 
 THEMES_HEAD = """/* Per-backdrop themes. Generated by scripts/build-assets.py — do not edit.
 //
-// Each scene's hue is measured from its own art and applied to the
-// chrome's fixed lightness ladder, so a retinted interface is exactly as
-// legible as the default one: only the hue moves, never the contrast
-// between steps. The frames are regenerated per theme to match.
+// Each scene's hue is measured from its own art and applied to the ink
+// ladder. Surfaces (950-700, --c-line) are lightnesses, because the frame
+// sprites are recoloured from them and the token has to name the colour
+// the sprite baked in. Text (600-100) is solved for a WCAG contrast ratio
+// against that theme's own panel fill, so ink-400 is the same
+// *readability* in every theme rather than the same HLS number — which is
+// not the same thing, and used to leave the saturated themes' body text
+// at 1.7:1.
 //
 // What changes is the room — the console plastic, the inset fields, the
 // backdrop's own sky. What does not change is the game: coin-gold
@@ -416,8 +502,7 @@ def write_themes(themes):
             f"  --c-{k}: {v};" for k, v in c.items()
             if k not in ("line",)
         )
-        # 600 doubles as the frame edge step; emit it under the alias too.
-        steps += f"\n  --c-line: {c['600']};"
+        steps += f"\n  --c-line: {c['line']};"
         out.append(f"""
 html[data-theme="{key}"] {{
 {steps}

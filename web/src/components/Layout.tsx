@@ -7,7 +7,6 @@ import { AddGameDialog } from "./AddGameDialog";
 import { PickDialog } from "./PickDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
 import { Button, Gi } from "./ui/primitives";
-import { Sprite } from "./ui/Sprite";
 import { useAuth } from "@/hooks/useAuth";
 import { useEggUnlock } from "@/hooks/useAchievements";
 import { useTheme } from "@/hooks/useTheme";
@@ -42,7 +41,9 @@ export function Layout() {
      bitmap sprite and an emoji are not interchangeable in CSS. */
   const mark = (size: "sm" | "lg") =>
     family === "pixel" ? (
-      <Sprite name={size === "lg" ? "stick" : "ball"} className={size === "sm" ? "h-8 w-8" : undefined} />
+      // Whole-number scales only, so the arcade mark is 32px in both
+      // slots; it is the emoji that changes size between them.
+      <span className="mark-hog" />
     ) : (
       <span className={size === "lg" ? "text-2xl leading-none" : "text-xl leading-none"}>🐗</span>
     );

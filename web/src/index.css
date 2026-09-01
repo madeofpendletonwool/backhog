@@ -103,19 +103,24 @@
   --selection-fg: #100c02;
 
   /* Bare console plastic — the no-backdrop chrome. themes.css overrides
-     these per scene; the frame URLs here are the default set. */
+     these per scene; the frame URLs here are the default set.
+
+     950-700 and --c-line are surfaces, and name the exact colours the
+     frame sprites were recoloured with. 600-100 are text, solved for a
+     WCAG ratio against --c-800 rather than picked by eye — see
+     scripts/build-assets.py. */
   --c-950: #090a0d;
   --c-900: #0f1015;
   --c-850: #13141a;
   --c-800: #171921;
   --c-750: #1b1e28;
   --c-700: #20242f;
-  --c-600: #2a2f3d;
-  --c-500: #37404f;
-  --c-400: #4d5769;
-  --c-300: #737d92;
-  --c-200: #9da6b8;
-  --c-100: #d3d8e2;
+  --c-600: #6a6f81;
+  --c-500: #818698;
+  --c-400: #9a9dac;
+  --c-300: #b2b4c0;
+  --c-200: #cbcdd4;
+  --c-100: #e9eaed;
   --c-line: #2a2f3d;
   --frame-panel: url("/assets/ui/panel.png");
   --frame-panel-active: url("/assets/ui/panel-active.png");

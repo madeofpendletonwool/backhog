@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { Sprite } from "@/components/ui/Sprite";
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/cn";
 
@@ -21,7 +20,10 @@ export function AuthShell({
       <div className="animate-fade-rise w-full max-w-sm">
         <div className="mb-8 text-center">
           {family === "pixel" ? (
-            <Sprite name="ball" scale={2} className="mx-auto" />
+            <span
+              className="mark-hog mx-auto"
+              style={{ "--s": 2 } as React.CSSProperties}
+            />
           ) : (
             <span className="text-5xl">🐗</span>
           )}

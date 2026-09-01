@@ -26,12 +26,18 @@ html[data-theme="midnight"] {
   --c-800: #17171f;
   --c-750: #1d1d27;
   --c-700: #26262f;
-  --c-600: #3a3a46;
-  --c-500: #55555f;
-  --c-400: #7c7c88;
-  --c-300: #a3a3ad;
-  --c-200: #cbcbd2;
-  --c-100: #e8e8ec;
+  /* Text, solved for the same WCAG targets the generated themes use
+     (scripts/build-assets.py), at Midnight's own neutral hue so the
+     theme keeps its character. Solved as one ladder rather than patched
+     step by step: 500 and 600 were below the floor at 2.4:1 and 1.6:1,
+     and lifting only those two would have pushed 500 *above* 400 and
+     inverted the ramp. */
+  --c-600: #6e6e79;
+  --c-500: #84848f;
+  --c-400: #9c9ca5;
+  --c-300: #b3b3ba;
+  --c-200: #cbcbcf;
+  --c-100: #e8e8ea;
   --c-line: #1e1e28;
   --scene-sky: #08080a;
 }

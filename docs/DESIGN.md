@@ -38,6 +38,14 @@ lives. The covers, the prose, and the numbers never wear a filter.
 
 Two consequences worth internalising:
 
+- **Text colour is solved, not chosen.** `--c-600` through `--c-100` are
+  derived from a WCAG contrast target against each theme's own panel fill
+  (`scripts/build-assets.py`), which is why `text-ink-400` is equally
+  readable in all six themes. Picking a hex by eye for one of these is how
+  the arcade theme ended up shipping body text at 1.7:1. Surfaces
+  (`--c-950`..`--c-700`, `--c-line`) are the other half of the ladder and
+  *are* fixed lightnesses, because the frame sprites are recoloured from
+  them and the token has to name the colour the sprite baked in.
 - **The accent never changes.** `--accent`, sampled server-side from each
   game's own cover art, tints hover glows and progress fills inside framed
   surfaces. The frame itself is always theme-coloured; the accent is always
@@ -161,17 +169,19 @@ Two systems, one rule, same as grimoire's:
 import { Sprite } from "@/components/ui/Sprite";
 import { Gi } from "@/components/ui/Gi";
 
+<span className="mark-hog" />           // the brand mark, 32x32
 <Sprite name="stick" />                 // 32x64 pixel art, hero marks only
-<Sprite name="ball" scale={2} />        // 64x128, for a bigger mark
 <Gi name="search" className="size-4" /> // vector, sizes via className, inherits colour
 <Gi name="trash" className="size-4" label="Delete" />
 ```
 
+- **`.mark-hog`** — the brand mark, and the only art in the app that is
+  ours (`scripts/build-mark.py`, which also cuts the favicons from it).
+  The wordmark and the mobile header mark. 32×32, whole-number `--s` only.
 - **`<Sprite>`** — the arcade sheet (`web/public/assets/sprites/arcade.png`).
-  Six cells: `stick`, `stick-alt`, `button`, `button-hi`, `button-lo`, `pad`,
-  `ball`. Use for the handful of marks the app is *about*: the wordmark,
-  the mobile header mark, the favicon. Minimum cell size 32×64 (or 32×32
-  for `ball`) — never scale down.
+  Seven cells: `stick`, `stick-alt`, `button`, `button-hi`, `button-lo`,
+  `pad`, `ball`. Decorative hardware only — the mark is not one of these.
+  Minimum cell size 32×64 (or 32×32 for `ball`) — never scale down.
 - **`<Gi name="...">`** — game-icons.net vectors. Use for everything else:
   every nav item, every button icon, every status badge, every small noun.
   Monochrome, inherits `currentColor`, crisp at any size.
@@ -289,13 +299,15 @@ Python 3, mirroring grimoire's pipeline (`scripts/pngkit.py` is a shared,
 unmodified copy of the same minimal PNG codec).
 
 ```bash
-python3 scripts/build-assets.py     # frames, sprites, scenes, themes.css, favicons
+python3 scripts/build-assets.py     # frames, sprites, scenes, themes.css
+python3 scripts/build-mark.py       # the hog: sprites/hog.png + both favicons
 python3 scripts/fetch-gameicons.py  # web/src/lib/gameicons.ts
 python3 scripts/fetch-fonts.py      # web/public/assets/fonts/ + pixel/fonts.css
 ```
 
-`build-assets.py` reads from `icon-packs/`, which is **gitignored on
-purpose** — see `ATTRIBUTIONS.md` for the four download links (all CC0,
+`build-mark.py` needs no inputs — the mark is a pixel grid in the script
+itself, so it is the one asset step that always runs. `build-assets.py`
+reads from `icon-packs/`, which is **gitignored on purpose** — see `ATTRIBUTIONS.md` for the four download links (all CC0,
 free, no account needed).
 
 Its recolour maps are **exhaustive** — an unmapped colour aborts the build

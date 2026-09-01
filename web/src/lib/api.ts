@@ -4,6 +4,7 @@ import type {
   Entry,
   GameList,
   Game,
+  GameEntry,
   Insights,
   NamedRef,
   PlayOrder,
@@ -181,12 +182,13 @@ export const api = {
     return request<TonightPicks>(`/library/tonight?${query}`);
   },
 
+  /** Game-scoped by contract: the random pick reasons about playtime. */
   pick: (params: { max_hours?: number; min_rating?: number; genre?: number }) => {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
       if (value) query.set(key, String(value));
     }
-    return request<Entry>(`/library/pick?${query}`);
+    return request<GameEntry>(`/library/pick?${query}`);
   },
 
   steamPreview: (steam_id: string) =>

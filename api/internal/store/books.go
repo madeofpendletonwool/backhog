@@ -94,6 +94,27 @@ func marshalStrings(list []string) string {
 	return string(encoded)
 }
 
+// UpsertEditions writes a work's edition list in one transaction — the
+// enrich-on-add path, so the add dialog gets every printing without a second
+// round trip. Sparse records keep whatever a richer previous fetch stored.
+func (s *Store) UpsertEditions(ctx context.Context, bookID string, eds []metadata.BookEdition) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for i := range eds {
+		if eds[i].BookID == "" {
+			eds[i].BookID = bookID
+		}
+		if err := upsertEdition(ctx, tx, eds[i]); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // GetBook returns a cached work with its editions.
 func (s *Store) GetBook(ctx context.Context, id string) (models.Book, error) {
 	book, err := s.bookByID(ctx, id)

@@ -159,6 +159,68 @@ func TestOpenLibraryGetByWorkKeyNotFound(t *testing.T) {
 	}
 }
 
+func TestOpenLibraryGetEditions(t *testing.T) {
+	pages := 366
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/works/OL1168083W/editions.json", func(w http.ResponseWriter, r *http.Request) {
+		writeFixture(t, w, map[string]any{
+			"entries": []map[string]any{
+				{
+					"key":             "/books/OL7440402M",
+					"title":           "The Hobbit",
+					"isbn_13":         []string{"9780261102217"},
+					"publishers":      []string{"HarperCollins"},
+					"publish_date":    "1997",
+					"number_of_pages": pages,
+					"physical_format": "Paperback",
+					"languages":       []map[string]string{{"key": "/languages/eng"}},
+				},
+				{
+					"key":          "/books/OL26411848M",
+					"title":        "The Hobbit",
+					"publish_date": "1937",
+					"publishers":   []string{"Allen & Unwin"},
+				},
+			},
+		})
+	})
+
+	eds, err := client.GetEditions(context.Background(), "/works/OL1168083W")
+	if err != nil {
+		t.Fatalf("GetEditions: %v", err)
+	}
+	if len(eds) != 2 {
+		t.Fatalf("got %d editions, want 2", len(eds))
+	}
+	first := eds[0]
+	if first.ID != "OL7440402M" {
+		t.Errorf("edition ID = %q, want /books/ prefix stripped", first.ID)
+	}
+	if first.BookID != "OL1168083W" {
+		t.Errorf("edition BookID = %q, want the asked-about work", first.BookID)
+	}
+	if first.ISBN13 != "9780261102217" || first.PageCount == nil || *first.PageCount != pages {
+		t.Errorf("edition = %+v", first)
+	}
+	if first.Language != "eng" {
+		t.Errorf("Language = %q, want prefix stripped", first.Language)
+	}
+	// A sparse entry survives with empty defaults rather than failing the list.
+	if eds[1].ID != "OL26411848M" || eds[1].ISBN13 != "" || eds[1].PageCount != nil {
+		t.Errorf("sparse edition = %+v", eds[1])
+	}
+}
+
+func TestOpenLibraryGetEditionsNotFound(t *testing.T) {
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/works/OL1W/editions.json", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	if _, err := client.GetEditions(context.Background(), "OL1W"); !errors.Is(err, ErrBookNotFound) {
+		t.Errorf("err = %v, want ErrBookNotFound", err)
+	}
+}
+
 func TestOpenLibraryGetByISBN(t *testing.T) {
 	pages := 366
 	f, client := newFakeOpenLibrary(t)

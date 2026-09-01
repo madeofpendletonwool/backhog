@@ -2,7 +2,7 @@ import { cn } from "@/lib/cn";
 import { useState } from "react";
 
 import { useUpdateEntry } from "@/hooks/useLibrary";
-import { QUICK_STATUSES, STATUS_LABELS, type Entry, type Status } from "@/lib/types";
+import { QUICK_STATUSES, STATUS_LABELS, type GameEntry, type Status } from "@/lib/types";
 import { STATUS_ICONS } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
 import { Dialog } from "./ui/Dialog";
@@ -32,7 +32,7 @@ export function StatusMenu({
   size = "sm",
   statuses = QUICK_STATUSES,
 }: {
-  entry: Entry;
+  entry: GameEntry;
   size?: "sm" | "md";
   statuses?: Status[];
 }) {
@@ -116,7 +116,7 @@ function PlatformPrompt({
   onPick,
 }: {
   open: boolean;
-  entry: Entry;
+  entry: GameEntry;
   pending: boolean;
   onPick: (platformId: number | null) => void;
 }) {

@@ -58,6 +58,25 @@ func newBooksTestApp(t *testing.T) *booksTestApp {
 				"subjects":           []string{"Fantasy"},
 				"first_publish_date": "1937",
 			})
+		case r.URL.Path == "/works/OL1168083W/editions.json":
+			writeFixture(t, w, map[string]any{"entries": []map[string]any{
+				{
+					"key":             "/books/OL7440402M",
+					"title":           "The Hobbit",
+					"isbn_13":         []string{"9780261102217"},
+					"publishers":      []string{"HarperCollins"},
+					"publish_date":    "1997",
+					"number_of_pages": 366,
+					"physical_format": "Paperback",
+					"languages":       []map[string]string{{"key": "/languages/eng"}},
+				},
+				{
+					"key":          "/books/OL7440401M",
+					"title":        "The Hobbit",
+					"publish_date": "1937",
+					"publishers":   []string{"Allen & Unwin"},
+				},
+			}})
 		case r.URL.Path == "/isbn/9780261102217.json":
 			writeFixture(t, w, map[string]any{
 				"key":             "/books/OL7440402M",

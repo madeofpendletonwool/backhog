@@ -9,7 +9,7 @@ import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Select } from "@/components/ui/primitives";
 import { useDebounced, useFacets, useLibrary } from "@/hooks/useLibrary";
 import { usePersistentState } from "@/hooks/usePersistentState";
-import { QUICK_STATUSES, STATUS_LABELS } from "@/lib/types";
+import { QUICK_STATUSES, STATUS_LABELS, isGameEntry } from "@/lib/types";
 
 const SORTS = [
   { value: "added", label: "Recently added" },
@@ -52,7 +52,9 @@ export function LibraryPage() {
     genre: genre ? Number(genre) : undefined,
   });
 
-  const entries = data?.pages.flatMap((page) => page.entries) ?? [];
+  // The games view; the books library gets its own page once the books UI
+  // lands, so book entries stay out of this grid until then.
+  const entries = (data?.pages.flatMap((page) => page.entries) ?? []).filter(isGameEntry);
   const total = data?.pages[0]?.total ?? 0;
   const hasFilters = Boolean(status || debouncedSearch || platform || genre);
 

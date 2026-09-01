@@ -115,6 +115,11 @@ func (s *Store) tonightCandidates(ctx context.Context, userID string, now time.T
 
 	candidates := make([]tonightCandidate, 0, len(entries))
 	for _, e := range entries {
+		// The query is game-scoped, so a nil Game here would mean a broken
+		// row rather than a book — better to skip than to reason about it.
+		if e.Game == nil {
+			continue
+		}
 		c := tonightCandidate{
 			entry:      e,
 			ownedDays:  now.Sub(e.CreatedAt).Hours() / 24,
@@ -188,7 +193,7 @@ func (s *Store) recentGenreMinutes(ctx context.Context, userID string) (map[int6
 // maxGenreShare returns the largest share of the recent genre mix covered by
 // one of the entry's genres.
 func maxGenreShare(e models.Entry, genreMinutes map[int64]float64, total float64) float64 {
-	if total <= 0 {
+	if total <= 0 || e.Game == nil {
 		return 0
 	}
 	share := 0.0

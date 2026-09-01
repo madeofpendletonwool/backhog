@@ -4,10 +4,10 @@ import { GameCover } from "./GameCover";
 import { StatusBadge } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
 import { accentStyle, formatDuration, relativeTime, releaseYear } from "@/lib/format";
-import type { Entry } from "@/lib/types";
+import type { GameEntry } from "@/lib/types";
 
 /** The dense alternative to the cover grid, for scanning many games at once. */
-export function GameTable({ entries }: { entries: Entry[] }) {
+export function GameTable({ entries }: { entries: GameEntry[] }) {
   return (
     <div className="panel overflow-hidden">
       <div className="overflow-x-auto">

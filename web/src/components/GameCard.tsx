@@ -6,13 +6,13 @@ import { StatusMenu } from "./StatusMenu";
 import { StatusBadge } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
 import { accentStyle, formatDuration, releaseYear } from "@/lib/format";
-import type { Entry } from "@/lib/types";
+import type { GameEntry } from "@/lib/types";
 
 /**
  * A cover-led card. Metadata sits over the artwork on hover so the grid reads
  * as a wall of covers at rest, and only reveals detail on intent.
  */
-export function GameCard({ entry }: { entry: Entry }) {
+export function GameCard({ entry }: { entry: GameEntry }) {
   const { game } = entry;
   const year = releaseYear(game);
 

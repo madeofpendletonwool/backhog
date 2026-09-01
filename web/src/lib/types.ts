@@ -99,11 +99,37 @@ export interface GameExtras {
 
 export type MediaType = "game" | "book";
 
-export interface Entry {
+/** A book work: "The Hobbit", not any particular printing of it. */
+export interface Book {
   id: string;
-  /** Which subject the entry points at: `game` today, `book` once books land. */
-  media_type: MediaType;
-  game: Game;
+  title: string;
+  authors: string[];
+  description: string;
+  cover_url: string;
+  accent_hex: string;
+  first_publish_year: number | null;
+  subjects: string[];
+  /** The printings cache, present on detail and add responses. */
+  editions?: BookEdition[];
+}
+
+/** One printing of a work. Page maps key off the edition, never the work. */
+export interface BookEdition {
+  id: string;
+  book_id: string;
+  isbn10: string;
+  isbn13: string;
+  publisher: string;
+  published_year: number | null;
+  page_count: number | null;
+  binding: string;
+  language: string;
+  cover_url: string;
+}
+
+/** Fields every library entry carries, whatever it points at. */
+interface EntryFields {
+  id: string;
   status: Status;
   platform_id: number | null;
   user_rating: number | null;
@@ -114,6 +140,35 @@ export interface Entry {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** An entry that points at a game. */
+export interface GameEntry extends EntryFields {
+  media_type: "game";
+  game: Game;
+  book?: never;
+}
+
+/** An entry that points at a book. */
+export interface BookEntry extends EntryFields {
+  media_type: "book";
+  book: Book;
+  game?: never;
+}
+
+/**
+ * One item in one user's library, discriminated on media_type: exactly one of
+ * `game` / `book` is set. Touching `.game` without narrowing to the game
+ * variant is a compile error, not a runtime undefined.
+ */
+export type Entry = GameEntry | BookEntry;
+
+export function isGameEntry(entry: Entry): entry is GameEntry {
+  return entry.media_type === "game";
+}
+
+export function isBookEntry(entry: Entry): entry is BookEntry {
+  return entry.media_type === "book";
 }
 
 export interface User {
@@ -135,6 +190,26 @@ export interface Stats {
   played_hours: number;
   logged_hours: number;
   completion: number;
+}
+
+/** The books counterpart of Stats, for the books library strip. */
+export interface BookStats {
+  total: number;
+  backlog: number;
+  reading: number;
+  read: number;
+  dropped: number;
+  ignored: number;
+  wishlist: number;
+  completion: number;
+}
+
+/** The book library's filter rail: authors, subjects, languages, statuses. */
+export interface BookFacets {
+  authors: string[];
+  subjects: string[];
+  languages: string[];
+  statuses: string[];
 }
 
 /** Actual play pace derived from logged sessions. Null means no data. */
@@ -180,7 +255,8 @@ export interface PlaySession {
 
 /** One category's answer to "what should I play tonight?". */
 export interface TonightPick {
-  entry: Entry;
+  /** Game-scoped by contract: tonight reasons about time-to-beat and genres. */
+  entry: GameEntry;
   score: number;
   reason: string;
 }
@@ -368,8 +444,11 @@ export interface Achievement {
 /** An achievement plus the user's unlock state: no date and no game = locked. */
 export interface AchievementStatus extends Achievement {
   unlocked_at?: string;
-  /** The game that triggered the unlock, when there is one. */
-  entry?: Entry;
+  /**
+   * The game that triggered the unlock, when there is one. Game-scoped by
+   * contract: every unlock predicate reasons about games.
+   */
+  entry?: GameEntry;
 }
 
 /** The per-calendar-year "Backlog Challenge" rollup. */

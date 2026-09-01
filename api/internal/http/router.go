@@ -12,6 +12,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	booktext "github.com/collinpendleton/backhog/api/internal/books"
 	bookaudio "github.com/collinpendleton/backhog/api/internal/books/audio"
+	"github.com/collinpendleton/backhog/api/internal/books/position"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
@@ -28,17 +29,23 @@ const eggRateLimit = 10
 
 // Server holds the dependencies shared by all handlers.
 type Server struct {
-	cfg        config.Config
-	store      *store.Store
-	provider   metadata.Provider
-	books      metadata.BookProvider
-	covers     *metadata.CoverCache
-	steam      *metadata.Steam
-	backfill   *backfill.Runner
-	media      *media.Runner
-	matcher    *media.Matcher
-	epubs      *booktext.Ingester
-	audio      *bookaudio.Service
+	cfg      config.Config
+	store    *store.Store
+	provider metadata.Provider
+	books    metadata.BookProvider
+	covers   *metadata.CoverCache
+	steam    *metadata.Steam
+	backfill *backfill.Runner
+	media    *media.Runner
+	matcher  *media.Matcher
+	epubs    *booktext.Ingester
+	audio    *bookaudio.Service
+	// anchors supplies the alignment and page-map data the position
+	// translator interpolates over. Until forced alignment (Stage 7) and
+	// page anchors (Stage 9) land there is nothing to supply, so every
+	// translation reports itself underived and the API falls back to raw
+	// stored positions.
+	anchors    position.Provider
 	eggLimiter eggLimiter
 }
 
@@ -56,6 +63,7 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
 		matcher:    media.NewMatcher(st, books),
+		anchors:    position.NoAnchors{},
 		audio:      bookaudio.NewService(st, cfg.MediaDirs),
 		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
 	}
@@ -111,6 +119,14 @@ func (s *Server) Routes() http.Handler {
 			// can seek into the middle of a 400MB m4b.
 			r.Get("/books/{entryID}/audio", s.handleBookAudioTimeline)
 			r.Get("/books/{entryID}/audio/{trackID}", s.handleBookAudioTrack)
+
+			// One position, three views: the canonical character offset is
+			// the truth, the audio timestamp and printed page are derived
+			// from it on read.
+			r.Get("/books/{entryID}/position", s.handleGetBookPosition)
+			r.Put("/books/{entryID}/position", s.handlePutBookPosition)
+			r.Get("/books/{entryID}/sessions", s.handleGetReadingSessions)
+			r.Post("/books/{entryID}/sessions", s.handleAddReadingSession)
 
 			// The attach flow: files on the NAS become this book's audio
 			// timeline and canonical text.

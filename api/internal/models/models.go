@@ -638,3 +638,79 @@ type EpubChapter struct {
 	// Depth is the TOC nesting of the entry targeting this document.
 	Depth int `json:"depth"`
 }
+
+// Sources for a stored reading position: what produced the canonical
+// character offset. A later alignment uses this to tell an offset it can
+// trust exactly (the reader knew where it was) from one that was
+// back-computed or fuzzy-matched.
+const (
+	// PositionSourceRead is the EPUB reader: the offset is exact.
+	PositionSourceRead = "read"
+	// PositionSourceListen is the audiobook player: the offset was derived
+	// from a timestamp through the alignment map.
+	PositionSourceListen = "listen"
+	// PositionSourceScan is a camera OCR page scan matched into the text.
+	PositionSourceScan = "scan"
+	// PositionSourceManual is the user typing a page or dragging a slider.
+	PositionSourceManual = "manual"
+)
+
+// ValidPositionSource reports whether s is a tracked position source.
+func ValidPositionSource(s string) bool {
+	switch s {
+	case PositionSourceRead, PositionSourceListen, PositionSourceScan, PositionSourceManual:
+		return true
+	}
+	return false
+}
+
+// Modes a book is consumed in. An hour read and an hour listened are both an
+// hour owed, but the dashboard wants to tell them apart.
+const (
+	ReadingModeRead   = "read"
+	ReadingModeListen = "listen"
+)
+
+// ValidReadingMode reports whether s is a tracked consumption mode.
+func ValidReadingMode(s string) bool {
+	switch s {
+	case ReadingModeRead, ReadingModeListen:
+		return true
+	}
+	return false
+}
+
+// BookProgress is a library entry's stored reading position. CharOffset is
+// the only truth: the audio timestamp and printed page in an API response are
+// derived from it on read, so they cannot drift apart.
+//
+// RawAudioSeconds/RawAudioFileID are the fallback for a book with no
+// alignment yet — a listening position that genuinely cannot be expressed as
+// a character offset. They are track-relative (seconds within that file), not
+// global, so re-measuring or re-ordering the timeline cannot move them.
+type BookProgress struct {
+	EntryID          string   `json:"entry_id"`
+	CharOffset       int      `json:"char_offset"`
+	CharOffsetSource string   `json:"char_offset_source"`
+	RawAudioSeconds  *float64 `json:"raw_audio_seconds,omitempty"`
+	RawAudioFileID   *int64   `json:"raw_audio_file_id,omitempty"`
+	// PercentComplete is 0–100 against the canonical text's length, or
+	// against the audiobook's total duration for a book with no EPUB.
+	PercentComplete float64   `json:"percent_complete"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// ReadingSession is one stretch of reading or listening, the books-arena
+// mirror of Session. Unlike a play session — typed in after the fact against
+// a whole day — it is instrumented, so it carries real endpoints and how far
+// the position actually moved.
+type ReadingSession struct {
+	ID            string    `json:"id"`
+	EntryID       string    `json:"entry_id"`
+	StartedAt     time.Time `json:"started_at"`
+	EndedAt       time.Time `json:"ended_at"`
+	Mode          string    `json:"mode"`
+	CharsAdvanced int       `json:"chars_advanced"`
+	Seconds       int       `json:"seconds"`
+	CreatedAt     time.Time `json:"created_at"`
+}

@@ -2,7 +2,15 @@ import { cn } from "@/lib/cn";
 import { useState } from "react";
 
 import { useUpdateEntry } from "@/hooks/useLibrary";
-import { QUICK_STATUSES, STATUS_LABELS, type GameEntry, type Status } from "@/lib/types";
+import { entryTitle } from "@/lib/entry";
+import {
+  QUICK_STATUSES,
+  isGameEntry,
+  statusLabel,
+  type Entry,
+  type GameEntry,
+  type Status,
+} from "@/lib/types";
 import { STATUS_ICONS } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
 import { Dialog } from "./ui/Dialog";
@@ -25,19 +33,24 @@ const activeStyles: Record<Status, string> = {
  *
  * Marking a game finished without a "playing on" platform first asks which
  * platform it was finished on: platform progress counts the platform you
- * actually played, not the ones the game shipped for.
+ * actually played, not the ones the game shipped for. Books skip that
+ * question entirely — a printing is chosen when the book is added, and it is
+ * not a platform.
  */
 export function StatusMenu({
   entry,
   size = "sm",
   statuses = QUICK_STATUSES,
 }: {
-  entry: GameEntry;
+  entry: Entry;
   size?: "sm" | "md";
   statuses?: Status[];
 }) {
   const update = useUpdateEntry();
   const [askPlatform, setAskPlatform] = useState(false);
+
+  const title = entryTitle(entry);
+  const label = (status: Status) => statusLabel(status, entry.media_type);
 
   const markPlayed = (platformId: number | null) =>
     update.mutate({
@@ -46,13 +59,16 @@ export function StatusMenu({
     });
 
   const shouldAsk =
-    statuses.includes("played") && entry.platform_id == null && entry.game.platforms.length > 0;
+    isGameEntry(entry) &&
+    statuses.includes("played") &&
+    entry.platform_id == null &&
+    entry.game.platforms.length > 0;
 
   return (
     <>
       <div
         role="group"
-        aria-label={`Status for ${entry.game.name}`}
+        aria-label={`Status for ${title}`}
         className={cn(
           "gap-0.5 bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
           size === "md" ? "grid grid-cols-3 sm:flex sm:items-center" : "flex items-center",
@@ -65,8 +81,8 @@ export function StatusMenu({
             <button
               key={status}
               type="button"
-              title={STATUS_LABELS[status]}
-              aria-label={STATUS_LABELS[status]}
+              title={label(status)}
+              aria-label={label(status)}
               aria-pressed={isActive}
               disabled={update.isPending}
               onClick={(event) => {
@@ -89,21 +105,23 @@ export function StatusMenu({
               )}
             >
               <Gi name={STATUS_ICONS[status]} className="size-3.5" />
-              {size === "md" && <span className="ml-1.5 text-xs font-medium">{STATUS_LABELS[status]}</span>}
+              {size === "md" && <span className="ml-1.5 text-xs font-medium">{label(status)}</span>}
             </button>
           );
         })}
       </div>
 
-      <PlatformPrompt
-        open={askPlatform}
-        entry={entry}
-        pending={update.isPending}
-        onPick={(platformId) => {
-          setAskPlatform(false);
-          markPlayed(platformId);
-        }}
-      />
+      {isGameEntry(entry) && (
+        <PlatformPrompt
+          open={askPlatform}
+          entry={entry}
+          pending={update.isPending}
+          onPick={(platformId) => {
+            setAskPlatform(false);
+            markPlayed(platformId);
+          }}
+        />
+      )}
     </>
   );
 }

@@ -4,7 +4,9 @@ import { Layout } from "./components/Layout";
 import { Spinner } from "./components/ui/primitives";
 import { useAuth } from "./hooks/useAuth";
 import { AchievementsPage } from "./pages/AchievementsPage";
+import { BookDetailPage } from "./pages/BookDetailPage";
 import { BookFilesPage } from "./pages/BookFilesPage";
+import { BookLibraryPage } from "./pages/BookLibraryPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DebtPage } from "./pages/DebtPage";
 import { GameDetailPage } from "./pages/GameDetailPage";
@@ -58,7 +60,11 @@ export function App() {
         <Route path="/series/:seriesId" element={<SeriesDetailPage />} />
         <Route path="/achievements" element={<AchievementsPage />} />
         <Route path="/game/:entryId" element={<GameDetailPage />} />
+        <Route path="/books" element={<BookLibraryPage />} />
+        {/* The router ranks the static segment above the dynamic one, so
+            /books/files stays the attach queue rather than an entry id. */}
         <Route path="/books/files" element={<BookFilesPage />} />
+        <Route path="/books/:entryId" element={<BookDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

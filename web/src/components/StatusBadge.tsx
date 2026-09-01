@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 
-import { STATUS_LABELS, type Status } from "@/lib/types";
+import { statusLabel, type MediaType, type Status } from "@/lib/types";
 import { Gi } from "./ui/Gi";
 import type { GiName } from "@/lib/gameicons";
 
@@ -29,10 +29,13 @@ export function StatusBadge({
   status,
   className,
   showLabel = true,
+  media = "game",
 }: {
   status: Status;
   className?: string;
   showLabel?: boolean;
+  /** Which arena is asking — the colour is shared, the wording is not. */
+  media?: MediaType;
 }) {
   return (
     <span
@@ -43,7 +46,7 @@ export function StatusBadge({
       )}
     >
       <Gi name={STATUS_ICONS[status]} className="size-3" />
-      {showLabel && STATUS_LABELS[status]}
+      {showLabel && statusLabel(status, media)}
     </span>
   );
 }

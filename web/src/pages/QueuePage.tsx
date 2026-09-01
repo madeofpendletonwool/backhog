@@ -17,16 +17,19 @@ import {
 import { useRef } from "react";
 import { useOutletContext } from "react-router-dom";
 
+import { MediaFilter, useMediaFilter } from "@/components/MediaFilter";
 import { QueueRow } from "@/components/QueueRow";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useEggUnlock } from "@/hooks/useAchievements";
 import { useQueue, useReorderQueue } from "@/hooks/useLibrary";
-import { formatHours, toHours } from "@/lib/format";
-import { isGameEntry } from "@/lib/types";
+import { entryHours, matchesMedia } from "@/lib/entry";
+import { formatHours } from "@/lib/format";
+import { isBookEntry } from "@/lib/types";
 
 export function QueuePage() {
   const { openAddDialog } = useOutletContext<{ openAddDialog: () => void }>();
+  const [media, setMedia] = useMediaFilter();
   const { data, isLoading } = useQueue();
   const reorder = useReorderQueue();
   const fireEgg = useEggUnlock();
@@ -45,9 +48,16 @@ export function QueuePage() {
     topMoves.current.set(entryId, count);
   };
 
-  // The queue is shared across media; this page speaks games until the books
-  // UI lands, so book entries stay in the queue but out of the list.
-  const entries = (data?.entries ?? []).filter(isGameEntry);
+  // One queue holds both arenas. The filter decides which half of it you are
+  // ordering; reordering within a filtered view still moves the entry between
+  // the neighbours you can see, which is the move you meant.
+  const queued = data?.entries ?? [];
+  const entries = queued.filter((entry) => matchesMedia(entry, media));
+  const books = media === "book";
+  // A library with no books has nothing to filter, so the control stays out of
+  // the way — unless the filter is already set to something other than games,
+  // which has to remain switchable back.
+  const showFilter = media !== "game" || queued.some(isBookEntry);
 
   const sensors = useSensors(
     // A small distance threshold keeps clicks on the row from starting a drag.
@@ -55,7 +65,7 @@ export function QueuePage() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const totalHours = entries.reduce((sum, entry) => sum + toHours(entry.game.time_to_beat_main), 0);
+  const totalHours = entries.reduce((sum, entry) => sum + entryHours(entry), 0);
 
   // Persist a move from oldIndex to newIndex. Both drag and the quick-move
   // buttons funnel through here: reorder locally, then tell the server the new
@@ -90,18 +100,32 @@ export function QueuePage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Play Queue</h1>
-        <p className="mt-1 text-sm text-ink-400">
-          {entries.length > 0 ? (
-            <>
-              {entries.length} game{entries.length === 1 ? "" : "s"} ·{" "}
-              <span className="text-ink-300">{formatHours(totalHours)} deep</span> · drag to reorder
-            </>
-          ) : (
-            "The order you plan to play things in."
-          )}
-        </p>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight text-ink-100">
+            {books ? "Reading Queue" : "Play Queue"}
+          </h1>
+          <p className="mt-1 text-sm text-ink-400">
+            {entries.length > 0 ? (
+              <>
+                {entries.length} {books ? "book" : media === "all" ? "item" : "game"}
+                {entries.length === 1 ? "" : "s"}
+                {totalHours > 0 && (
+                  <>
+                    {" · "}
+                    <span className="text-ink-300">{formatHours(totalHours)} deep</span>
+                  </>
+                )}{" "}
+                · drag to reorder
+              </>
+            ) : books ? (
+              "The order you plan to read things in."
+            ) : (
+              "The order you plan to play things in."
+            )}
+          </p>
+        </div>
+        {showFilter && <MediaFilter value={media} onChange={setMedia} />}
       </header>
 
       {reorder.isError && (
@@ -120,10 +144,14 @@ export function QueuePage() {
         <EmptyState
           icon={<Gi name="list-ordered" className="size-7" />}
           title="Nothing queued up"
-          description="Games in your backlog appear here. Marking one as playing or played takes it out of the queue."
+          description={
+            books
+              ? "Books on the to-read shelf appear here. Starting or finishing one takes it out of the queue."
+              : "Games in your backlog appear here. Marking one as playing or played takes it out of the queue."
+          }
           action={
             <Button variant="primary" onClick={openAddDialog}>
-              Add a game
+              {books ? "Add a book" : "Add a game"}
             </Button>
           }
         />
@@ -144,9 +172,10 @@ export function QueuePage() {
                   isFirst={index === 0}
                   isLast={index === entries.length - 1}
                   onMove={(kind) => moveBy(index, kind)}
+                  showCumulative={!books}
                   cumulativeHours={entries
                     .slice(0, index + 1)
-                    .reduce((sum, e) => sum + toHours(e.game.time_to_beat_main), 0)}
+                    .reduce((sum, e) => sum + entryHours(e), 0)}
                 />
               ))}
             </ol>

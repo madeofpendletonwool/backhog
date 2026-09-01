@@ -28,6 +28,7 @@ type Server struct {
 	cfg        config.Config
 	store      *store.Store
 	provider   metadata.Provider
+	books      metadata.BookProvider
 	covers     *metadata.CoverCache
 	steam      *metadata.Steam
 	backfill   *backfill.Runner
@@ -35,9 +36,9 @@ type Server struct {
 	eggLimiter eggLimiter
 }
 
-func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, covers *metadata.CoverCache, steam *metadata.Steam, backfill *backfill.Runner, mediaRunner *media.Runner) *Server {
+func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, books metadata.BookProvider, covers *metadata.CoverCache, steam *metadata.Steam, backfill *backfill.Runner, mediaRunner *media.Runner) *Server {
 	return &Server{
-		cfg: cfg, store: st, provider: provider, covers: covers,
+		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner,
 		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
 	}
@@ -65,8 +66,11 @@ func (s *Server) Routes() http.Handler {
 		})
 
 		// Covers are public: they are just images, and making them public keeps
-		// <img> tags simple and cacheable.
-		r.Get("/covers/{gameID}", s.handleCover)
+		// <img> tags simple and cacheable. Keyed by media namespace; the
+		// original single-media path stays as a permanent redirect.
+		r.Get("/covers/game/{gameID}", s.handleCover)
+		r.Get("/covers/book/{bookID}", s.handleBookCover)
+		r.Get("/covers/{gameID}", s.handleLegacyCoverRedirect)
 
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Require)
@@ -74,6 +78,10 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/games/search", s.handleGameSearch)
 			r.Get("/games/{gameID}", s.handleGetGame)
 			r.Get("/games/{gameID}/series", s.handleGameSeries)
+
+			r.Get("/books/search", s.handleBookSearch)
+			r.Get("/books/isbn/{isbn}", s.handleBookByISBN)
+			r.Get("/books/{bookID}", s.handleGetBook)
 
 			r.Route("/series", func(r chi.Router) {
 				r.Get("/", s.handleSeriesIndex)

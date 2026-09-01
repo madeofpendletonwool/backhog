@@ -32,7 +32,7 @@ func mediaTestApp(t *testing.T, roots ...string) (base string, client *http.Clie
 	}
 
 	st := store.New(database)
-	srv := NewServer(config.Config{}, st, nil, nil, nil, &backfill.Runner{}, media.NewRunner(st, roots))
+	srv := NewServer(config.Config{}, st, nil, nil, nil, nil, &backfill.Runner{}, media.NewRunner(st, roots))
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 

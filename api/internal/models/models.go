@@ -115,6 +115,36 @@ type Game struct {
 	Extras json.RawMessage `json:"extras"`
 }
 
+// Book is the shared, Open Library-sourced work record: "The Hobbit", not any
+// particular printing of it.
+type Book struct {
+	ID               string   `json:"id"` // Open Library work key, e.g. OL12345W
+	Title            string   `json:"title"`
+	Authors          []string `json:"authors"`
+	Description      string   `json:"description"`
+	CoverURL         string   `json:"cover_url"`
+	AccentHex        string   `json:"accent_hex"`
+	FirstPublishYear *int     `json:"first_publish_year"`
+	Subjects         []string `json:"subjects"`
+	// Editions is the printings cache for this work, loaded on a detail read.
+	Editions []BookEdition `json:"editions,omitempty"`
+}
+
+// BookEdition is one printing of a work. Page maps for physical copies key
+// off the edition, never the work.
+type BookEdition struct {
+	ID            string `json:"id"` // Open Library edition key, e.g. OL12345M
+	BookID        string `json:"book_id"`
+	ISBN10        string `json:"isbn10"`
+	ISBN13        string `json:"isbn13"`
+	Publisher     string `json:"publisher"`
+	PublishedYear *int   `json:"published_year"`
+	PageCount     *int   `json:"page_count"`
+	Binding       string `json:"binding"`
+	Language      string `json:"language"`
+	CoverURL      string `json:"cover_url"`
+}
+
 // Entry is one item in one user's library. Media type says which subject
 // column carries the item: Game for 'game' entries; books arrive later.
 type Entry struct {

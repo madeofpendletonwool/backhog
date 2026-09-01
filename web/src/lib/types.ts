@@ -507,3 +507,84 @@ export interface ProjectItem {
   entry: Entry;
   done: boolean | null;
 }
+
+/** One file the scanner inventoried on the read-only NAS mount. */
+export interface MediaFile {
+  id: number;
+  root: string;
+  path: string;
+  kind: "audio" | "epub";
+  size_bytes: number;
+  duration_seconds?: number | null;
+  container_metadata?: Record<string, unknown> | null;
+  book_id?: string | null;
+  missing_at?: string | null;
+}
+
+/** One file the scanner refused to inventory, with the reason why. */
+export interface MediaSkipped {
+  id: number;
+  root: string;
+  path: string;
+  ext: string;
+  reason: "unsupported_extension" | "drm_epub";
+  size_bytes: number;
+  seen_at: string;
+}
+
+/** One proposed (book, confidence) pair for an unattached candidate. */
+export interface MediaSuggestion {
+  book: Book;
+  confidence: number;
+  /** Where the book came from: the user's library or an Open Library search. */
+  source: "library" | "openlibrary";
+  /** Which facts produced the confidence: tags, directory layout, filename. */
+  signal: "tags" | "directory" | "filename";
+  in_library: boolean;
+  /** The user's library entry, when owned — the attach API is entry-keyed. */
+  entry_id?: string;
+}
+
+/**
+ * One attachable unit from the review queue: an audiobook directory of
+ * ordered files, or a single EPUB. Files are track-ordered for audio —
+ * attaching them in array order is the explicit track order.
+ */
+export interface MediaCandidate {
+  key: string;
+  kind: "audio" | "epub";
+  root: string;
+  dir_path: string;
+  title_guess: string;
+  author_guess: string;
+  files: MediaFile[];
+  total_duration_seconds: number;
+  suggestions: MediaSuggestion[];
+  high_confidence: boolean;
+}
+
+/** GET /api/media/candidates. */
+export interface MediaCandidatesResponse {
+  candidates: MediaCandidate[];
+  skipped: MediaSkipped[];
+}
+
+/** The live or last-completed scan summary. */
+export interface MediaScanStatus {
+  running: boolean;
+  found: number;
+  new: number;
+  unsupported: number;
+  last?: {
+    started_at: string;
+    finished_at?: string | null;
+    found: number;
+    new: number;
+    changed: number;
+    restored: number;
+    missing: number;
+    unsupported: number;
+    failed: number;
+    error?: string;
+  } | null;
+}

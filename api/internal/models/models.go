@@ -216,13 +216,13 @@ type Stats struct {
 // Deliberately lean: the reading dashboard (pages read, reading pace) is a
 // later stage — this is only what the library page's header needs.
 type BookStats struct {
-	Total    int     `json:"total"`
-	Backlog  int     `json:"backlog"`
-	Reading  int     `json:"reading"`
-	Read     int     `json:"read"`
-	Dropped  int     `json:"dropped"`
-	Ignored  int     `json:"ignored"`
-	Wishlist int     `json:"wishlist"`
+	Total    int `json:"total"`
+	Backlog  int `json:"backlog"`
+	Reading  int `json:"reading"`
+	Read     int `json:"read"`
+	Dropped  int `json:"dropped"`
+	Ignored  int `json:"ignored"`
+	Wishlist int `json:"wishlist"`
 	// Completion mirrors the games definition: read / owned, with wishlist
 	// and ignored excluded from the denominator.
 	Completion float64 `json:"completion"`
@@ -583,6 +583,30 @@ type MediaFile struct {
 	// MissingAt is set when the path disappeared from its root; the row is
 	// kept so the BookID association survives a temporarily-unmounted NAS.
 	MissingAt *time.Time `json:"missing_at,omitempty"`
+}
+
+// Reasons a file was skipped by the scanner. DRM formats are refused, not
+// worked around — this tool is DRM-free by decision.
+const (
+	MediaSkipUnsupported = "unsupported_extension"
+	MediaSkipDRM         = "drm_epub"
+)
+
+// MediaSkipped is one file the scanner refused to inventory: an unsupported
+// extension (.aax, cover art, ...) or a DRM-wrapped EPUB. Kept in its own
+// table so the attach UI can show *why* half a library is missing instead of
+// letting the user assume the scan is broken. Rows are replaced per root on
+// each scan.
+type MediaSkipped struct {
+	ID        int64  `json:"id"`
+	Root      string `json:"root"`
+	Path      string `json:"path"`
+	Ext       string `json:"ext"`
+	Reason    string `json:"reason"`
+	SizeBytes int64  `json:"size_bytes"`
+	// Mtime is unix nanoseconds, as reported by the filesystem.
+	Mtime  int64     `json:"mtime"`
+	SeenAt time.Time `json:"seen_at"`
 }
 
 // EpubText is the canonical-text index row for one parsed EPUB media file.

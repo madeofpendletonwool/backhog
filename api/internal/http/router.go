@@ -11,6 +11,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/auth"
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	booktext "github.com/collinpendleton/backhog/api/internal/books"
+	bookaudio "github.com/collinpendleton/backhog/api/internal/books/audio"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
@@ -37,6 +38,7 @@ type Server struct {
 	media      *media.Runner
 	matcher    *media.Matcher
 	epubs      *booktext.Ingester
+	audio      *bookaudio.Service
 	eggLimiter eggLimiter
 }
 
@@ -54,6 +56,7 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
 		matcher:    media.NewMatcher(st, books),
+		audio:      bookaudio.NewService(st, cfg.MediaDirs),
 		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
 	}
 }
@@ -102,6 +105,12 @@ func (s *Server) Routes() http.Handler {
 			// demand — never part of the NAS scan.
 			r.Get("/books/{entryID}/text/chapters", s.handleBookTextChapters)
 			r.Get("/books/{entryID}/text", s.handleBookText)
+
+			// The audiobook as one continuous timeline, and its tracks
+			// streamed from the NAS with byte-range support so a browser
+			// can seek into the middle of a 400MB m4b.
+			r.Get("/books/{entryID}/audio", s.handleBookAudioTimeline)
+			r.Get("/books/{entryID}/audio/{trackID}", s.handleBookAudioTrack)
 
 			// The attach flow: files on the NAS become this book's audio
 			// timeline and canonical text.

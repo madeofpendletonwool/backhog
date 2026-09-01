@@ -507,7 +507,8 @@ func (s *Store) checklistProgress(ctx context.Context, projectID string) (models
 }
 
 // countGoalProgress measures against the owned library: played games count as
-// done, backlog + playing are the remaining candidates.
+// done, backlog + playing are the remaining candidates. Game-scoped by hand —
+// a count goal is "finish N games".
 func (s *Store) countGoalProgress(ctx context.Context, userID string, target *int) (models.ProjectProgress, error) {
 	if target == nil {
 		return models.ProjectProgress{}, fmt.Errorf("count goal has no target")
@@ -519,7 +520,7 @@ func (s *Store) countGoalProgress(ctx context.Context, userID string, target *in
 		       COALESCE(SUM(g.time_to_beat_main), 0),
 		       COALESCE(SUM(CASE WHEN e.status = 'played' THEN g.time_to_beat_main ELSE 0 END), 0)
 		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.status IN ('backlog','playing','played')`, userID).
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status IN ('backlog','playing','played')`, userID).
 		Scan(&pr.CompletedCount, &pr.EstHoursTotal, &pr.EstHoursDone)
 	if err != nil {
 		return models.ProjectProgress{}, err

@@ -33,7 +33,7 @@ func (s *Store) Debt(ctx context.Context, userID string) (models.DebtReport, err
 			COALESCE(SUM(CASE WHEN e.status IN ('backlog','playing')
 			                  AND g.time_to_beat_main < ? THEN g.time_to_beat_main END), 0)
 		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ?`, shortGameSeconds, userID).
+		WHERE e.user_id = ? AND e.media_type = 'game'`, shortGameSeconds, userID).
 		Scan(&mainSeconds, &startedSeconds, &shortSeconds)
 	if err != nil {
 		return models.DebtReport{}, err

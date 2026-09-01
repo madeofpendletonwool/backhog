@@ -135,10 +135,13 @@ func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, ki
 // snapshotAggregatesTx fills the user- and game-level aggregates a predicate
 // needs: finish and drop counts, the unplayed backlog size, the entry's rank
 // by ownership age, and the series the game belongs to. Straightforward
-// queries are fine — libraries are hundreds of rows, not millions.
+// queries are fine — libraries are hundreds of rows, not millions. Every
+// population is game-scoped by hand: the catalogue speaks games (IGDB,
+// platforms, series), and book entries must not move these counts once they
+// exist.
 func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *achievements.Entry) error {
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM library_entries WHERE user_id = ? AND status = 'played'`,
+		`SELECT COUNT(*) FROM library_entries WHERE user_id = ? AND media_type = 'game' AND status = 'played'`,
 		userID).Scan(&e.PlayedCount); err != nil {
 		return err
 	}
@@ -150,10 +153,10 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 		SELECT
 			(SELECT COUNT(DISTINCT h.entry_id) FROM entry_status_history h
 			 JOIN library_entries d ON d.id = h.entry_id
-			 WHERE d.user_id = ? AND h.to_status = 'dropped')
+			 WHERE d.user_id = ? AND d.media_type = 'game' AND h.to_status = 'dropped')
 			+
 			(SELECT COUNT(*) FROM library_entries d
-			 WHERE d.user_id = ? AND d.status = 'dropped'
+			 WHERE d.user_id = ? AND d.media_type = 'game' AND d.status = 'dropped'
 			   AND NOT EXISTS (SELECT 1 FROM entry_status_history h
 			                   WHERE h.entry_id = d.id AND h.to_status = 'dropped'))`,
 		userID, userID).Scan(&e.DroppedCount); err != nil {
@@ -161,7 +164,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 	}
 
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM library_entries WHERE user_id = ? AND status IN ('backlog','playing')`,
+		`SELECT COUNT(*) FROM library_entries WHERE user_id = ? AND media_type = 'game' AND status IN ('backlog','playing')`,
 		userID).Scan(&e.UnplayedCount); err != nil {
 		return err
 	}
@@ -180,14 +183,14 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 	year := fmt.Sprintf("%04d", e.At.Year())
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM library_entries
-		WHERE user_id = ? AND status = 'played'
+		WHERE user_id = ? AND media_type = 'game' AND status = 'played'
 		  AND finished_at IS NOT NULL AND strftime('%Y', finished_at) = ?`,
 		userID, year).Scan(&e.YearFinishes); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM library_entries
-		WHERE user_id = ? AND status <> 'wishlist'
+		WHERE user_id = ? AND media_type = 'game' AND status <> 'wishlist'
 		  AND strftime('%Y', created_at) = ?`,
 		userID, year).Scan(&e.YearAdditions); err != nil {
 		return err
@@ -204,7 +207,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 			COALESCE(SUM(CASE WHEN strftime('%Y', finished_at) = ?
 				AND CAST(strftime('%m', finished_at) AS INTEGER) BETWEEN 6 AND 8 THEN 1 ELSE 0 END), 0)
 		FROM library_entries
-		WHERE user_id = ? AND status = 'played' AND finished_at IS NOT NULL`,
+		WHERE user_id = ? AND media_type = 'game' AND status = 'played' AND finished_at IS NOT NULL`,
 		monthKeyOf(e.At), year, year, userID).
 		Scan(&e.MonthFinishes, &e.YearMonthsFinished, &e.SummerFinishes); err != nil {
 		return err
@@ -215,7 +218,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 	finishMonths := map[string]int{}
 	mrows, err := tx.QueryContext(ctx, `
 		SELECT strftime('%Y-%m', finished_at), COUNT(*) FROM library_entries
-		WHERE user_id = ? AND status = 'played' AND finished_at IS NOT NULL
+		WHERE user_id = ? AND media_type = 'game' AND status = 'played' AND finished_at IS NOT NULL
 		GROUP BY 1`, userID)
 	if err != nil {
 		return err
@@ -238,7 +241,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 	// The 50h+ ladder: how many long-haul games the user has finished.
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.status = 'played' AND g.time_to_beat_main >= ?`,
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status = 'played' AND g.time_to_beat_main >= ?`,
 		userID, achievements.LongHaulSeconds).Scan(&e.LongHaulFinishes); err != nil {
 		return err
 	}
@@ -247,7 +250,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 	// Timestamps are TEXT, so the comparison is lexicographic = chronological.
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) + 1 FROM library_entries
-		WHERE user_id = ? AND status NOT IN ('wishlist','ignored')
+		WHERE user_id = ? AND media_type = 'game' AND status NOT IN ('wishlist','ignored')
 		  AND created_at < (SELECT created_at FROM library_entries WHERE id = ?)`,
 		userID, e.ID).Scan(&e.CreatedAtRank); err != nil {
 		return err
@@ -359,7 +362,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 			COUNT(DISTINCT CASE WHEN p.family = ? THEN e.platform_id END),
 			COUNT(DISTINCT CASE WHEN p.family = ? THEN e.platform_id END)
 		FROM library_entries e JOIN platforms p ON p.id = e.platform_id
-		WHERE e.user_id = ? AND e.status = 'played'`,
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status = 'played'`,
 		metadata.FamilyXbox, metadata.FamilyNintendoConsole, metadata.FamilyGameBoy,
 		userID).Scan(&e.DistinctPlatforms, &e.DistinctGenerations, &e.HandheldGenerations,
 		&e.XboxGenerations, &e.NintendoConsoles, &e.GameBoySystems); err != nil {
@@ -422,7 +425,7 @@ func countFinishedPlatforms(ctx context.Context, q rowQuerier, userID string, id
 	var n int
 	if err := q.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT platform_id) FROM library_entries
-		WHERE user_id = ? AND status = 'played'
+		WHERE user_id = ? AND media_type = 'game' AND status = 'played'
 		  AND platform_id IN (`+placeholders+`)`, args...).Scan(&n); err != nil {
 		return 0, err
 	}
@@ -437,7 +440,7 @@ func countFinishedFamilyPlatforms(ctx context.Context, q rowQuerier, userID, fam
 	if err := q.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT e.platform_id)
 		FROM library_entries e JOIN platforms p ON p.id = e.platform_id
-		WHERE e.user_id = ? AND e.status = 'played' AND p.family = ?`,
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status = 'played' AND p.family = ?`,
 		userID, family).Scan(&n); err != nil {
 		return 0, err
 	}
@@ -454,7 +457,7 @@ func prevFinishSharesSeriesTx(ctx context.Context, tx *sql.Tx, userID string, e 
 	var prevGame sql.NullInt64
 	err := tx.QueryRowContext(ctx, `
 		SELECT game_id FROM library_entries
-		WHERE user_id = ? AND status = 'played' AND id <> ?
+		WHERE user_id = ? AND media_type = 'game' AND status = 'played' AND id <> ?
 		  AND (datetime(COALESCE(finished_at, created_at)) < datetime(?)
 		       OR (datetime(COALESCE(finished_at, created_at)) = datetime(?) AND id < ?))
 		ORDER BY datetime(COALESCE(finished_at, created_at)) DESC, id DESC
@@ -516,7 +519,7 @@ type unplayedTimeline struct {
 func loadUnplayedTimelineTx(ctx context.Context, tx *sql.Tx, userID string) (*unplayedTimeline, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT status, created_at, finished_at FROM library_entries
-		WHERE user_id = ? AND status NOT IN ('wishlist','ignored')`, userID)
+		WHERE user_id = ? AND media_type = 'game' AND status NOT IN ('wishlist','ignored')`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +606,7 @@ func finishMonthStreak(months map[string]int, at time.Time) int {
 func additionsTx(ctx context.Context, tx *sql.Tx, userID string) ([]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT created_at FROM library_entries
-		WHERE user_id = ? AND status <> 'wishlist'`, userID)
+		WHERE user_id = ? AND media_type = 'game' AND status <> 'wishlist'`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +709,7 @@ func loadDropHistoryTx(ctx context.Context, tx *sql.Tx, entryID string, fallback
 func ownedCreatedAtTx(ctx context.Context, tx *sql.Tx, userID string) ([]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT created_at FROM library_entries
-		WHERE user_id = ? AND status NOT IN ('wishlist','ignored')`, userID)
+		WHERE user_id = ? AND media_type = 'game' AND status NOT IN ('wishlist','ignored')`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1017,7 +1020,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		       g.time_to_beat_main, g.time_to_beat_complete, g.first_release_date,
 		       e.platform_id
 		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.status = 'played'
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status = 'played'
 		ORDER BY COALESCE(e.finished_at, e.created_at) ASC, e.id`, userID)
 	if err != nil {
 		return err
@@ -1278,7 +1281,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0),
 		       g.time_to_beat_main
 		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.status = 'dropped'
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status = 'dropped'
 		ORDER BY COALESCE(e.finished_at, e.created_at) ASC, e.id`, userID)
 	if err != nil {
 		return err
@@ -1415,7 +1418,7 @@ func (s *Store) evaluateTimeWindowAchievementsTx(ctx context.Context, tx *sql.Tx
 
 	var raw sql.NullString
 	if err := tx.QueryRowContext(ctx,
-		`SELECT MAX(created_at) FROM library_entries WHERE user_id = ? AND status <> 'wishlist'`,
+		`SELECT MAX(created_at) FROM library_entries WHERE user_id = ? AND media_type = 'game' AND status <> 'wishlist'`,
 		userID).Scan(&raw); err != nil {
 		return err
 	}
@@ -1591,7 +1594,7 @@ func (s *Store) Season(ctx context.Context, userID string, year int) (models.Sea
 		SELECT COUNT(*),
 		       COALESCE(SUM(CASE WHEN e.created_at <= date(e.finished_at, '-1 year') THEN 1 ELSE 0 END), 0)
 		FROM library_entries e
-		WHERE e.user_id = ? AND e.status = 'played'
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status = 'played'
 		  AND e.finished_at IS NOT NULL
 		  AND e.finished_at >= ? AND e.finished_at < ?`,
 		userID, start, end).Scan(&season.GamesCompleted, &season.Rescues)

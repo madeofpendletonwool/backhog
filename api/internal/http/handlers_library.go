@@ -28,6 +28,7 @@ func (s *Server) handleListLibrary(w http.ResponseWriter, r *http.Request) {
 
 	filter := store.LibraryFilter{
 		Status:     q.Get("status"),
+		MediaType:  q.Get("media"),
 		Query:      q.Get("q"),
 		ListID:     q.Get("list"),
 		Sort:       q.Get("sort"),

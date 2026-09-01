@@ -25,6 +25,25 @@ const (
 // AllStatuses lists every tracked status, in display order.
 var AllStatuses = []string{StatusBacklog, StatusPlaying, StatusPlayed, StatusDropped, StatusIgnored, StatusWishlist}
 
+// Media types for a library entry. Books are the second media type; the books
+// subject table itself arrives in a later stage.
+const (
+	MediaGame = "game"
+	MediaBook = "book"
+)
+
+// AllMediaTypes lists every tracked media type, in display order.
+var AllMediaTypes = []string{MediaGame, MediaBook}
+
+// ValidMediaType reports whether s is a tracked media type.
+func ValidMediaType(s string) bool {
+	switch s {
+	case MediaGame, MediaBook:
+		return true
+	}
+	return false
+}
+
 // ValidStatus reports whether s is a tracked status.
 func ValidStatus(s string) bool {
 	switch s {
@@ -79,9 +98,11 @@ type Game struct {
 	Extras json.RawMessage `json:"extras"`
 }
 
-// Entry is one game in one user's library.
+// Entry is one item in one user's library. Media type says which subject
+// column carries the item: Game for 'game' entries; books arrive later.
 type Entry struct {
 	ID            string     `json:"id"`
+	MediaType     string     `json:"media_type"`
 	Game          Game       `json:"game"`
 	Status        string     `json:"status"`
 	PlatformID    *int64     `json:"platform_id"`

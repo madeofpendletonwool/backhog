@@ -17,12 +17,13 @@ type PickFilter struct {
 	PlatformID *int64
 }
 
-// PickRandom returns one random backlog game matching the filter.
+// PickRandom returns one random backlog game matching the filter. Games-only
+// by design — the picker filters on time-to-beat, rating, genre and platform.
 //
 // Ordering by RANDOM() is fine here: it's a single row from one user's backlog,
 // which is hundreds of rows at most, not a table scan worth optimising.
 func (s *Store) PickRandom(ctx context.Context, userID string, f PickFilter) (models.Entry, error) {
-	query := entrySelect + ` WHERE e.user_id = ? AND e.status = 'backlog'`
+	query := entrySelect + ` WHERE e.user_id = ? AND e.media_type = 'game' AND e.status = 'backlog'`
 	args := []any{userID}
 
 	if f.MaxHours > 0 {

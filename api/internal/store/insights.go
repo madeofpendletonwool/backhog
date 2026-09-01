@@ -64,8 +64,9 @@ func (s *Store) Insights(ctx context.Context, userID string) (models.Insights, e
 }
 
 // untouched selects backlog entries with no logged play sessions — games that
-// entered the library and were never touched again.
-const untouchedWhere = `e.user_id = ? AND e.status = 'backlog'
+// entered the library and were never touched again. Game-scoped: time-to-beat
+// debt is a games-only idea.
+const untouchedWhere = `e.user_id = ? AND e.media_type = 'game' AND e.status = 'backlog'
 	AND NOT EXISTS (SELECT 1 FROM play_sessions ps WHERE ps.entry_id = e.id)`
 
 // oldestUntouched finds the untouched entry that has been sitting in the
@@ -170,7 +171,7 @@ func (s *Store) neglectedGenre(ctx context.Context, userID string) (*models.Supe
 		FROM library_entries e
 		JOIN game_genres gg ON gg.game_id = e.game_id
 		JOIN genres gn ON gn.id = gg.genre_id
-		WHERE e.user_id = ? AND e.status != 'wishlist'
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status != 'wishlist'
 		GROUP BY gn.id
 		HAVING COUNT(*) >= ? AND SUM(e.status = 'played') < COUNT(*)
 		ORDER BY SUM(e.status = 'played') * 1.0 / COUNT(*) ASC, COUNT(*) DESC
@@ -205,7 +206,7 @@ func (s *Store) worstPlatform(ctx context.Context, userID string) (*models.Super
 		JOIN game_platforms gp ON gp.game_id = e.game_id
 		JOIN platforms p ON p.id = gp.platform_id
 		JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.status IN ('backlog','playing')
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status IN ('backlog','playing')
 		GROUP BY p.id
 		HAVING COUNT(*) >= ?
 		ORDER BY SUM(g.time_to_beat_main) DESC, COUNT(*) DESC
@@ -237,7 +238,7 @@ func (s *Store) neglectedYear(ctx context.Context, userID string) (*models.Super
 		SELECT strftime('%Y', g.first_release_date, 'unixepoch'), COUNT(*),
 		       COALESCE(SUM(e.status = 'played'), 0)
 		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.status != 'wishlist'
+		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status != 'wishlist'
 		  AND g.first_release_date IS NOT NULL
 		GROUP BY 1
 		HAVING COUNT(*) >= ? AND SUM(e.status = 'played') < COUNT(*)

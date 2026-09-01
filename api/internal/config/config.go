@@ -15,6 +15,11 @@ type Config struct {
 	IGDBSecret   string
 	SteamAPIKey  string
 	Production   bool
+	// EpubTextDir holds the canonical texts and their block-offset
+	// sidecars for the Books arena ({id}.txt / {id}.blocks.json). A file
+	// next to the DB rather than a BLOB: novels are multi-megabyte strings
+	// and ranged reads should not drag them through the WAL.
+	EpubTextDir string
 	// CookieSecure marks the session cookie Secure. It defaults to off because
 	// the common self-hosted setup is plain HTTP on a LAN address, and browsers
 	// silently discard Secure cookies on non-HTTPS origins other than localhost
@@ -34,6 +39,7 @@ func Load() (Config, error) {
 		Addr:         env("ADDR", ":8080"),
 		DatabasePath: env("DATABASE_PATH", "./backhog.db"),
 		CoverDir:     env("COVER_DIR", "./covers"),
+		EpubTextDir:  env("EPUB_TEXT_DIR", "./epub_text"),
 		IGDBClientID: os.Getenv("IGDB_CLIENT_ID"),
 		IGDBSecret:   os.Getenv("IGDB_CLIENT_SECRET"),
 		SteamAPIKey:  os.Getenv("STEAM_API_KEY"),

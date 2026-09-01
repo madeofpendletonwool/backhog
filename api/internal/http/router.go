@@ -1,6 +1,7 @@
 package http
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/collinpendleton/backhog/api/internal/auth"
 	"github.com/collinpendleton/backhog/api/internal/backfill"
+	booktext "github.com/collinpendleton/backhog/api/internal/books"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
@@ -33,13 +35,23 @@ type Server struct {
 	steam      *metadata.Steam
 	backfill   *backfill.Runner
 	media      *media.Runner
+	epubs      *booktext.Ingester
 	eggLimiter eggLimiter
 }
 
 func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, books metadata.BookProvider, covers *metadata.CoverCache, steam *metadata.Steam, backfill *backfill.Runner, mediaRunner *media.Runner) *Server {
+	// The EPUB ingester is pure cfg+store glue, so it is built here rather
+	// than threaded through every caller. A failed directory creates a nil
+	// ingester: the text endpoints answer 503 instead of taking the whole
+	// server down.
+	epubs, err := booktext.NewIngester(st, cfg.EpubTextDir)
+	if err != nil {
+		slog.Error("epub text dir unavailable", "dir", cfg.EpubTextDir, "error", err)
+		epubs = nil
+	}
 	return &Server{
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
-		steam: steam, backfill: backfill, media: mediaRunner,
+		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
 		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
 	}
 }
@@ -82,6 +94,12 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/books/search", s.handleBookSearch)
 			r.Get("/books/isbn/{isbn}", s.handleBookByISBN)
 			r.Get("/books/{bookID}", s.handleGetBook)
+
+			// Canonical text for a library entry: the spine index and ranged
+			// slices of the normalized text (byte offsets). Parsing is on
+			// demand — never part of the NAS scan.
+			r.Get("/books/{entryID}/text/chapters", s.handleBookTextChapters)
+			r.Get("/books/{entryID}/text", s.handleBookText)
 
 			r.Route("/series", func(r chi.Router) {
 				r.Get("/", s.handleSeriesIndex)

@@ -4,6 +4,9 @@ services:
     environment:
       DATABASE_PATH: /data/backhog.db
       COVER_DIR: /data/covers
+      # EPUB canonical texts and their offset indexes: same volume as the
+      # database and covers, so a single backhog-data mount covers everything.
+      EPUB_TEXT_DIR: /data/epub_text
       APP_ENV: production
       # Leave false for plain HTTP on a LAN address; browsers discard Secure
       # cookies on non-HTTPS origins, which breaks login. Set true only when

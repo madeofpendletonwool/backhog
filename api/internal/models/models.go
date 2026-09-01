@@ -555,3 +555,33 @@ type MediaFile struct {
 	// kept so the BookID association survives a temporarily-unmounted NAS.
 	MissingAt *time.Time `json:"missing_at,omitempty"`
 }
+
+// EpubText is the canonical-text index row for one parsed EPUB media file.
+// The canonical text itself is a companion file ({EPUB_TEXT_DIR}/{id}.txt),
+// not a column: novels are multi-megabyte strings and only the pointer and
+// its facts live here. All offsets in the Books arena are byte offsets into
+// that text, and ParserVersion pins the normalizer that produced it.
+type EpubText struct {
+	ID               string    `json:"id"`
+	MediaFileID      int64     `json:"media_file_id"`
+	CharCount        int       `json:"char_count"`
+	WordCount        int       `json:"word_count"`
+	NormalizedSHA256 string    `json:"normalized_sha256"`
+	ParsedAt         time.Time `json:"parsed_at"`
+	ParserVersion    string    `json:"parser_version"`
+}
+
+// EpubChapter is one spine document of a canonical text, in reading order.
+// [CharStart, CharEnd) partitions [0, CharCount) with no gaps or overlaps;
+// empty (image-only) documents have CharStart == CharEnd.
+type EpubChapter struct {
+	ID         string `json:"id"`
+	EpubTextID string `json:"epub_text_id"`
+	SpineIndex int    `json:"spine_index"`
+	Href       string `json:"href"`
+	Title      string `json:"title"`
+	CharStart  int    `json:"char_start"`
+	CharEnd    int    `json:"char_end"`
+	// Depth is the TOC nesting of the entry targeting this document.
+	Depth int `json:"depth"`
+}

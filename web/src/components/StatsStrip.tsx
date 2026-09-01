@@ -70,7 +70,7 @@ export function StatsStrip() {
           {stats.completion}%
         </p>
         <div
-          className="f-bar mt-2.5 h-3"
+          className="f-bar mt-2.5"
           role="progressbar"
           aria-valuenow={stats.completion}
           aria-valuemin={0}

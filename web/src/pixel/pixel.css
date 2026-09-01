@@ -37,6 +37,7 @@
 .f-btn-soft,
 .chip,
 .f-chip,
+.f-chip-active,
 .f-bar {
   border-style: solid;
   border-radius: 0;
@@ -110,20 +111,27 @@
 
 /* Chips — 1x. The doubled frame would leave no room for the label. */
 .chip,
-.f-chip {
+.f-chip,
+.f-chip-active {
   border-width: 4px;
   border-image-source: var(--frame-chip);
   border-image-slice: 4 fill;
 }
+/* .f-chip-active is the same lit chip without the state class, for chips
+   that are born selected rather than toggled into it. */
 .chip:hover,
 .f-chip:hover,
 .chip.is-active,
-.f-chip.is-active {
+.f-chip.is-active,
+.f-chip-active {
   border-image-source: var(--frame-chip-active);
 }
 
-/* Progress bar track. The fill inside takes the accent (or gold). */
+/* Progress bar track. The fill inside takes the accent (or gold). The
+   height is the frame's: 6px of sprite a side leaves nothing to fill at
+   anything shorter. */
 .f-bar {
+  height: 1rem;
   border-width: 6px;
   border-image-source: var(--frame-bar);
   border-image-slice: 6 fill;

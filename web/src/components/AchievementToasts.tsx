@@ -54,11 +54,11 @@ export function AchievementToasts() {
 function ToastCard({ toast }: { toast: Toast }) {
   return (
     <div className="f-panel animate-fade-rise pointer-events-auto flex w-full max-w-sm items-center gap-3 p-3">
-      <div className="f-chip flex size-12 shrink-0 items-center justify-center text-gold-bright">
+      <div className="f-chip flex size-12 shrink-0 items-center justify-center text-hl-bright">
         <Gi name={achievementIcon(toast.icon)} className="size-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-1.5 font-pixel text-[10px] font-bold uppercase tracking-wider text-gold-bright">
+        <p className="flex items-center gap-1.5 font-display text-[10px] font-bold uppercase tracking-wider text-hl-bright">
           <Gi name="trophy" className="size-3" />
           Achievement unlocked
         </p>

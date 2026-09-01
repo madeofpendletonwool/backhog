@@ -99,7 +99,7 @@ export function SessionLog({ entry }: { entry: GameEntry }) {
       {/* Progress against the estimate, when we have one to compare to. */}
       {totalMinutes > 0 && estimate ? (
         <div
-          className="f-bar mb-4 h-3"
+          className="f-bar mb-4"
           role="progressbar"
           aria-valuenow={Math.min(Math.round((totalMinutes * 60 * 100) / estimate), 100)}
           aria-valuemin={0}

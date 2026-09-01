@@ -137,7 +137,7 @@ export function BookFilesPage() {
           {scan.data?.running && (
             <span className="flex items-center gap-2 text-xs text-ink-400">
               <Spinner />
-              <span className="font-pixel uppercase tracking-wider">
+              <span className="font-display uppercase tracking-wider">
                 Scanning {scan.data.found} found
               </span>
             </span>
@@ -194,7 +194,7 @@ export function BookFilesPage() {
           {bulkableCount > 0 && (
             <Panel className="mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
               <p className="text-sm text-ink-300">
-                <span className="font-pixel text-[11px] uppercase tracking-wider text-ink-100">
+                <span className="font-display text-[11px] uppercase tracking-wider text-ink-100">
                   {bulkableCount} high-confidence match{bulkableCount === 1 ? "" : "es"}
                 </span>{" "}
                 — confirm them all in one go?
@@ -303,11 +303,11 @@ function CandidateRow({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="f-chip px-2 py-1 font-pixel text-[10px] uppercase tracking-wider text-ink-300">
+              <span className="f-chip px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-300">
                 {isAudio ? "Audio" : "Ebook"}
               </span>
               {candidate.high_confidence && (
-                <span className="f-chip-active px-2 py-1 font-pixel text-[10px] uppercase tracking-wider text-ink-100">
+                <span className="f-chip-active px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-100">
                   High confidence
                 </span>
               )}
@@ -352,7 +352,7 @@ function CandidateRow({
                 <div className="text-right">
                   <p className="text-sm font-semibold text-ink-100">{top.book.title}</p>
                   <p className="text-xs text-ink-400">{top.book.authors.join(", ")}</p>
-                  <p className="mt-0.5 font-pixel text-[10px] uppercase tracking-wider text-ink-500">
+                  <p className="mt-0.5 font-display text-[10px] uppercase tracking-wider text-ink-500">
                     {Math.round(top.confidence * 100)}% · from {top.signal} ·{" "}
                     {top.in_library ? "in your library" : "Open Library"}
                   </p>
@@ -442,7 +442,7 @@ function SkippedList({ skipped }: { skipped: { path: string; ext: string; reason
       {groups.map((group) => (
         <details key={group.label} className="f-panel px-4 py-3">
           <summary className="cursor-pointer text-sm text-ink-300">
-            <span className="font-pixel text-[10px] uppercase tracking-wider text-ink-400">
+            <span className="font-display text-[10px] uppercase tracking-wider text-ink-400">
               {group.files.length} file{group.files.length === 1 ? "" : "s"}
             </span>{" "}
             — {group.label}
@@ -508,7 +508,7 @@ function PickBookDialog({
       <div className="mt-4">
         <label
           htmlFor="book-pick-search"
-          className="mb-1.5 block font-pixel text-[10px] font-bold uppercase tracking-widest text-ink-400"
+          className="mb-1.5 block font-display text-[10px] font-bold uppercase tracking-widest text-ink-400"
         >
           Search Open Library
         </label>

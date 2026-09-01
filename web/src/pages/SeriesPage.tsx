@@ -93,7 +93,7 @@ export function SeriesPage() {
                   </span>
                 </div>
 
-                <div className="f-bar mt-3 h-3">
+                <div className="f-bar mt-3">
                   <div
                     className="h-full bg-brand-500 transition-[width]"
                     style={{ width: `${Math.min(s.completion, 100)}%` }}

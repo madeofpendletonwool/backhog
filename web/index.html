@@ -7,6 +7,33 @@
     <title>Backhog</title>
     <link rel="icon" type="image/png" href="/assets/favicon-32.png" />
     <link rel="apple-touch-icon" href="/assets/icon-192.png" />
+
+    <!-- Stamp the saved theme before the first paint. Without this the
+         page renders one frame of the CSS defaults (the arcade cabinet)
+         before React mounts and corrects it, which reads as a flash of
+         the wrong app. The id -> family map mirrors THEMES in
+         src/hooks/useTheme.tsx; keep the two in step. -->
+    <script>
+      (function () {
+        var FAMILY = {
+          midnight: "flat",
+          arcade: "pixel",
+          dusk: "pixel",
+          cavern: "pixel",
+          forest: "pixel",
+          bare: "pixel",
+        };
+        var theme;
+        try {
+          theme = localStorage.getItem("backhog:theme");
+        } catch (e) {
+          /* private browsing — fall through to the default */
+        }
+        if (!FAMILY[theme]) theme = "midnight";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.family = FAMILY[theme];
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

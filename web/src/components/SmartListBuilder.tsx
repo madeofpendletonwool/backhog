@@ -157,7 +157,7 @@ export function SmartListBuilder({
       </div>
 
       <div className="flex items-center gap-2 border-t border-white/[0.06] pt-3 text-xs text-ink-400">
-        <Gi name="sparkles" className="size-3.5 shrink-0 text-gold-bright" />
+        <Gi name="sparkles" className="size-3.5 shrink-0 text-hl-bright" />
         <span>Sort by</span>
         <Select
           value={value.sort?.field ?? "added"}

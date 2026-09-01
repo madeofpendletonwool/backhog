@@ -10,6 +10,7 @@ import { Button, Gi } from "./ui/primitives";
 import { Sprite } from "./ui/Sprite";
 import { useAuth } from "@/hooks/useAuth";
 import { useEggUnlock } from "@/hooks/useAchievements";
+import { useTheme } from "@/hooks/useTheme";
 import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
 import type { GiName } from "@/lib/gameicons";
@@ -33,7 +34,18 @@ export function Layout() {
   const navigate = useNavigate();
   const { data: stats } = useStats();
   const { data: listData } = useLists();
+  const { family } = useTheme();
   const fireEgg = useEggUnlock();
+
+  /* The hog is the mark in Midnight, the joystick in the arcade — the
+     one place a component gets to know which family it is in, because a
+     bitmap sprite and an emoji are not interchangeable in CSS. */
+  const mark = (size: "sm" | "lg") =>
+    family === "pixel" ? (
+      <Sprite name={size === "lg" ? "stick" : "ball"} className={size === "sm" ? "h-8 w-8" : undefined} />
+    ) : (
+      <span className={size === "lg" ? "text-2xl leading-none" : "text-xl leading-none"}>🐗</span>
+    );
 
   // The logo is watching for watchers: ten clicks on the hog and the
   // Hog Watcher egg hatches. The counter resets on reload — a streak
@@ -69,12 +81,26 @@ export function Layout() {
           title="Backhog"
           onClick={onLogoClick}
         >
-          <Sprite name="stick" />
+          {mark("lg")}
           <div>
-            <p className="font-pixel text-[13px] font-bold uppercase tracking-widest text-ink-100">
+            <p
+              className={cn(
+                "text-ink-100",
+                family === "pixel"
+                  ? "font-display text-[13px] font-bold uppercase tracking-widest"
+                  : "text-[15px] font-semibold tracking-tight",
+              )}
+            >
               Backhog
             </p>
-            <p className="mt-1 font-pixel text-[9px] uppercase tracking-wider text-ink-400">
+            <p
+              className={cn(
+                "mt-1 text-ink-400",
+                family === "pixel"
+                  ? "font-display text-[9px] uppercase tracking-wider"
+                  : "text-[11px]",
+              )}
+            >
               {stats ? `${stats.backlog} in the backlog` : "\u00a0"}
             </p>
           </div>
@@ -83,7 +109,17 @@ export function Layout() {
         <Button variant="primary" className="mb-4 w-full" onClick={() => setAddOpen(true)}>
           <Gi name="plus" className="size-3.5" />
           Add game
-          <kbd className="ml-auto rounded-[2px] bg-black/20 px-1.5 py-0.5 font-sans text-[10px] font-normal normal-case tracking-normal text-black/60">
+          {/* The shortcut hint sits *on* the primary button, so it has to
+              read against whatever that button is: dark ink on arcade
+              gold, light ink on Midnight's violet. */}
+          <kbd
+            className={cn(
+              "ml-auto px-1.5 py-0.5 font-sans text-[10px] font-normal normal-case tracking-normal",
+              family === "pixel"
+                ? "rounded-[2px] bg-black/20 text-black/60"
+                : "rounded border border-white/20 text-white/70",
+            )}
+          >
             ⌘K
           </kbd>
         </Button>
@@ -104,15 +140,15 @@ export function Layout() {
 
         {smartLists.length > 0 && (
           <div className="mt-7">
-            <p className="px-2 pb-2 font-pixel text-[9px] font-bold uppercase tracking-widest text-ink-400">
+            <p className="px-2 pb-2 font-display text-[9px] font-bold uppercase tracking-widest text-ink-400">
               Smart lists
             </p>
             <div className="space-y-1">
               {smartLists.map((list) => (
                 <NavLink key={list.id} to={`/lists/${list.id}`} className={navLinkClass}>
-                  <Gi name="sparkles" className="size-3.5 shrink-0 text-gold-bright" />
+                  <Gi name="sparkles" className="size-3.5 shrink-0 text-hl-bright" />
                   <span className="truncate">{list.name}</span>
-                  <span className="ml-auto shrink-0 font-pixel text-[10px] tabular-nums text-ink-400">
+                  <span className="ml-auto shrink-0 font-display text-[10px] tabular-nums text-ink-400">
                     {list.count}
                   </span>
                 </NavLink>
@@ -146,7 +182,7 @@ export function Layout() {
       {/* Mobile top bar; the sidebar collapses away below lg. */}
       <header className="f-panel fixed inset-x-2 top-2 z-30 flex items-center gap-1 px-3 py-1.5 lg:hidden">
         <button type="button" aria-label="Backhog" className="shrink-0" onClick={onLogoClick}>
-          <Sprite name="ball" className="h-8 w-8" />
+          {mark("sm")}
         </button>
         <nav className="flex flex-1 items-center gap-1 overflow-x-auto">
           {navItems.map(({ to, label, icon, end }) => (
@@ -195,4 +231,4 @@ const actionLinkClass =
   "flex w-full items-center gap-2.5 px-3 py-2 text-sm text-ink-400 transition-colors hover:text-ink-200 focus-visible:focus-ring";
 
 const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
-  cn("p-2 transition-colors", isActive ? "text-gold-bright" : "text-ink-400");
+  cn("p-2 transition-colors", isActive ? "text-hl-bright" : "text-ink-400");

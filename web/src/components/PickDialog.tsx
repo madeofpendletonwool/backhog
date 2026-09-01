@@ -81,7 +81,7 @@ export function PickDialog({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Dialog open={open} onClose={onClose} label="What should I play?" className="max-w-2xl">
       <h2 className="flex items-center gap-2 text-lg font-semibold text-ink-100">
-        <Gi name="dices" className="size-5 text-gold-bright" />
+        <Gi name="dices" className="size-5 text-hl-bright" />
         What should I play?
       </h2>
       <p className="mt-1 text-sm text-ink-400">Tonight's picks for {budgetLabel}.</p>

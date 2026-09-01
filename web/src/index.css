@@ -2,31 +2,39 @@
 @import "./pixel/fonts.css";
 @import "./pixel/themes.css";
 @import "./pixel/pixel.css";
+@import "./themes/flat.css";
 
 /* ---------------------------------------------------------------------------
-   Backhog's design system — the grimoire recipe on arcade hardware.
+   Backhog's design system.
 
-   The interface is made of real pixel art: nine-slice console-plastic
-   frames, a 32px arcade sprite sheet, and four parallax backdrops. The
-   words stay at full resolution; only the chrome wears the art.
+   This file holds the part every theme shares: the token names components
+   are allowed to use. What those tokens *resolve to* is decided by the
+   theme family on <html data-family> (see hooks/useTheme.tsx):
 
-   The rules that keep it crisp:
+     flat   themes/flat.css   — Midnight. Rounded surfaces, hairline
+                                borders, violet accent, system type.
+     pixel  pixel/pixel.css   — the arcade kit. Nine-slice sprite frames,
+                                Silkscreen type, a parallax backdrop.
 
-   1. Pixel art scales by whole numbers only. Frames pair a
-      border-image-slice with an integer-multiple border-width. Anything
-      else resamples the pixels and the whole thing goes soft.
-   2. A framed surface carries no background-color and no border-radius —
-      the sprite supplies both. (See the .frame reset.)
-   3. A flat surface that sits next to a framed one uses the same ramp
-      token the sprite was recoloured with, so there is no seam.
-   4. The per-game accent (cover-sampled) tints glows and progress *inside*
-      framed surfaces. Frames themselves stay theme-coloured, and the
-      coin-gold action colour never re-tints.
+   The contract that lets one set of components serve both:
+
+   1. Components never name a family. They use the vocabulary — .panel,
+      .f-field, .f-btn-gold, .chip, .f-bar, font-display, ink-*, hl-* —
+      and each family supplies its own recipe for it.
+   2. The ink ramp is a fixed lightness ladder. A theme may move its hue;
+      it may not change the contrast between two steps, so text that is
+      legible in one theme is legible in all of them.
+   3. Meaning-bearing colour never re-themes: status cyan/green/red, the
+      achievement tiers, and the per-game cover accent are the same in
+      every theme. Only the room around them changes.
+   4. hl-* is the "this is the live one" ramp — coin gold in the arcade,
+      brand violet in Midnight. It is chrome, so it does re-theme.
 --------------------------------------------------------------------------- */
 
 @theme inline {
-  /* The chrome ramp follows the theme (see pixel/themes.css); the old
-     surface names are kept so the component vocabulary is unchanged. */
+  /* Every token here is a var() on purpose: `inline` makes Tailwind emit
+     the reference rather than the value, so `.text-ink-100` re-resolves
+     when <html data-theme> changes instead of being frozen at build. */
   --color-ink-950: var(--c-950);
   --color-ink-900: var(--c-900);
   --color-ink-850: var(--c-850);
@@ -47,11 +55,12 @@
   --color-brand-500: #8b5cf6;
   --color-brand-600: #7c3aed;
 
-  /* Coin gold — the one action colour that never re-tints. */
-  --color-gold-pale: #ffe9a8;
-  --color-gold-bright: #ffd071;
-  --color-gold-mid: #c9a227;
-  --color-gold-dim: #8a7024;
+  /* The highlight ramp: focus rings, the live nav item, "unlocked!".
+     Coin gold under the arcade family, brand violet under Midnight. */
+  --color-hl-pale: var(--hl-pale);
+  --color-hl-bright: var(--hl-bright);
+  --color-hl-mid: var(--hl-mid);
+  --color-hl-dim: var(--hl-dim);
 
   --color-status-backlog: #94a3b8;
   --color-status-playing: #22d3ee;
@@ -65,10 +74,13 @@
   --color-tier-gold: #e6c35c;
   --color-tier-legendary: #82e6ff;
 
-  --radius-xl: 0.25rem;
-  --radius-2xl: 0.25rem;
+  --radius-xl: var(--r-xl);
+  --radius-2xl: var(--r-2xl);
 
-  --font-pixel: "Silkscreen", ui-monospace, monospace;
+  /* The display face: Silkscreen in the arcade, the UI sans in Midnight.
+     Every `font-display` site also sets uppercase + tracking, which is the
+     shape both faces are used in. */
+  --font-display: var(--f-display);
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -77,6 +89,18 @@
   color-scheme: dark;
   /* Per-card accent, overridden inline from the cover's sampled colour. */
   --accent: var(--color-brand-500);
+
+  /* --- Family defaults: the arcade kit. themes/flat.css overrides these
+         under [data-family="flat"]. --- */
+  --r-xl: 0.25rem;
+  --r-2xl: 0.25rem;
+  --f-display: "Silkscreen", ui-monospace, monospace;
+  --hl-pale: #ffe9a8;
+  --hl-bright: #ffd071;
+  --hl-mid: #c9a227;
+  --hl-dim: #8a7024;
+  --selection-bg: var(--color-hl-mid);
+  --selection-fg: #100c02;
 
   /* Bare console plastic — the no-backdrop chrome. themes.css overrides
      these per scene; the frame URLs here are the default set. */
@@ -124,8 +148,8 @@ body {
 }
 
 ::selection {
-  background: var(--color-gold-mid);
-  color: #100c02;
+  background: var(--selection-bg);
+  color: var(--selection-fg);
 }
 
 /* Slim, unobtrusive scrollbars that match the surfaces. */
@@ -147,10 +171,10 @@ body {
   background-color: var(--c-500);
 }
 
-/* Focus is a coin-gold outline — the arcade's "insert coin" colour.
-   Visible on every theme, and it never fights the accent. */
+/* One focus treatment for every theme: an outline in the highlight ramp,
+   which each family has already tuned to sit clear of its own accent. */
 @utility focus-ring {
-  outline: 2px solid var(--color-gold-bright);
+  outline: 2px solid var(--color-hl-bright);
   outline-offset: 2px;
 }
 

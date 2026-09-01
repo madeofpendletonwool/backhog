@@ -3,12 +3,18 @@ import { useEffect, useRef } from "react";
 import { useTheme } from "@/hooks/useTheme";
 
 /**
- * The parlour: a layered pixel backdrop that drifts with the pointer, and
- * the veil that guarantees text contrast over any scene. Layer counts and
- * art heights come from the build (themes.css sets --scene-layers and
- * --scene-height); layers are numbered front to back and appended in
- * reverse so 0 paints on top — stacking them the other way buries the
- * scene under its own sky.
+ * The room the app sits in — whichever room the theme picked.
+ *
+ * Under the arcade family that is a layered pixel backdrop that drifts
+ * with the pointer, plus the veil that guarantees text contrast over any
+ * scene. Layer counts and art heights come from the build (themes.css
+ * sets --scene-layers and --scene-height); layers are numbered front to
+ * back and appended in reverse so 0 paints on top — stacking them the
+ * other way buries the scene under its own sky.
+ *
+ * Midnight has no backdrop art. It gets a single soft aurora instead, so
+ * flat black never reads as dead space, and none of the parallax
+ * machinery below ever runs.
  */
 
 /** How far the nearest layer travels, corner to corner, in px. */
@@ -19,12 +25,21 @@ const DRIFT = 52;
 const DEPTH_CURVE = 2.2;
 
 export function Scene() {
-  const { theme } = useTheme();
+  const { theme, family } = useTheme();
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
+
+    if (family === "flat") {
+      const aurora = document.createElement("div");
+      aurora.className = "scene-aurora";
+      root.replaceChildren(aurora);
+      root.style.removeProperty("--scene-scale");
+      return;
+    }
+
     const css = getComputedStyle(document.documentElement);
     const layers = Number(css.getPropertyValue("--scene-layers")) || 0;
     const height = Number(css.getPropertyValue("--scene-height")) || 216;
@@ -88,7 +103,7 @@ export function Scene() {
       window.removeEventListener("pointermove", onPointer);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [theme]);
+  }, [theme, family]);
 
   return <div ref={rootRef} className="scene" aria-hidden="true" />;
 }

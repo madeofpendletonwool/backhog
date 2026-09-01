@@ -3,11 +3,21 @@
 How the interface is built, and what you have to preserve when you add to
 it.
 
-Backhog's UI is real pixel art — nine-sliced console-plastic frames, an
-arcade sprite sheet, four parallax backdrops — assembled with Tailwind v4's
-CSS-first config and a handful of React components. There is no separate
-build step for the app itself; only the *assets* have one, and it only
-needs to run again when the art changes.
+Backhog ships **two theme families**, and a component belongs to neither.
+It names a surface — `.panel`, `.f-field`, `.f-btn-gold`, `font-display` —
+and whichever family is active supplies the recipe:
+
+- **Midnight** (`flat`) — the original dark theme. Rounded surfaces,
+  hairline borders, one violet accent, system type. The neutral one, and
+  the default; Backhog is picking up books, and a shelf of them should not
+  have to live inside an arcade cabinet.
+- **Arcade** (`pixel`) — real pixel art. Nine-sliced console-plastic
+  frames, an arcade sprite sheet, four parallax backdrops.
+
+Both are assembled with Tailwind v4's CSS-first config and a handful of
+React components. There is no separate build step for the app itself; only
+the arcade family's *assets* have one, and it only needs to run again when
+the art changes.
 
 **If you read nothing else, read [Invariants](#invariants).**
 
@@ -15,9 +25,11 @@ needs to run again when the art changes.
 
 ## The idea
 
-> Coin-gold for the actions, console plastic for the room. Pixel art
-> carries the chrome and the hero marks. The words, the covers, and the
-> per-game accent stay at full resolution.
+> The room is themeable. What is in it is not.
+
+Whichever family is on, the covers, the prose, the numbers, the status
+colours and the per-game accent look identical. Only the chrome around
+them changes.
 
 Backhog is a library you scan quickly and read closely: a wall of cover art
 punctuated by short, dense text (titles, hours, ratings). The chrome around
@@ -29,9 +41,10 @@ Two consequences worth internalising:
 - **The accent never changes.** `--accent`, sampled server-side from each
   game's own cover art, tints hover glows and progress fills inside framed
   surfaces. The frame itself is always theme-coloured; the accent is always
-  the game's. Coin gold (the primary action) and danger red are a third,
-  separate constant — they don't re-tint either, the same way grimoire's
-  gold buttons never changed between its four themes.
+  the game's. Status cyan/green/red and the achievement tiers are the same
+  constant — meaning-bearing colour does not re-theme. The one ramp that
+  *does* is `hl-*` (coin gold in the arcade, brand violet in Midnight),
+  because it is pure chrome: focus rings, the live nav item, "unlocked!".
 - **Give the art room rather than shrinking it.** The arcade sheet's sprite
   cells are 32×64 pixel art; a fractional scale would resample them into
   mush. When a sprite doesn't fit, the layout grows around it or the mark
@@ -43,15 +56,17 @@ Two consequences worth internalising:
 
 | File | Owns | Edit? |
 |---|---|---|
-| `web/src/index.css` | Tokens (`@theme inline`), body/base styles, `focus-ring` and `skeleton` utilities | yes |
-| `web/src/pixel/pixel.css` | Frame classes, sprite/vector-icon sizing, the scene | yes |
+| `web/src/index.css` | Shared tokens (`@theme inline`), body/base styles, `focus-ring` and `skeleton` utilities | yes |
+| `web/src/themes/flat.css` | The Midnight palette **and** the whole flat family recipe | yes |
+| `web/src/pixel/pixel.css` | Arcade frame classes, sprite/vector-icon sizing, the scene | yes |
 | `web/src/pixel/themes.css` | Per-theme chrome ramp + frame URLs | **generated** |
 | `web/src/pixel/fonts.css` | `@font-face` for Silkscreen | **generated** |
 | `web/src/lib/gameicons.ts` | Vector icon path data + `GiName` type | **generated** |
 | `web/src/components/ui/Gi.tsx` | Renders a vector icon by name | yes |
 | `web/src/components/ui/Sprite.tsx` | Renders an arcade sprite cell by name | yes |
 | `web/src/components/Scene.tsx` | Mounts the backdrop layers, parallax, rescaling | yes |
-| `web/src/hooks/useTheme.tsx` | Theme context, `data-theme` on `<html>`, localStorage | yes |
+| `web/src/hooks/useTheme.tsx` | Theme + family context, `data-theme`/`data-family` on `<html>`, localStorage | yes |
+| `web/index.html` | Pre-paint script that stamps the saved theme (mirrors `THEMES`) | yes |
 | `web/public/assets/` | Shipped PNGs (frames, sprites, scenes, fonts) | **generated** |
 
 **index.css vs pixel.css.** index.css says what a token or a base style
@@ -187,8 +202,8 @@ Worked example — a framed panel:
    table in [Invariants #1](#invariants). If it should vary by theme, add
    the recolour to `build_frames()`/`themed_frames()` in
    `scripts/build-assets.py` instead of hand-picking a colour.
-3. **Check it against every theme and against bare plastic** (Settings →
-   Theme → "Bare console"), not just the default (`arcade`).
+3. **Check it in both families**, not just the default (Midnight):
+   Settings → Theme → Arcade, and Arcade → Backdrop → "Bare console".
 
 ### Typography
 
@@ -196,7 +211,7 @@ Two voices:
 
 | Token | Font | For |
 |---|---|---|
-| `--font-pixel` | Silkscreen | Wordmark, nav labels, section labels, button text, stat numbers |
+| `--font-display` | Silkscreen (arcade) / system UI (Midnight) | Wordmark, nav labels, section labels, button text, stat numbers |
 | (default) | system UI stack | Everything else — game titles, descriptions, dense table text |
 
 Silkscreen for **labels and numbers only**, never for long-form text —
@@ -207,22 +222,52 @@ resolution, the same reason grimoire kept its prose in a real serif.
 
 ## Themes
 
-Four backdrops, plus a no-backdrop "bare console" fallback. Picking one in
-Settings sets `data-theme` on `<html>`; `themes.css` swaps the chrome ramp
-and the frame sprites to match.
+Two tiers. A **family** decides how the chrome is built; a **theme** is one
+palette inside it. Both land on `<html>` as `data-family` / `data-theme`.
 
-| Theme | Hue (measured) | Chrome |
+| Family | Themes | Chrome |
 |---|---|---|
-| `arcade` | ~291° | Violet-magenta (default) |
+| `flat` | `midnight` (default) | Rounded surfaces, hairline borders, violet accent, system type |
+| `pixel` | `arcade`, `forest`, `cavern`, `dusk`, `bare` | Nine-slice sprite frames, Silkscreen, parallax backdrop |
+
+Only the pixel family has more than one theme, because its chrome is
+*recoloured from its backdrop art* at build time — backdrop and palette are
+one choice. That is why Settings reads "pick a family, then (for Arcade) a
+backdrop".
+
+| Pixel theme | Hue (measured) | Chrome |
+|---|---|---|
+| `arcade` | ~291° | Violet-magenta |
 | `forest` | ~228° | Cool blue-grey |
 | `cavern` | ~44° | Warm brown |
 | `dusk` | ~332° | Mauve-pink |
 | `bare` | — | Falls back to `:root`, no backdrop |
 
-**Adding a theme:** drop a layered scene pack into `icon-packs/`, add it to
-`SCENES` in `scripts/build-assets.py` (source pack + ordered layer list +
-whether it tiles) *and* to `THEMES` in `web/src/hooks/useTheme.tsx`, then
-re-run the build. Hue, chrome ramp, frames, and sky colour are all
+**How a family is implemented.** Both families style the *same* class
+names. `pixel.css` writes them unprefixed (`.f-panel { … }`); `flat.css`
+writes them as `html[data-family="flat"] .f-panel { … }`, which wins on
+specificity alone, so import order does not matter. Both stay inside
+`@layer components` so ordinary Tailwind utilities still override them at
+the call site.
+
+Three things a family owns that CSS alone cannot express, and which
+therefore branch in TSX on `useTheme().family`:
+
+- **Control metrics** (`primitives.tsx`) — the arcade's frames are 12px of
+  sprite a side, so its buttons and fields have to be taller.
+- **Label type** — Silkscreen is a 5px bitmap that only reads uppercase at
+  ~11px; the system face wants normal case at 14px.
+- **Hero marks** — 🐗 vs. a sprite cell, in `Layout.tsx` / `AuthShell.tsx`.
+
+Everything else — colour, radius, border, shadow, the progress track's
+height, the loading mark — belongs in CSS. If you find yourself adding a
+fourth `family === "…"` branch, check first whether a token would do.
+
+**Adding a backdrop to the pixel family:** drop a layered scene pack into
+`icon-packs/`, add it to `SCENES` in `scripts/build-assets.py` (source pack
++ ordered layer list + whether it tiles) *and* to `THEMES` in
+`web/src/hooks/useTheme.tsx` **and** the `FAMILY` map in `web/index.html`,
+then re-run the build. Hue, chrome ramp, frames, and sky colour are all
 derived — you write no colours by hand.
 
 ### Two things about the backdrop art

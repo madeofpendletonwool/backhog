@@ -25,7 +25,7 @@ export function SeasonCard() {
         </div>
         <Link
           to="/achievements"
-          className="f-btn-soft flex size-11 items-center justify-center text-gold-bright focus-visible:focus-ring"
+          className="f-btn-soft flex size-11 items-center justify-center text-hl-bright focus-visible:focus-ring"
           aria-label="View achievements"
         >
           <Gi name="trophy" className="size-5" />

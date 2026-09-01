@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Sprite } from "@/components/ui/Sprite";
+import { useTheme } from "@/hooks/useTheme";
+import { cn } from "@/lib/cn";
 
 /** Shared chrome for the login and register pages. */
 export function AuthShell({
@@ -13,12 +15,26 @@ export function AuthShell({
   children: ReactNode;
   footer: ReactNode;
 }) {
+  const { family } = useTheme();
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-12">
       <div className="animate-fade-rise w-full max-w-sm">
         <div className="mb-8 text-center">
-          <Sprite name="ball" scale={2} className="mx-auto" />
-          <h1 className="mt-4 font-pixel text-xl uppercase tracking-widest text-ink-100">{title}</h1>
+          {family === "pixel" ? (
+            <Sprite name="ball" scale={2} className="mx-auto" />
+          ) : (
+            <span className="text-5xl">🐗</span>
+          )}
+          <h1
+            className={cn(
+              "mt-4 text-ink-100",
+              family === "pixel"
+                ? "font-display text-xl uppercase tracking-widest"
+                : "text-2xl font-semibold tracking-tight",
+            )}
+          >
+            {title}
+          </h1>
           <p className="mt-2 text-sm text-ink-400">{subtitle}</p>
         </div>
 

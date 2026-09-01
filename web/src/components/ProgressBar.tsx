@@ -1,11 +1,13 @@
 import { cn } from "@/lib/cn";
 
-/** A framed progress bar; emerald when the target is met, the accent while
- *  working — the fill is the one place inside the frame the accent shows. */
+/** A progress bar; emerald when the target is met, the accent while
+ *  working — the fill is the one place inside the frame the accent shows.
+ *  The track's height belongs to the theme (chunky arcade plastic, a
+ *  Midnight hairline), so it is set in CSS on .f-bar, not here. */
 export function ProgressBar({ percent, complete }: { percent: number; complete: boolean }) {
   return (
     <div
-      className="f-bar h-4 w-full overflow-hidden"
+      className="f-bar w-full overflow-hidden"
       role="progressbar"
       aria-valuenow={Math.round(percent)}
       aria-valuemin={0}

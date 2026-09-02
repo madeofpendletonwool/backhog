@@ -121,6 +121,17 @@ ICONS = {
     "mountain":      "lorc/mountains",
     "mayan-pyramid": "delapouite/mayan-pyramid",
     "play":          "guard13007/play-button",
+    # the audiobook player's transport. previous-button is the same
+    # glyph "arrow-left" already borrows — a left-pointing play triangle
+    # against a bar — which is exactly what a previous-track control is,
+    # so the two names share one upstream icon rather than shipping a
+    # near-duplicate.
+    "pause":         "guard13007/pause-button",
+    "skip-back":     "delapouite/previous-button",
+    "skip-forward":  "delapouite/next-button",
+    "rewind":        "delapouite/fast-backward-button",
+    "fast-forward":  "delapouite/fast-forward-button",
+    "headphones":    "delapouite/headphones",
     "shovel":        "lorc/spade",
     "small-fire":    "lorc/small-fire",
     "sparkles":      "delapouite/sparkles",

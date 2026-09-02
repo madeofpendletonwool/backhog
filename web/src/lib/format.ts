@@ -10,6 +10,31 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${hours}h ${minutes}m`;
 }
 
+/**
+ * A clock reading for the player: "3:12" under an hour, "1:04:07" over one.
+ * Minutes and seconds are always two digits so the numbers stop jittering
+ * sideways as they tick — these are set in Silkscreen, which is not tabular.
+ */
+export function formatTimecode(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) seconds = 0;
+  const total = Math.floor(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`;
+}
+
+/** "2h 14m left" / "9m left" — how much book there is after here. */
+export function formatRemaining(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 30) return "finishing";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m left`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h left` : `${hours}h ${rest}m left`;
+}
+
 /** Rounds a seconds duration to whole hours, for totals. */
 export function toHours(seconds: number | null | undefined): number {
   return seconds && seconds > 0 ? seconds / 3600 : 0;

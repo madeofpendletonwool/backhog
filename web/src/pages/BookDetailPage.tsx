@@ -11,6 +11,7 @@ import { Gi } from "@/components/ui/Gi";
 import { Button, Panel, Skeleton } from "@/components/ui/primitives";
 import { useBook, useBookEntry } from "@/hooks/useBooks";
 import { useDeleteEntry, useUpdateEntry } from "@/hooks/useLibrary";
+import { useAudioPlayer } from "@/hooks/useAudioPlayer";
 import { api, bookCoverUrl } from "@/lib/api";
 import {
   accentStyle,
@@ -18,11 +19,12 @@ import {
   editionISBN,
   editionLabel,
   formatDate,
+  formatDuration,
   formatPages,
   publishYear,
   relativeTime,
 } from "@/lib/format";
-import { STATUSES, type Book, type BookEdition } from "@/lib/types";
+import { STATUSES, type Book, type BookEdition, type BookEntry } from "@/lib/types";
 
 /**
  * One book, the mirror of GameDetailPage: the provider's dossier on the left,
@@ -137,8 +139,9 @@ export function BookDetailPage() {
                 </div>
               )}
 
-              <div className="mt-5 max-w-md">
+              <div className="mt-5 flex max-w-md flex-wrap items-center gap-3">
                 <StatusMenu entry={entry} size="md" statuses={STATUSES} />
+                <ListenButton entry={entry} />
               </div>
             </div>
           </div>
@@ -282,6 +285,61 @@ function BookFacts({ book }: { book: Book }) {
         ))}
       </dl>
     </Panel>
+  );
+}
+
+/**
+ * The listening entry point. Backhog has to be the player for the handoff to
+ * work, so this opens the global player rather than handing the files to
+ * anything else.
+ *
+ * Both queries use the same keys the player hydrates from, so the click that
+ * starts playback is also a cache hit — the element gets its src inside the
+ * tap's own task, which is what keeps iOS from refusing the play().
+ */
+function ListenButton({ entry }: { entry: BookEntry }) {
+  const player = useAudioPlayer();
+  const { data: timeline } = useQuery({
+    queryKey: ["bookAudio", entry.id],
+    queryFn: () => api.bookAudio(entry.id),
+  });
+  const { data: position } = useQuery({
+    queryKey: ["bookPosition", entry.id],
+    queryFn: () => api.bookPosition(entry.id),
+  });
+
+  if (!timeline || timeline.tracks.length === 0) return null;
+
+  const active = player.entry?.id === entry.id;
+  const into = position?.audio?.seconds ?? 0;
+  // A finished book's stored position is the end of the tape; "resume" there
+  // would be silence, so it starts over instead.
+  const finished = timeline.total_duration > 0 && into >= timeline.total_duration - 30;
+
+  return (
+    <div className="flex items-center gap-2.5">
+      <Button
+        variant={active ? "secondary" : "primary"}
+        onClick={() =>
+          active ? player.toggle() : player.open(entry, finished ? { startAt: 0 } : undefined)
+        }
+      >
+        <Gi name="headphones" className="size-3.5" />
+        {active
+          ? player.playing
+            ? "Pause"
+            : "Resume"
+          : finished
+            ? "Listen again"
+            : into > 0
+              ? "Resume"
+              : "Listen"}
+      </Button>
+      <span className="text-xs text-ink-500">
+        {formatDuration(timeline.total_duration)} · {timeline.tracks.length} file
+        {timeline.tracks.length === 1 ? "" : "s"}
+      </span>
+    </div>
   );
 }
 

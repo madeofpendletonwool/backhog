@@ -125,6 +125,13 @@ func (s *Server) Routes() http.Handler {
 			// from it on read.
 			r.Get("/books/{entryID}/position", s.handleGetBookPosition)
 			r.Put("/books/{entryID}/position", s.handlePutBookPosition)
+			// POST is the same write, for the one caller that cannot use
+			// PUT: navigator.sendBeacon, which is the only request a
+			// browser promises to deliver after a tab closes or a phone
+			// backgrounds the player, and which can only POST. The session
+			// cookie is SameSite=Lax, so a cross-site beacon carries no
+			// credentials and this opens nothing PUT did not.
+			r.Post("/books/{entryID}/position", s.handlePutBookPosition)
 			r.Get("/books/{entryID}/sessions", s.handleGetReadingSessions)
 			r.Post("/books/{entryID}/sessions", s.handleAddReadingSession)
 

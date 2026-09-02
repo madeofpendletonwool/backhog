@@ -5,12 +5,14 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AchievementToasts } from "./AchievementToasts";
 import { AddBookDialog } from "./AddBookDialog";
 import { AddGameDialog } from "./AddGameDialog";
+import { AudioPlayer } from "./AudioPlayer";
 import { PickDialog } from "./PickDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
 import { Button, Gi } from "./ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
 import { useEggUnlock } from "@/hooks/useAchievements";
 import { useBookStats } from "@/hooks/useBooks";
+import { AudioPlayerProvider } from "@/hooks/useAudioPlayer";
 import { useTheme } from "@/hooks/useTheme";
 import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
@@ -134,7 +136,10 @@ export function Layout() {
 
   const smartLists = listData?.lists.filter((list) => list.kind === "smart") ?? [];
 
-  return (
+  /* The whole app lives inside the audio player's provider, so the one
+     <audio> element survives every navigation; the player bar itself is
+     fixed-positioned and hides itself when nothing is loaded. */
+  const chrome = (
     <div className="flex min-h-screen">
       <aside className="f-panel fixed inset-y-2 left-2 z-20 hidden w-60 flex-col px-3 py-5 lg:flex">
         <div
@@ -285,7 +290,9 @@ export function Layout() {
         </Button>
       </header>
 
-      <main className="min-w-0 flex-1 pt-20 lg:pl-[17rem] lg:pt-0">
+      {/* The player bar publishes its own height as --player-h (0 when no
+          book is open), so the last row of a page is never buried under it. */}
+      <main className="min-w-0 flex-1 pb-[var(--player-h,0px)] pt-20 lg:pl-[17rem] lg:pt-0">
         <Outlet context={{ openAddDialog: () => setAddOpen(true) }} />
       </main>
 
@@ -295,6 +302,13 @@ export function Layout() {
       <SteamImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
       <AchievementToasts />
     </div>
+  );
+
+  return (
+    <AudioPlayerProvider>
+      {chrome}
+      <AudioPlayer />
+    </AudioPlayerProvider>
   );
 }
 

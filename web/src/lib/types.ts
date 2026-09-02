@@ -647,6 +647,70 @@ export interface AudioTimeline {
   degraded: boolean;
 }
 
+/**
+ * One illustration of a spine document. `href` is a path *inside* the EPUB —
+ * the parser drops remote, protocol-relative and data: references before they
+ * ever reach a payload — and its bytes come from the authenticated asset
+ * endpoint, so a book can never make the page load from a third party.
+ *
+ * `before_block` indexes the document's `blocks`: the image renders above
+ * that block, and `blocks.length` means it trails them all.
+ */
+export interface ChapterImage {
+  href: string;
+  alt?: string;
+  before_block: number;
+}
+
+/**
+ * One spine document of a book's canonical text. `blocks` holds the absolute
+ * byte offset of every block-level element in this document, ascending — the
+ * mapping the reader turns a scroll position into a stored offset with.
+ */
+export interface TextChapter {
+  spine_index: number;
+  href: string;
+  title: string;
+  char_start: number;
+  char_end: number;
+  depth: number;
+  /** Null when the block-offset sidecar could not be read. */
+  blocks: number[] | null;
+  images: ChapterImage[];
+}
+
+/** GET /api/books/{entryId}/text/chapters — the spine, with block offsets. */
+export interface BookTextChapters {
+  char_count: number;
+  parser_version: string;
+  chapters: TextChapter[];
+}
+
+/**
+ * GET /api/books/{entryId}/text?from=&to= — a slice of the canonical text.
+ * `from`/`to` are **byte** offsets into its UTF-8 encoding, not JS string
+ * indexes. The canonical text is folded for matching (lowercased, punctuation
+ * dropped); it is an address space, not something to read.
+ */
+export interface BookTextSlice {
+  from: number;
+  to: number;
+  char_count: number;
+  text: string;
+}
+
+/**
+ * GET /api/books/{entryId}/text/display?spine=N — one spine document as
+ * prose. `blocks[i]` is the text of the block starting at that chapter's
+ * `blocks[i]` canonical offset; the server builds both in one pass, so the
+ * correspondence is exact. This is what the reader renders.
+ */
+export interface BookTextDisplay {
+  spine_index: number;
+  href: string;
+  blocks: string[];
+}
+
 /** Where the player should start, in global seconds and as a track offset. */
 export interface PositionAudio {
   seconds: number;

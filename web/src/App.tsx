@@ -7,6 +7,7 @@ import { AchievementsPage } from "./pages/AchievementsPage";
 import { BookDetailPage } from "./pages/BookDetailPage";
 import { BookFilesPage } from "./pages/BookFilesPage";
 import { BookLibraryPage } from "./pages/BookLibraryPage";
+import { BookReaderPage } from "./pages/BookReaderPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DebtPage } from "./pages/DebtPage";
 import { GameDetailPage } from "./pages/GameDetailPage";
@@ -65,6 +66,7 @@ export function App() {
             /books/files stays the attach queue rather than an entry id. */}
         <Route path="/books/files" element={<BookFilesPage />} />
         <Route path="/books/:entryId" element={<BookDetailPage />} />
+        <Route path="/books/:entryId/read" element={<BookReaderPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -141,6 +141,7 @@ export function BookDetailPage() {
 
               <div className="mt-5 flex max-w-md flex-wrap items-center gap-3">
                 <StatusMenu entry={entry} size="md" statuses={STATUSES} />
+                <ReadButton entry={entry} />
                 <ListenButton entry={entry} />
               </div>
             </div>
@@ -285,6 +286,41 @@ function BookFacts({ book }: { book: Book }) {
         ))}
       </dl>
     </Panel>
+  );
+}
+
+/**
+ * The reading entry point, and the mirror of ListenButton: the reader is
+ * ours for the same reason the player is, because the handoff only works
+ * when both ends report the same canonical offset.
+ *
+ * The chapters query is the parse-on-demand one, so a book whose EPUB has
+ * never been opened pays for it here rather than on the reader's first
+ * paint — and a book with no EPUB attached simply has no button.
+ */
+function ReadButton({ entry }: { entry: BookEntry }) {
+  const { data: text } = useQuery({
+    queryKey: ["bookTextChapters", entry.id],
+    queryFn: () => api.bookTextChapters(entry.id),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const { data: position } = useQuery({
+    queryKey: ["bookPosition", entry.id],
+    queryFn: () => api.bookPosition(entry.id),
+  });
+
+  if (!text || text.char_count === 0) return null;
+
+  const into = position?.char_offset ?? 0;
+
+  return (
+    <Link to={`/books/${entry.id}/read`}>
+      <Button variant="primary">
+        <Gi name="scroll-unfurled" className="size-3.5" />
+        {into > 0 ? "Continue reading" : "Read"}
+      </Button>
+    </Link>
   );
 }
 

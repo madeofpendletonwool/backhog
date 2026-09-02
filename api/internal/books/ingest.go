@@ -23,8 +23,9 @@ import (
 var ErrNoEpub = errors.New("books: no epub attached to this book")
 
 // indexVersion guards the sidecar shape independently of ParserVersion
-// (which guards the text itself).
-const indexVersion = 1
+// (which guards the text itself). v2 added the per-document image list and
+// the display-text spans.
+const indexVersion = 2
 
 // Ingester turns EPUB media files into canonical texts: it parses the file
 // on the NAS (read-only, path-contained), canonicalizes the spine into the
@@ -53,6 +54,14 @@ func (ing *Ingester) IndexPath(id string) string {
 	return filepath.Join(ing.dir, id+".blocks.json")
 }
 
+// DisplayPath is where the readable companion to a canonical text lives:
+// the same blocks in the same order, joined by newlines, with the book's own
+// capitals and punctuation. The canonical text answers "where am I"; this
+// one answers "what does it say".
+func (ing *Ingester) DisplayPath(id string) string {
+	return filepath.Join(ing.dir, id+".display.txt")
+}
+
 // EnsureForEntry parses (or re-parses) the EPUB attached to a user's book
 // entry and returns its canonical-text row.
 func (ing *Ingester) EnsureForEntry(ctx context.Context, userID, entryID string) (models.EpubText, error) {
@@ -75,7 +84,8 @@ func (ing *Ingester) EnsureForEntry(ctx context.Context, userID, entryID string)
 func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile) (models.EpubText, error) {
 	if existing, err := ing.store.GetEpubText(ctx, f.ID); err == nil {
 		if existing.ParserVersion == ParserVersion &&
-			fileExists(ing.TextPath(existing.ID)) && fileExists(ing.IndexPath(existing.ID)) {
+			fileExists(ing.TextPath(existing.ID)) && fileExists(ing.IndexPath(existing.ID)) &&
+			fileExists(ing.DisplayPath(existing.ID)) {
 			return existing, nil
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -91,7 +101,7 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 		return models.EpubText{}, err
 	}
 
-	canonical, chapters, index := Canonicalize(parsed)
+	canonical, display, chapters, index := Canonicalize(parsed)
 	et := models.EpubText{
 		MediaFileID:      f.ID,
 		CharCount:        len(canonical),
@@ -113,6 +123,9 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 	if err := writeFileAtomic(ing.TextPath(et.ID), []byte(canonical)); err != nil {
 		return models.EpubText{}, err
 	}
+	if err := writeFileAtomic(ing.DisplayPath(et.ID), []byte(display)); err != nil {
+		return models.EpubText{}, err
+	}
 	if err := writeJSONAtomic(ing.IndexPath(et.ID), index); err != nil {
 		return models.EpubText{}, err
 	}
@@ -130,6 +143,26 @@ func (ing *Ingester) ReadText(ctx context.Context, et models.EpubText, from, to 
 		return "", fmt.Errorf("books: range [%d,%d) outside text of %d bytes", from, to, len(data))
 	}
 	return string(data[from:to]), nil
+}
+
+// ReadDisplayBlocks returns one spine document's blocks as the reader shows
+// them, in the same order as the document's canonical Blocks offsets — so
+// block i of this slice starts at doc.Blocks[i]. Blocks never contain a
+// newline (Canonicalize collapses whitespace), which is what makes the file
+// splittable and the correspondence exact.
+func (ing *Ingester) ReadDisplayBlocks(ctx context.Context, et models.EpubText, doc IndexedDoc) ([]string, error) {
+	data, err := os.ReadFile(ing.DisplayPath(et.ID))
+	if err != nil {
+		return nil, fmt.Errorf("books: read display text: %w", err)
+	}
+	if doc.DisplayStart < 0 || doc.DisplayEnd < doc.DisplayStart || doc.DisplayEnd > len(data) {
+		return nil, fmt.Errorf("books: display range [%d,%d) outside text of %d bytes",
+			doc.DisplayStart, doc.DisplayEnd, len(data))
+	}
+	if doc.DisplayEnd == doc.DisplayStart {
+		return nil, nil
+	}
+	return strings.Split(string(data[doc.DisplayStart:doc.DisplayEnd]), "\n"), nil
 }
 
 // LoadIndex reads a canonical text's block-offset sidecar.
@@ -156,8 +189,16 @@ func (ing *Ingester) LoadIndex(ctx context.Context, et models.EpubText) (*BlockI
 //     empty (image-only) documents contribute empty ranges at the boundary.
 //
 // Offsets are byte offsets into the returned canonical string.
-func Canonicalize(doc *epub.Document) (string, []models.EpubChapter, *BlockIndex) {
-	var canonical strings.Builder
+//
+// It builds the *display* text in the same pass and returns it second. The
+// canonical text is folded for matching — lowercased, quotes and punctuation
+// dropped — so it is an address space, not prose; the display text is the
+// same blocks with the book's own characters, joined by newlines, and is
+// what the reader puts on the page. One pass because the two must agree
+// block for block: a block dropped from one is dropped from the other, or
+// every offset the reader reports lands on the wrong paragraph.
+func Canonicalize(doc *epub.Document) (string, string, []models.EpubChapter, *BlockIndex) {
+	var canonical, display strings.Builder
 	chapters := make([]models.EpubChapter, len(doc.Docs))
 	index := &BlockIndex{
 		Version:   indexVersion,
@@ -176,7 +217,16 @@ func Canonicalize(doc *epub.Document) (string, []models.EpubChapter, *BlockIndex
 	for i, d := range doc.Docs {
 		blocks := make([]string, 0, len(d.Blocks))
 		starts := make([]int, 0, len(d.Blocks))
-		for _, raw := range d.Blocks {
+		// An empty document owns no display bytes either, so it collapses
+		// onto whatever boundary the previous one left behind.
+		displayStart := display.Len()
+		// kept[j] is how many blocks survived normalization before raw
+		// block j, which is the canonical index an image anchored before
+		// j belongs at. It is monotone, so a dropped block simply moves
+		// its images onto the next surviving one.
+		kept := make([]int, len(d.Blocks)+1)
+		for j, raw := range d.Blocks {
+			kept[j] = len(starts)
 			norm := Normalize(raw)
 			if norm == "" {
 				continue
@@ -184,10 +234,18 @@ func Canonicalize(doc *epub.Document) (string, []models.EpubChapter, *BlockIndex
 			if canonical.Len() > 0 {
 				canonical.WriteByte(' ')
 			}
+			if display.Len() > 0 {
+				display.WriteByte('\n')
+			}
+			if len(starts) == 0 {
+				displayStart = display.Len()
+			}
 			starts = append(starts, canonical.Len())
 			canonical.WriteString(norm)
+			display.WriteString(displayText(raw))
 			blocks = append(blocks, norm)
 		}
+		kept[len(d.Blocks)] = len(starts)
 
 		spans[i] = span{hasText: len(starts) > 0}
 		if spans[i].hasText {
@@ -201,9 +259,12 @@ func Canonicalize(doc *epub.Document) (string, []models.EpubChapter, *BlockIndex
 			Depth:      d.Depth,
 		}
 		index.Documents[i] = IndexedDoc{
-			Href:       d.Href,
-			SpineIndex: i,
-			Blocks:     starts,
+			Href:         d.Href,
+			SpineIndex:   i,
+			Blocks:       starts,
+			Images:       anchorImages(d.Images, kept),
+			DisplayStart: displayStart,
+			DisplayEnd:   display.Len(),
 		}
 	}
 
@@ -236,7 +297,39 @@ func Canonicalize(doc *epub.Document) (string, []models.EpubChapter, *BlockIndex
 	}
 
 	index.CharCount = canonical.Len()
-	return canonical.String(), chapters, index
+	return canonical.String(), display.String(), chapters, index
+}
+
+// displayText prepares one block for reading: the book's own characters,
+// with every run of whitespace collapsed to a single space and the edges
+// trimmed. Nothing else is folded — case, quotes, dashes and ligatures
+// belong to the book, and the folding lives in Normalize.
+//
+// Collapsing is structural, not cosmetic: the display file joins blocks with
+// newlines, so a block that kept one of its own would come back out as two.
+func displayText(raw string) string {
+	return strings.Join(strings.Fields(raw), " ")
+}
+
+// anchorImages re-anchors a document's images from raw block indexes onto
+// canonical ones. An image trailing every block keeps that position, which
+// is what len(kept)-1 maps to.
+func anchorImages(images []epub.Image, kept []int) []IndexedImage {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]IndexedImage, 0, len(images))
+	for _, img := range images {
+		at := img.BeforeBlock
+		if at < 0 {
+			at = 0
+		}
+		if at > len(kept)-1 {
+			at = len(kept) - 1
+		}
+		out = append(out, IndexedImage{Href: img.Href, Alt: img.Alt, BeforeBlock: kept[at]})
+	}
+	return out
 }
 
 // parseEpubFile opens and parses an EPUB from disk.

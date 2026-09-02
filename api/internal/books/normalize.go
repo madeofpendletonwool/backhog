@@ -56,7 +56,7 @@ import (
 // text was produced with. Bump it whenever Normalize or the EPUB block
 // extraction changes: rows parsed under an older version are re-parsed on
 // next access, rebuilding every derived offset.
-const ParserVersion = "1"
+const ParserVersion = "2"
 
 // quoteRunes are dropped by rule 3 (quotes mark speech, not content).
 var quoteRunes = map[rune]bool{

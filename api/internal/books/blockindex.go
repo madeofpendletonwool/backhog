@@ -29,6 +29,30 @@ type IndexedDoc struct {
 	// element's first byte, ascending. A block runs from its offset to the
 	// next block's offset (or the document's CharEnd).
 	Blocks []int `json:"blocks"`
+	// Images holds the document's internal illustrations, anchored to the
+	// blocks above. They own no canonical text — an image contributes no
+	// characters — so they never appear in an offset, only in a render.
+	Images []IndexedImage `json:"images,omitempty"`
+	// DisplayStart/DisplayEnd bound this document's slice of the display
+	// text — the same blocks, in the same order, with their punctuation and
+	// capitals intact. The canonical text is folded for matching and is not
+	// readable prose; the reader shows the display text and addresses it
+	// with canonical offsets, which is why the two files are written
+	// together and split blocks identically.
+	DisplayStart int `json:"display_start"`
+	DisplayEnd   int `json:"display_end"`
+}
+
+// IndexedImage is one illustration of a spine document: the zip path the
+// asset endpoint serves its bytes from, its alt text, and where it sits in
+// the running order. Every href here is internal to the EPUB — the parser
+// drops remote and data: references before they reach this struct.
+type IndexedImage struct {
+	Href string `json:"href"`
+	Alt  string `json:"alt,omitempty"`
+	// BeforeBlock indexes Blocks: the image renders above that block.
+	// len(Blocks) means it trails the document's last block.
+	BeforeBlock int `json:"before_block"`
 }
 
 // Loc is a resolved position in the book.

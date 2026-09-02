@@ -300,7 +300,7 @@ func TestChapterPartitionProperty(t *testing.T) {
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
-			canonical, chapters, index := Canonicalize(doc)
+			canonical, _, chapters, index := Canonicalize(doc)
 			assertContiguous(t, chapters, len(canonical))
 			if index.CharCount != len(canonical) {
 				t.Errorf("index char count %d != %d", index.CharCount, len(canonical))
@@ -342,7 +342,7 @@ func TestResolveMidBlock(t *testing.T) {
 	doc := &epub.Document{Docs: []epub.Doc{
 		{Href: "a.xhtml", Blocks: []string{"alpha beta gamma", "delta"}},
 	}}
-	canonical, _, index := Canonicalize(doc)
+	canonical, _, _, index := Canonicalize(doc)
 	if canonical != "alpha beta gamma delta" {
 		t.Fatalf("canonical = %q", canonical)
 	}
@@ -495,4 +495,37 @@ func mustParse(t *testing.T, data []byte) *epub.Document {
 		t.Fatalf("parse fixture: %v", err)
 	}
 	return doc
+}
+
+// TestCanonicalizeAnchorsImages checks the one place image anchoring can go
+// wrong: a block that normalizes away. Raw block indexes and canonical ones
+// diverge there, and an image anchored to a dropped block has to land on the
+// next surviving one rather than at a stale index.
+func TestCanonicalizeAnchorsImages(t *testing.T) {
+	doc := &epub.Document{Docs: []epub.Doc{{
+		Href: "OEBPS/c1.xhtml",
+		// Block 1 is punctuation only: Normalize empties it, so the
+		// canonical document has two blocks, not three.
+		Blocks: []string{"First", "---", "Second"},
+		Images: []epub.Image{
+			{Href: "OEBPS/a.png", BeforeBlock: 0},
+			{Href: "OEBPS/b.png", Alt: "dropped neighbour", BeforeBlock: 1},
+			{Href: "OEBPS/c.png", BeforeBlock: 2},
+			{Href: "OEBPS/d.png", BeforeBlock: 3},
+		},
+	}}}
+
+	_, _, _, index := Canonicalize(doc)
+	if got := len(index.Documents[0].Blocks); got != 2 {
+		t.Fatalf("canonical blocks = %d, want 2", got)
+	}
+	want := []int{0, 1, 1, 2}
+	for i, img := range index.Documents[0].Images {
+		if img.BeforeBlock != want[i] {
+			t.Errorf("image %s before_block = %d, want %d", img.Href, img.BeforeBlock, want[i])
+		}
+	}
+	if len(index.Documents[0].Images) != len(want) {
+		t.Fatalf("images = %d, want %d", len(index.Documents[0].Images), len(want))
+	}
 }

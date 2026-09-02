@@ -236,6 +236,32 @@ func TestBookPositionRoundTripsCharOffset(t *testing.T) {
 	}
 }
 
+// The player's last write of a session goes out through
+// navigator.sendBeacon, which can only POST — so POST must be the same write
+// as PUT, session cookie and all.
+func TestBookPositionAcceptsBeaconPost(t *testing.T) {
+	app := newPositionTestApp(t, nil)
+
+	status, body := app.api(t, http.MethodPost, "/api/books/"+positionEntry+"/position",
+		map[string]any{"audio_seconds": 10, "audio_file_id": positionTrackOne})
+	if status != http.StatusOK {
+		t.Fatalf("post status = %d: %v", status, body)
+	}
+
+	status, got := app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position", nil)
+	if status != http.StatusOK {
+		t.Fatalf("get status = %d: %v", status, got)
+	}
+	audio, ok := got["audio"].(map[string]any)
+	if !ok {
+		t.Fatalf("audio = %#v, want the derived audio view", got["audio"])
+	}
+	if audio["seconds"] != 10.0 || audio["track_id"] != float64(positionTrackOne) {
+		t.Errorf("audio = %v seconds in track %v, want 10 in track %d",
+			audio["seconds"], audio["track_id"], positionTrackOne)
+	}
+}
+
 func TestBookPositionUnalignedAudioIsHonest(t *testing.T) {
 	app := newPositionTestApp(t, nil)
 	app.charCount(t)

@@ -615,3 +615,101 @@ export interface MediaScanStatus {
     error?: string;
   } | null;
 }
+
+/**
+ * One file's slot on a book's audio timeline. `global_start` is where this
+ * track begins in the whole book, which is the coordinate the player works
+ * in — track boundaries are the server's business, not the listener's.
+ *
+ * `measured` is false when the file's length could not be read out of its
+ * container: the track still holds its place in the running order, it just
+ * contributes no time, and every later `global_start` is short by its real
+ * length. `missing` marks a file whose path is currently absent from its
+ * root — an unmounted NAS, not a deleted book.
+ */
+export interface AudioTrack {
+  id: number;
+  track_number: number;
+  path: string;
+  title: string;
+  size_bytes: number;
+  duration_seconds: number;
+  global_start: number;
+  measured: boolean;
+  missing: boolean;
+}
+
+/** GET /api/books/{entryId}/audio — the book as one continuous tape. */
+export interface AudioTimeline {
+  tracks: AudioTrack[];
+  total_duration: number;
+  /** At least one track is unmeasured, so the offsets after it are wrong. */
+  degraded: boolean;
+}
+
+/** Where the player should start, in global seconds and as a track offset. */
+export interface PositionAudio {
+  seconds: number;
+  track_id: number;
+  track_number: number;
+  track_seconds: number;
+  total_duration: number;
+  derived: boolean;
+  confidence: number;
+}
+
+/** Which spine document an offset falls in. */
+export interface PositionChapter {
+  spine_index: number;
+  title: string;
+  href: string;
+  char_start: number;
+  char_end: number;
+}
+
+/** The printed page, which only exists once a page map does. */
+export interface PositionPage {
+  page: number;
+  derived: boolean;
+  confidence: number;
+}
+
+/**
+ * GET /api/books/{entryId}/position — one position seen from all three
+ * angles. `char_offset` is the stored truth; `audio` and `page` are derived
+ * from it, and are null when there is nothing to derive them onto.
+ */
+export interface BookPosition {
+  char_offset: number;
+  source: string;
+  percent: number;
+  char_count: number;
+  chapter: PositionChapter | null;
+  audio: PositionAudio | null;
+  page: PositionPage | null;
+  derived: boolean;
+  confidence: number;
+  updated_at: string | null;
+}
+
+/**
+ * A position write. Exactly one of the three coordinates may be sent; the
+ * player always sends `audio_seconds` measured *inside one track*, with the
+ * file id that names which one, and lets the server decide whether it can
+ * translate that into a character offset.
+ */
+export interface PositionWrite {
+  audio_seconds?: number;
+  audio_file_id?: number;
+  char_offset?: number;
+  page?: number;
+  source?: string;
+}
+
+/** The PUT response: the new position, plus any status the write moved. */
+export interface PositionWriteResult {
+  position: BookPosition;
+  status: Status;
+  status_changed: boolean;
+  offer_finished: boolean;
+}

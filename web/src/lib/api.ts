@@ -1,7 +1,9 @@
 import type {
   AchievementStatus,
+  AudioTimeline,
   Book,
   BookFacets,
+  BookPosition,
   BookSearchResult,
   BookStats,
   DebtReport,
@@ -17,6 +19,8 @@ import type {
   PlayOrder,
   PlaySession,
   Platform,
+  PositionWrite,
+  PositionWriteResult,
   Project,
   ProjectItem,
   ProjectKind,
@@ -374,6 +378,18 @@ export const api = {
     request<{ ignored: boolean }>(`/media/ignore/${fileId}`, {
       method: "DELETE",
     }),
+
+  // --- audiobook playback -----------------------------------------------
+  /** The attached audiobook as one continuous timeline; 404 when there is none. */
+  bookAudio: (entryId: string) => request<AudioTimeline>(`/books/${entryId}/audio`),
+
+  bookPosition: (entryId: string) => request<BookPosition>(`/books/${entryId}/position`),
+
+  putBookPosition: (entryId: string, write: PositionWrite) =>
+    request<PositionWriteResult>(`/books/${entryId}/position`, {
+      method: "PUT",
+      body: body(write),
+    }),
 };
 
 /** Cover images are served by our own API from the local cache. */
@@ -381,3 +397,39 @@ export const coverUrl = (gameId: number) => `/api/covers/game/${gameId}`;
 
 /** The books half of the same cache, keyed by Open Library work id. */
 export const bookCoverUrl = (bookId: string) => `/api/covers/book/${bookId}`;
+
+/**
+ * One track's bytes, range-served. The element loads this same-origin, so the
+ * session cookie rides along without a `crossorigin` attribute; adding one
+ * would turn every seek into a CORS request against our own API.
+ */
+export const audioTrackUrl = (entryId: string, trackId: number) =>
+  `/api/books/${entryId}/audio/${trackId}`;
+
+/**
+ * The last position write of a session, sent while the page is going away.
+ *
+ * `sendBeacon` is the only write a browser promises to finish after a tab
+ * closes or a phone backgrounds the app — but it can only POST, which is why
+ * the API accepts POST on the position route as an alias for PUT. Where it is
+ * unavailable or refuses the payload, `keepalive` fetch is the fallback and
+ * gets to use the real verb.
+ */
+export function beaconBookPosition(entryId: string, write: PositionWrite): void {
+  const url = `/api/books/${entryId}/position`;
+  const payload = JSON.stringify(write);
+
+  if (typeof navigator.sendBeacon === "function") {
+    const blob = new Blob([payload], { type: "application/json" });
+    if (navigator.sendBeacon(url, blob)) return;
+  }
+  void fetch(url, {
+    method: "PUT",
+    credentials: "include",
+    keepalive: true,
+    headers: { "Content-Type": "application/json" },
+    body: payload,
+  }).catch(() => {
+    // The page is unloading; there is no one left to tell.
+  });
+}

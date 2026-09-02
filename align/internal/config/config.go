@@ -47,6 +47,20 @@ type Config struct {
 	// output is still partitioned exactly on the chunk boundary.
 	OverlapSeconds float64
 	SegmentBatch   int
+	// AnchorBatch is how many alignment anchors go up per request. An
+	// anchor is a handful of bytes, so these batches are larger than the
+	// transcript's.
+	AnchorBatch int
+
+	// MinCoverage and MinConfidence decide whether a finished alignment is
+	// published as 'ready' or kept as 'low_confidence'. Both defaults come
+	// from the measurements in cmd/alignbench: an unabridged reading
+	// covers essentially all of the book at any transcript quality worth
+	// using, while a 55%-abridged reading covers 0.55 and a wrong book
+	// covers nothing at all. See align.Result for what the two numbers
+	// mean.
+	MinCoverage   float64
+	MinConfidence float64
 
 	WorkDir           string
 	PollInterval      time.Duration
@@ -76,6 +90,9 @@ func Load() (Config, error) {
 		ChunkSeconds:      600,
 		OverlapSeconds:    5,
 		SegmentBatch:      200,
+		AnchorBatch:       500,
+		MinCoverage:       0.80,
+		MinConfidence:     0.60,
 		PollInterval:      15 * time.Second,
 		HeartbeatInterval: 60 * time.Second,
 		WhisperTimeout:    2 * time.Hour,
@@ -106,6 +123,18 @@ func Load() (Config, error) {
 		}
 		*dst = v
 	}
+	fraction := func(key string, dst *float64) {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			return
+		}
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil || v < 0 || v > 1 {
+			errs = append(errs, fmt.Errorf("%s must be a number between 0 and 1", key))
+			return
+		}
+		*dst = v
+	}
 	duration := func(key string, dst *time.Duration, minimum time.Duration) {
 		raw := strings.TrimSpace(os.Getenv(key))
 		if raw == "" {
@@ -122,11 +151,14 @@ func Load() (Config, error) {
 	num("WHISPER_THREADS", &cfg.Threads, 1)
 	num("WHISPER_BEAM_SIZE", &cfg.BeamSize, 1)
 	num("ALIGN_SEGMENT_BATCH", &cfg.SegmentBatch, 1)
+	num("ALIGN_ANCHOR_BATCH", &cfg.AnchorBatch, 1)
 	seconds("ALIGN_CHUNK_SECONDS", &cfg.ChunkSeconds, 30)
 	seconds("ALIGN_CHUNK_OVERLAP_SECONDS", &cfg.OverlapSeconds, 0)
 	duration("ALIGN_POLL_INTERVAL", &cfg.PollInterval, time.Second)
 	duration("ALIGN_HEARTBEAT_INTERVAL", &cfg.HeartbeatInterval, time.Second)
 	duration("WHISPER_TIMEOUT", &cfg.WhisperTimeout, time.Minute)
+	fraction("ALIGN_MIN_COVERAGE", &cfg.MinCoverage)
+	fraction("ALIGN_MIN_CONFIDENCE", &cfg.MinConfidence)
 
 	if strings.TrimSpace(cfg.Token) == "" {
 		errs = append(errs, errors.New("ALIGN_WORKER_TOKEN is required; set the same value here and on the api service"))

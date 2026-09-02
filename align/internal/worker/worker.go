@@ -1,7 +1,8 @@
 // Package worker is the alignment worker's loop: claim a job, decode and
 // transcribe its audiobook chunk by chunk, stream the timestamped
-// transcript back, and report a terminal state. It owns no database and
-// writes nothing to the media it reads.
+// transcript back, map that transcript onto the book's canonical text, and
+// report a terminal state. It owns no database and writes nothing to the
+// media it reads.
 package worker
 
 import (
@@ -119,21 +120,24 @@ func (w *Worker) runClaim(ctx context.Context, claim *api.Claim) {
 	log.Info("claimed alignment job", "tracks", len(claim.Tracks))
 	w.tracker.startJob(job.ID, job.EntryID)
 
+	// One job context and one heartbeat cover both halves of the work.
+	// Alignment is quick next to transcription, but it is not instant, and
+	// a claim that went quiet between the last transcript batch and the
+	// first anchor batch would be reclaimed out from under it.
+	jobCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	beat := w.startHeartbeat(jobCtx, cancel, log, job.ID)
+	defer beat.stop()
+
 	started := time.Now()
-	segments, err := w.transcribe(ctx, log, claim)
+	outcome, err := w.process(jobCtx, log, claim)
 	switch {
 	case err == nil:
-		// Transcription is the expensive half and it is done. The
-		// forced-alignment stage that turns this transcript into
-		// char-offset anchors is not part of this worker yet, so the job
-		// finishes as a usable-but-unmapped result rather than sitting
-		// claimed until the reclaim pass burns its attempts.
-		detail := fmt.Sprintf(
-			"transcribed %d segments with %s; forced alignment is not available in this worker build, so no anchors were produced",
-			segments, w.cfg.ModelName)
-		log.Info("transcription complete",
-			"segments", segments, "elapsed", time.Since(started).Round(time.Second))
-		w.complete(ctx, log, job.ID, api.StateLowConfidence, 0, 0, detail)
+		log.Info("alignment complete",
+			"state", outcome.State, "segments", outcome.Segments, "anchors", outcome.Anchors,
+			"coverage", outcome.Coverage, "confidence", outcome.Confidence,
+			"elapsed", time.Since(started).Round(time.Second))
+		w.complete(ctx, log, job.ID, outcome.State, outcome.Coverage, outcome.Confidence, outcome.Detail)
 		w.tracker.finishJob("")
 
 	case ctx.Err() != nil:
@@ -143,16 +147,31 @@ func (w *Worker) runClaim(ctx context.Context, claim *api.Claim) {
 		log.Info("shutting down mid-job; leaving the claim to be reclaimed")
 		w.tracker.finishJob("interrupted")
 
-	case api.ClaimLost(err):
+	case api.ClaimLost(err), errors.Is(err, context.Canceled):
+		// Either the API refused a write outright, or the heartbeat found
+		// out first and cancelled the job context. Both mean the same
+		// thing: someone else owns this book now.
 		log.Warn("claim lost mid-job; abandoning", "error", err)
 		w.tracker.finishJob("claim lost")
 
 	default:
-		f := toFailure(err, "transcription")
+		f := toFailure(err, "alignment")
 		log.Error("alignment job failed", "code", f.Code, "detail", f.Detail)
 		w.complete(ctx, log, job.ID, api.StateFailed, 0, 0, f.Error())
 		w.tracker.finishJob(f.Error())
 	}
+}
+
+// process is the whole job: transcribe the audio, then map the transcript
+// onto the book. The two halves are separate functions because they fail
+// for entirely different reasons, but they share one claim, one heartbeat
+// and one progress bar.
+func (w *Worker) process(ctx context.Context, log *slog.Logger, claim *api.Claim) (outcome, error) {
+	segments, err := w.transcribe(ctx, log, claim)
+	if err != nil {
+		return outcome{}, err
+	}
+	return w.alignTranscript(ctx, log, claim, segments)
 }
 
 // complete is the last call of a job. A failure to report completion is
@@ -181,26 +200,21 @@ func (w *Worker) complete(ctx context.Context, log *slog.Logger, jobID, state st
 }
 
 // transcribe walks the book: every track, every chunk, decode then
-// transcribe then upload. It returns the number of segments stored.
-func (w *Worker) transcribe(ctx context.Context, log *slog.Logger, claim *api.Claim) (int, error) {
+// transcribe then upload. It returns the whole transcript on the book's
+// global timeline, which is also what the alignment pass consumes.
+func (w *Worker) transcribe(ctx context.Context, log *slog.Logger, claim *api.Claim) ([]api.Segment, error) {
 	tracks, err := planTracks(claim.Tracks)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	jobDir := filepath.Join(w.cfg.WorkDir, claim.Job.ID)
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		return 0, failure{Code: failInternal, Detail: "could not create a scratch directory: " + err.Error()}
+		return nil, failure{Code: failInternal, Detail: "could not create a scratch directory: " + err.Error()}
 	}
 	// Every chunk cleans up after itself; this is the belt-and-braces
 	// pass for a job that failed partway through one.
 	defer os.RemoveAll(jobDir)
-
-	jobCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	beat := w.startHeartbeat(jobCtx, cancel, log, claim.Job.ID)
-	defer beat.stop()
 
 	total := 0.0
 	for _, t := range tracks {
@@ -213,8 +227,12 @@ func (w *Worker) transcribe(ctx context.Context, log *slog.Logger, claim *api.Cl
 		size:  w.cfg.SegmentBatch,
 	}
 
-	w.setStage(jobCtx, log, claim.Job.ID, api.StateTranscribing, "starting transcription", 0)
+	w.setStage(ctx, log, claim.Job.ID, api.StateTranscribing, "starting transcription", 0)
 
+	// The whole transcript is kept, not just streamed: the alignment pass
+	// needs the book's narration in one piece, and a hundred thousand
+	// words of text is a few megabytes.
+	all := make([]api.Segment, 0, 4096)
 	done := 0.0
 	for _, t := range tracks {
 		duration := t.Duration
@@ -222,9 +240,9 @@ func (w *Worker) transcribe(ctx context.Context, log *slog.Logger, claim *api.Cl
 			// Only the final track can reach here (planTracks refuses
 			// any earlier one). Its global offset is already correct, so
 			// probing locally to drive the chunk loop is safe.
-			probed, err := w.ffmpeg.Duration(jobCtx, t.Path)
+			probed, err := w.ffmpeg.Duration(ctx, t.Path)
 			if err != nil {
-				return uploader.count, err
+				return nil, err
 			}
 			duration = probed
 			total += probed
@@ -234,20 +252,21 @@ func (w *Worker) transcribe(ctx context.Context, log *slog.Logger, claim *api.Cl
 
 		chunks := planChunks(duration, w.cfg.ChunkSeconds, w.cfg.OverlapSeconds)
 		for _, c := range chunks {
-			if err := jobCtx.Err(); err != nil {
-				return uploader.count, err
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
 			stage := fmt.Sprintf("transcribing track %d/%d, chunk %d/%d",
 				t.Number, len(tracks), c.Index+1, c.Count)
-			w.setStage(jobCtx, log, claim.Job.ID, api.StateTranscribing, stage, fraction(done, total))
+			w.setStage(ctx, log, claim.Job.ID, api.StateTranscribing, stage, fraction(done, total))
 
-			segments, err := w.chunk(jobCtx, jobDir, t, c)
+			segments, err := w.chunk(ctx, jobDir, t, c)
 			if err != nil {
-				return uploader.count, err
+				return nil, err
 			}
 			mapped := globalSegments(segments, t, c, duration)
-			if err := uploader.add(jobCtx, mapped); err != nil {
-				return uploader.count, err
+			all = append(all, mapped...)
+			if err := uploader.add(ctx, mapped); err != nil {
+				return nil, err
 			}
 
 			done += c.Kept()
@@ -256,11 +275,12 @@ func (w *Worker) transcribe(ctx context.Context, log *slog.Logger, claim *api.Cl
 		}
 	}
 
-	if err := uploader.flush(jobCtx); err != nil {
-		return uploader.count, err
+	if err := uploader.flush(ctx); err != nil {
+		return nil, err
 	}
-	w.setStage(jobCtx, log, claim.Job.ID, api.StateTranscribing, "transcription complete", 1)
-	return uploader.count, nil
+	w.setStage(ctx, log, claim.Job.ID, api.StateTranscribing, "transcription complete", 1)
+	log.Info("transcription complete", "segments", len(all))
+	return all, nil
 }
 
 // chunk decodes and transcribes one slice, deleting the PCM as soon as

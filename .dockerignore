@@ -1,0 +1,12 @@
+# Build context for the alignment worker, which builds from the repo root:
+# it needs api/ alongside align/ because the worker imports the API's own
+# text normalizer rather than keeping a second copy of it. See
+# align/Dockerfile. Everything that build does not read stays out.
+.git
+.github
+docs
+scripts
+web
+**/*.md
+**/Dockerfile
+**/.dockerignore

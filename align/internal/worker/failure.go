@@ -8,17 +8,19 @@ import (
 	"github.com/collinpendleton/backhog/align/internal/transcribe"
 )
 
-// The failure codes a job can end on. They exist so that the four things
-// that actually go wrong here — a mount that isn't mounted, a book whose
-// timeline cannot be trusted, a file ffmpeg cannot read, and a model that
-// will not load — are distinguishable in the job's error column instead
-// of collapsing into one unhelpful "alignment failed".
+// The failure codes a job can end on. They exist so that the things that
+// actually go wrong here — a mount that isn't mounted, a book whose
+// timeline cannot be trusted, a file ffmpeg cannot read, a model that will
+// not load, a canonical text that was never parsed — are distinguishable
+// in the job's error column instead of collapsing into one unhelpful
+// "alignment failed".
 const (
 	failMediaMissing     = "media_missing"
 	failTimelineDegraded = "timeline_degraded"
 	failDecode           = "decode_failed"
 	failModelUnavailable = "model_unavailable"
 	failTranscribe       = "transcribe_failed"
+	failEpubText         = "epub_text_unreadable"
 	failInternal         = "worker_error"
 )
 

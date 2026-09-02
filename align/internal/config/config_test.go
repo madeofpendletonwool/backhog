@@ -108,3 +108,37 @@ func TestModelNameFromPath(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAlignmentThresholds(t *testing.T) {
+	t.Setenv("ALIGN_WORKER_TOKEN", "s3cret")
+	t.Setenv("ALIGN_WORKER_ID", "worker-1")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MinCoverage != 0.80 || cfg.MinConfidence != 0.60 {
+		t.Errorf("thresholds = %v/%v, want the shipped 0.80/0.60",
+			cfg.MinCoverage, cfg.MinConfidence)
+	}
+	if cfg.AnchorBatch != 500 {
+		t.Errorf("AnchorBatch = %d", cfg.AnchorBatch)
+	}
+
+	t.Setenv("ALIGN_MIN_COVERAGE", "0.9")
+	t.Setenv("ALIGN_MIN_CONFIDENCE", "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MinCoverage != 0.9 || cfg.MinConfidence != 0 {
+		t.Errorf("thresholds = %v/%v", cfg.MinCoverage, cfg.MinConfidence)
+	}
+
+	// A threshold outside [0,1] is a typo, not a policy: coverage and
+	// confidence are both fractions.
+	t.Setenv("ALIGN_MIN_COVERAGE", "80")
+	if _, err := Load(); err == nil {
+		t.Error("want an error for a coverage threshold of 80")
+	}
+}

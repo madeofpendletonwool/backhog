@@ -1,7 +1,7 @@
 // Package api is the worker's half of the /internal alignment contract.
 // It is the only thing in this binary that talks to Backhog: the worker
 // owns no database, and every fact it has about a job arrived through
-// one of these five calls.
+// one of these six calls.
 package api
 
 import (
@@ -42,6 +42,15 @@ type Claim struct {
 	Job          Job         `json:"job"`
 	EpubTextPath string      `json:"epub_text_path"`
 	Tracks       []TrackFile `json:"tracks"`
+}
+
+// Anchor ties one byte offset in the book's canonical text to one moment
+// on the audiobook's GLOBAL timeline. Confidence is the aligner's belief
+// in the pair, in [0,1]; the API clamps it either way.
+type Anchor struct {
+	CharOffset   int     `json:"char_offset"`
+	AudioSeconds float64 `json:"audio_seconds"`
+	Confidence   float64 `json:"confidence"`
 }
 
 // Segment is one stretch of transcription, in GLOBAL book seconds — the
@@ -164,6 +173,17 @@ func (c *Client) Segments(ctx context.Context, jobID string, segments []Segment)
 	_, err := c.post(ctx, "/internal/align/"+jobID+"/segments", map[string]any{
 		"worker":   c.workerID,
 		"segments": segments,
+	}, nil)
+	return err
+}
+
+// Anchors uploads one batch of alignment anchors. Like Segments these are
+// append-only and idempotent — the API ignores an offset it already has —
+// so a retried batch after a dropped connection costs nothing.
+func (c *Client) Anchors(ctx context.Context, jobID string, anchors []Anchor) error {
+	_, err := c.post(ctx, "/internal/align/"+jobID+"/anchors", map[string]any{
+		"worker":  c.workerID,
+		"anchors": anchors,
 	}, nil)
 	return err
 }

@@ -160,6 +160,43 @@ func TestErrorMessageComesFromTheAPIEnvelope(t *testing.T) {
 	}
 }
 
+func TestAnchorsPostsTheBatchAsTheAPIExpectsIt(t *testing.T) {
+	var body struct {
+		Worker  string   `json:"worker"`
+		Anchors []Anchor `json:"anchors"`
+	}
+	var gotPath string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		writeJSON(w, http.StatusOK, map[string]any{"job": Job{ID: "job-1"}})
+	})
+
+	anchors := []Anchor{
+		{CharOffset: 0, AudioSeconds: 12.5, Confidence: 0.91},
+		{CharOffset: 480, AudioSeconds: 18, Confidence: 0.47},
+	}
+	if err := c.Anchors(context.Background(), "job-1", anchors); err != nil {
+		t.Fatalf("Anchors: %v", err)
+	}
+	if gotPath != "/internal/align/job-1/anchors" {
+		t.Errorf("posted to %q", gotPath)
+	}
+	if body.Worker != "worker-1" {
+		t.Errorf("worker = %q", body.Worker)
+	}
+	if len(body.Anchors) != 2 {
+		t.Fatalf("sent %d anchors, want 2", len(body.Anchors))
+	}
+	// The wire names are the API's, not Go's: a rename here would be
+	// silently dropped by the server's decoder.
+	if body.Anchors[1].CharOffset != 480 || body.Anchors[1].AudioSeconds != 18 ||
+		body.Anchors[1].Confidence != 0.47 {
+		t.Errorf("anchor round-tripped as %+v", body.Anchors[1])
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

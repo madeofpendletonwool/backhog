@@ -16,7 +16,6 @@ type batcher struct {
 	size  int
 
 	pending []api.Segment
-	count   int
 }
 
 func (b *batcher) add(ctx context.Context, segments []api.Segment) error {
@@ -42,9 +41,5 @@ func (b *batcher) flush(ctx context.Context) error {
 }
 
 func (b *batcher) send(ctx context.Context, batch []api.Segment) error {
-	if err := b.api.Segments(ctx, b.jobID, batch); err != nil {
-		return err
-	}
-	b.count += len(batch)
-	return nil
+	return b.api.Segments(ctx, b.jobID, batch)
 }

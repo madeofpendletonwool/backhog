@@ -57,7 +57,11 @@ services:
   align:
     profiles: ["align"]
     build:
-      context: ./align
+      # The repo root, not ./align: the worker's build needs ../api on
+      # disk because it imports the API's own text normalizer instead of
+      # keeping a second copy of it. align/Dockerfile explains why.
+      context: .
+      dockerfile: align/Dockerfile
       args:
         # The model is baked into the image, so switching it is a
         # rebuild (`--profile align build`), not a restart. Sizes and
@@ -70,6 +74,10 @@ services:
       ALIGN_WORKER_TOKEN: ${ALIGN_WORKER_TOKEN:-}
       # Leave unset to use every core the container is allowed.
       WHISPER_THREADS: ${WHISPER_THREADS:-}
+      # Leave unset for the shipped ready/low_confidence thresholds; see
+      # .env.example for where the defaults came from.
+      ALIGN_MIN_COVERAGE: ${ALIGN_MIN_COVERAGE:-}
+      ALIGN_MIN_CONFIDENCE: ${ALIGN_MIN_CONFIDENCE:-}
     volumes:
       # Read-only, exactly like the api service: the worker reads the
       # audiobooks and the canonical EPUB text, and writes neither.

@@ -46,11 +46,19 @@ RUN curl -fsSL --retry 3 \
     && test -s /models/model.bin
 
 # --- worker binary -----------------------------------------------------
+# Built from the REPO ROOT, not from align/. The worker normalizes its
+# transcripts with the API's own booktext.Normalize rather than a copy of
+# it — two normalizers that drifted apart would silently invalidate every
+# stored character offset in the arena — so ../api has to be inside the
+# build context. That is the whole reason for the unusual context; see
+# align/go.mod.
 FROM golang:1.26-bookworm AS build
-WORKDIR /src
-COPY go.mod ./
+WORKDIR /src/align
+COPY align/go.mod align/go.sum ./
+COPY api/go.mod api/go.sum /src/api/
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY . .
+COPY api/ /src/api/
+COPY align/ /src/align/
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \

@@ -24,14 +24,17 @@ import (
 // worker loop can be exercised without a database: it records what the
 // worker uploaded and how it finished.
 type fakeAPI struct {
-	mu        sync.Mutex
-	segments  []api.Segment
-	states    []string
-	completed struct {
-		state    string
-		model    string
-		failure  string
-		coverage float64
+	mu         sync.Mutex
+	segments   []api.Segment
+	anchors    []api.Anchor
+	anchorPost int
+	states     []string
+	completed  struct {
+		state      string
+		model      string
+		failure    string
+		coverage   float64
+		confidence float64
 	}
 	completeCalls int
 	// claimLost makes every write answer 409, the way the API does once
@@ -75,12 +78,29 @@ func (f *fakeAPI) server(t *testing.T) *httptest.Server {
 		writeTestJSON(w, map[string]any{"job": map[string]any{"id": r.PathValue("jobID")}})
 	})
 
+	mux.HandleFunc("POST /internal/align/{jobID}/anchors", func(w http.ResponseWriter, r *http.Request) {
+		if f.reject(w) {
+			return
+		}
+		var body struct {
+			Anchors []api.Anchor `json:"anchors"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		f.mu.Lock()
+		f.anchors = append(f.anchors, body.Anchors...)
+		f.anchorPost++
+		f.mu.Unlock()
+		writeTestJSON(w, map[string]any{"job": map[string]any{"id": r.PathValue("jobID")}})
+	})
+
 	mux.HandleFunc("POST /internal/align/{jobID}/complete", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			State    string  `json:"state"`
-			Model    string  `json:"model"`
-			Error    string  `json:"error"`
-			Coverage float64 `json:"coverage"`
+			State      string  `json:"state"`
+			Model      string  `json:"model"`
+			Error      string  `json:"error"`
+			Coverage   float64 `json:"coverage"`
+			Confidence float64 `json:"mean_confidence"`
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
@@ -89,6 +109,7 @@ func (f *fakeAPI) server(t *testing.T) *httptest.Server {
 		f.completed.model = body.Model
 		f.completed.failure = body.Error
 		f.completed.coverage = body.Coverage
+		f.completed.confidence = body.Confidence
 		f.completeCalls++
 		f.mu.Unlock()
 		writeTestJSON(w, map[string]any{"job": map[string]any{"id": r.PathValue("jobID")}})
@@ -110,6 +131,16 @@ func (f *fakeAPI) reject(w http.ResponseWriter) bool {
 	w.WriteHeader(http.StatusConflict)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "job is claimed by another worker"})
 	return true
+}
+
+// writeCanonical drops a canonical text where a claim can point at it.
+func writeCanonical(t *testing.T, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "text.txt")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatalf("write canonical text: %v", err)
+	}
+	return path
 }
 
 func writeTestJSON(w http.ResponseWriter, v any) {
@@ -189,6 +220,9 @@ func testWorker(t *testing.T, apiURL string) (*Worker, config.Config) {
 		ChunkSeconds:      60,
 		OverlapSeconds:    0,
 		SegmentBatch:      2,
+		AnchorBatch:       128,
+		MinCoverage:       0.80,
+		MinConfidence:     0.60,
 		WorkDir:           t.TempDir(),
 		PollInterval:      time.Millisecond,
 		HeartbeatInterval: 20 * time.Millisecond,
@@ -216,7 +250,8 @@ func TestRunClaimTranscribesOntoTheGlobalTimeline(t *testing.T) {
 	// 100 seconds of track one is two chunks (0-60, 60-100); track two
 	// is 30 seconds in one chunk and starts at global second 100.
 	w.runClaim(context.Background(), &api.Claim{
-		Job: api.Job{ID: "job-1", EntryID: "entry-1"},
+		Job:          api.Job{ID: "job-1", EntryID: "entry-1"},
+		EpubTextPath: writeCanonical(t, "first line second line and then some other words entirely"),
 		Tracks: []api.TrackFile{
 			{Path: one, Duration: 100},
 			{Path: two, Duration: 30},
@@ -257,8 +292,14 @@ func TestRunClaimTranscribesOntoTheGlobalTimeline(t *testing.T) {
 	if fake.completed.model != "base.en" {
 		t.Errorf("completed model = %q", fake.completed.model)
 	}
+	// Six repetitions of two stub sentences are far too little narration
+	// to locate in a book, so the aligner finds nothing and the job
+	// finishes honestly labelled rather than published.
 	if fake.completed.coverage != 0 {
-		t.Errorf("coverage = %v, want 0 until the aligner lands", fake.completed.coverage)
+		t.Errorf("coverage = %v, want 0 from a transcript that maps nowhere", fake.completed.coverage)
+	}
+	if len(fake.anchors) != 0 {
+		t.Errorf("uploaded %d anchors from a transcript that maps nowhere", len(fake.anchors))
 	}
 }
 
@@ -279,7 +320,8 @@ func TestRunClaimProbesAnUnmeasuredFinalTrack(t *testing.T) {
 	// The ffprobe stub reports 40 seconds, so the final track is one
 	// chunk starting at global second 60.
 	w.runClaim(context.Background(), &api.Claim{
-		Job: api.Job{ID: "job-1", EntryID: "entry-1"},
+		Job:          api.Job{ID: "job-1", EntryID: "entry-1"},
+		EpubTextPath: writeCanonical(t, "first line second line and then some other words entirely"),
 		Tracks: []api.TrackFile{
 			{Path: one, Duration: 60},
 			{Path: two, Duration: 0},

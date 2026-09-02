@@ -27,6 +27,9 @@ import type {
   Project,
   ProjectItem,
   ProjectKind,
+  ReadingDebt,
+  ReadingInsights,
+  ReadingPicks,
   RuleSet,
   SearchResult,
   Season,
@@ -347,6 +350,22 @@ export const api = {
   bookStats: () => request<BookStats>("/library/stats?media=book"),
 
   bookFacets: () => request<BookFacets>("/library/facets?media=book"),
+
+  /**
+   * The books halves of the shared dashboard endpoints. They are the same
+   * routes the games arena uses with `media=book` on them, the way stats and
+   * facets already work — one API surface, two arenas.
+   */
+  readingDebt: () => request<ReadingDebt>("/library/debt?media=book"),
+
+  readingInsights: () => request<ReadingInsights>("/library/insights?media=book"),
+
+  /** "What should I read?": four explainable picks for a time budget. */
+  readingPicks: (minutes: number, exclude: string[] = []) => {
+    const query = new URLSearchParams({ media: "book", minutes: String(minutes) });
+    if (exclude.length > 0) query.set("exclude", exclude.join(","));
+    return request<ReadingPicks>(`/library/tonight?${query}`);
+  },
 
   /** The attach review queue: unattached groups with ranked suggestions. */
   mediaCandidates: () => request<MediaCandidatesResponse>("/media/candidates"),

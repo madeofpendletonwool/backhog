@@ -449,6 +449,100 @@ export interface Insights {
   superlatives: Superlative[];
 }
 
+/**
+ * How fast you actually get through a book, measured from logged reading
+ * sessions. `pages_per_hour` is always set — it falls back to a default until
+ * there is enough logged reading — and `measured` says which it is, so the
+ * projected years are never a magic number.
+ */
+export interface ReadingPace {
+  pages_per_hour: number;
+  chars_per_hour: number;
+  chars_per_page: number;
+  measured: boolean;
+  /** Hours of instrumented reading the measurement rests on. */
+  session_hours: number;
+  hours_per_week_90d: number | null;
+  hours_per_week_all: number | null;
+}
+
+/** The books counterpart of DebtReport: unread pages and what they cost. */
+export interface ReadingDebt {
+  books_owned: number;
+  unread_books: number;
+  pages_owed: number;
+  hours_owed: number;
+  /** Estimated from pages and your pace. */
+  page_hours: number;
+  /** Measured from attached audiobook durations. */
+  audio_hours: number;
+  audio_books: number;
+  /** Unread books with neither a page count nor an audiobook. */
+  unsized_books: number;
+  short_books_hours: number;
+  pace: ReadingPace;
+  projection: DebtProjection;
+}
+
+/** The top row of the "Your Reading Problem" dashboard. */
+export interface ReadingHeadline {
+  books_owned: number;
+  unread_books: number;
+  pages_owed: number;
+  hours_owed: number;
+  years_at_current_rate: number | null;
+}
+
+export interface BookSuperlativePayload {
+  book?: Book;
+  entry_id?: string;
+  /** Date the book entered the library (YYYY-MM-DD). */
+  added_on?: string;
+  pages?: number;
+  hours?: number;
+  /** The author or subject a bucket stat is about. */
+  name?: string;
+  owned?: number;
+  read?: number;
+  /** How many separate times a book was picked up again. */
+  starts?: number;
+}
+
+export type BookSuperlativeKind =
+  | "oldest_unopened"
+  | "longest_unread"
+  | "unread_author"
+  | "neglected_subject"
+  | "restarted";
+
+export interface BookSuperlative {
+  kind: BookSuperlativeKind;
+  payload: BookSuperlativePayload;
+  /** Pre-rendered by the backend so the copy lives in one place. */
+  label: string;
+}
+
+export interface ReadingInsights {
+  headline: ReadingHeadline;
+  pace: ReadingPace;
+  superlatives: BookSuperlative[];
+}
+
+/** One category's answer to "what should I read?". */
+export interface ReadingPick {
+  /** Book-scoped by contract: reading picks reason about pages and audio. */
+  entry: BookEntry;
+  score: number;
+  reason: string;
+}
+
+export interface ReadingPicks {
+  continue: ReadingPick | null;
+  short_win: ReadingPick | null;
+  wildcard: ReadingPick | null;
+  rescue: ReadingPick | null;
+}
+
 /** Achievement rarity bands, in ascending order of prestige. */
 export type AchievementTier = "bronze" | "silver" | "gold" | "legendary";
 

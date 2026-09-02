@@ -7,6 +7,7 @@ import { AddBookDialog } from "./AddBookDialog";
 import { AddGameDialog } from "./AddGameDialog";
 import { AudioPlayer } from "./AudioPlayer";
 import { PickDialog } from "./PickDialog";
+import { ReadDialog } from "./ReadDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
 import { Button, Gi } from "./ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
@@ -43,8 +44,10 @@ const gameNav: NavItem[] = [
 /* The shared pages carry ?media=book from here, so arriving from the books
    nav lands on the books half of a page that holds both. */
 const bookNav: NavItem[] = [
+  { to: "/books/dashboard", label: "Dashboard", icon: "gauge", end: true },
   { to: "/books", label: "Shelf", icon: "layout-grid", end: true },
   { to: "/queue?media=book", label: "Reading Queue", icon: "list-ordered", end: false },
+  { to: "/debt?media=book", label: "Reading Debt", icon: "hourglass", end: false },
   { to: "/books/files", label: "Book files", icon: "full-folder", end: false },
   { to: "/lists", label: "Lists", icon: "list-tree", end: false },
   { to: "/projects", label: "Projects", icon: "target", end: false },
@@ -70,6 +73,7 @@ function arenaForLocation(pathname: string, search: string): Arena | null {
 export function Layout() {
   const [addOpen, setAddOpen] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
+  const [readOpen, setReadOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -198,14 +202,16 @@ export function Layout() {
           </kbd>
         </Button>
 
-        {/* Tonight's pick reasons about time-to-beat and genres — it is a
-            games question, and the API says so. */}
-        {arena === "games" && (
-          <Button variant="secondary" className="mb-6 w-full" onClick={() => setPickOpen(true)}>
-            <Gi name="dices" className="size-3.5" />
-            What should I play?
-          </Button>
-        )}
+        {/* Same anti-deliberation device on both sides of the house — the
+            arena only decides which length the picks reason about. */}
+        <Button
+          variant="secondary"
+          className="mb-6 w-full"
+          onClick={() => (arena === "books" ? setReadOpen(true) : setPickOpen(true))}
+        >
+          <Gi name="dices" className="size-3.5" />
+          {arena === "books" ? "What should I read?" : "What should I play?"}
+        </Button>
 
         <nav className="space-y-1">
           {navItems.map(({ to, label, icon, end }) => (
@@ -275,15 +281,13 @@ export function Layout() {
             <Gi name="settings" className="size-4" />
           </NavLink>
         </nav>
-        {arena === "games" && (
-          <button
-            onClick={() => setPickOpen(true)}
-            className="shrink-0 p-2 text-ink-400 transition-colors hover:text-ink-100"
-            aria-label="What should I play?"
-          >
-            <Gi name="dices" className="size-4" />
-          </button>
-        )}
+        <button
+          onClick={() => (arena === "books" ? setReadOpen(true) : setPickOpen(true))}
+          className="shrink-0 p-2 text-ink-400 transition-colors hover:text-ink-100"
+          aria-label={arena === "books" ? "What should I read?" : "What should I play?"}
+        >
+          <Gi name="dices" className="size-4" />
+        </button>
         <Button size="sm" variant="primary" className="shrink-0" onClick={() => setAddOpen(true)}>
           <Gi name="plus" className="size-3.5" />
           Add
@@ -299,6 +303,7 @@ export function Layout() {
       <AddGameDialog open={addOpen && arena === "games"} onClose={() => setAddOpen(false)} />
       <AddBookDialog open={addOpen && arena === "books"} onClose={() => setAddOpen(false)} />
       <PickDialog open={pickOpen} onClose={() => setPickOpen(false)} />
+      <ReadDialog open={readOpen} onClose={() => setReadOpen(false)} />
       <SteamImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
       <AchievementToasts />
     </div>

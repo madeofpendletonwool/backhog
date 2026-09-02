@@ -53,8 +53,9 @@ export function useStats() {
   return useQuery({ queryKey: ["stats"], queryFn: api.stats });
 }
 
-export function useDebt() {
-  return useQuery({ queryKey: ["debt"], queryFn: api.debt });
+/** `enabled` is for the shared debt page, which drops this on the books half. */
+export function useDebt({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({ queryKey: ["debt"], queryFn: api.debt, enabled });
 }
 
 export function useInsights() {

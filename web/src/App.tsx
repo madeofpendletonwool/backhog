@@ -15,6 +15,7 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { ListDetailPage } from "./pages/ListDetailPage";
 import { ListsPage } from "./pages/ListsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ReadingDashboardPage } from "./pages/ReadingDashboardPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { QueuePage } from "./pages/QueuePage";
@@ -62,9 +63,11 @@ export function App() {
         <Route path="/achievements" element={<AchievementsPage />} />
         <Route path="/game/:entryId" element={<GameDetailPage />} />
         <Route path="/books" element={<BookLibraryPage />} />
-        {/* The router ranks the static segment above the dynamic one, so
-            /books/files stays the attach queue rather than an entry id. */}
+        {/* The router ranks the static segments above the dynamic one, so
+            /books/files and /books/dashboard stay themselves rather than
+            resolving as entry ids. */}
         <Route path="/books/files" element={<BookFilesPage />} />
+        <Route path="/books/dashboard" element={<ReadingDashboardPage />} />
         <Route path="/books/:entryId" element={<BookDetailPage />} />
         <Route path="/books/:entryId/read" element={<BookReaderPage />} />
         <Route path="/settings" element={<SettingsPage />} />

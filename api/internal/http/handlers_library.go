@@ -338,10 +338,23 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// handleDebt serves the backlog-debt report. `media=book` swaps in the
+// reading debt — unread pages, the hours they cost at your measured pace, and
+// real audiobook durations where files are attached — the same way stats and
+// facets already branch.
 func (s *Server) handleDebt(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {
 		fail(w, errUnauthorized)
+		return
+	}
+	if r.URL.Query().Get("media") == models.MediaBook {
+		debt, err := s.store.ReadingDebt(r.Context(), userID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, debt)
 		return
 	}
 	debt, err := s.store.Debt(r.Context(), userID)
@@ -352,10 +365,21 @@ func (s *Server) handleDebt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, debt)
 }
 
+// handleInsights serves "Your Gaming Problem", or "Your Reading Problem" for
+// media=book.
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {
 		fail(w, errUnauthorized)
+		return
+	}
+	if r.URL.Query().Get("media") == models.MediaBook {
+		insights, err := s.store.ReadingInsights(r.Context(), userID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, insights)
 		return
 	}
 	insights, err := s.store.Insights(r.Context(), userID)
@@ -367,9 +391,10 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleTonight answers "I have N minutes, what should I play?" with one
-// explainable pick per category. `exclude` (comma-separated entry ids) drops
-// entries from candidacy, which is how the client re-rolls a category: exclude
-// what it just showed and ask again.
+// explainable pick per category — or "what should I read?" for media=book,
+// which is the same four categories over the shelf. `exclude` (comma-separated
+// entry ids) drops entries from candidacy, which is how the client re-rolls a
+// category: exclude what it just showed and ask again.
 func (s *Server) handleTonight(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {
@@ -389,6 +414,16 @@ func (s *Server) handleTonight(w http.ResponseWriter, r *http.Request) {
 	var exclude []string
 	if raw := q.Get("exclude"); raw != "" {
 		exclude = strings.Split(raw, ",")
+	}
+
+	if q.Get("media") == models.MediaBook {
+		picks, err := s.store.ReadingPicks(r.Context(), userID, minutes, exclude)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, picks)
+		return
 	}
 
 	picks, err := s.store.TonightPicks(r.Context(), userID, minutes, exclude)

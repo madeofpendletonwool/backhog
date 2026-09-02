@@ -843,3 +843,97 @@ type ReadingSession struct {
 	Seconds       int       `json:"seconds"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+// Alignment job states. The first four are the worker pipeline's live
+// positions; the last three are terminal. 'low_confidence' is a *usable*
+// alignment whose anchors should be treated skeptically — it exists so a
+// marginal book can still hand off between reading and listening instead
+// of failing outright.
+const (
+	AlignmentQueued        = "queued"
+	AlignmentClaimed       = "claimed"
+	AlignmentTranscribing  = "transcribing"
+	AlignmentAligning      = "aligning"
+	AlignmentReady         = "ready"
+	AlignmentFailed        = "failed"
+	AlignmentLowConfidence = "low_confidence"
+)
+
+// AlignmentJobActive reports whether state is one the worker is still
+// working through (or is about to): the states covered by the one-job-
+// per-entry queue invariant.
+func AlignmentJobActive(state string) bool {
+	switch state {
+	case AlignmentQueued, AlignmentClaimed, AlignmentTranscribing, AlignmentAligning:
+		return true
+	}
+	return false
+}
+
+// AlignmentJobTerminal reports whether state is one the job can never
+// leave: it finished, one way or another.
+func AlignmentJobTerminal(state string) bool {
+	switch state {
+	case AlignmentReady, AlignmentFailed, AlignmentLowConfidence:
+		return true
+	}
+	return false
+}
+
+// AlignmentJob is one requested alignment on the queue. It is the unit
+// the internal worker API claims, heartbeats and completes; HeartbeatAt
+// is the liveness signal a stale claim is judged by.
+type AlignmentJob struct {
+	ID         string `json:"id"`
+	EntryID    string `json:"entry_id"`
+	EpubTextID string `json:"epub_text_id"`
+	// AudioTimelineHash pins the ordered (file, duration) sequence the
+	// job was enqueued against, so a re-attached audiobook is detectable
+	// against the alignment it produced.
+	AudioTimelineHash string     `json:"audio_timeline_hash"`
+	State             string     `json:"state"`
+	Progress          float64    `json:"progress"`
+	StageDetail       string     `json:"stage_detail"`
+	Error             *string    `json:"error,omitempty"`
+	Attempts          int        `json:"attempts"`
+	ClaimedBy         *string    `json:"claimed_by,omitempty"`
+	ClaimedAt         *time.Time `json:"claimed_at,omitempty"`
+	HeartbeatAt       *time.Time `json:"heartbeat_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+// Alignment is a finished (or streamed-so-far) alignment: the summary row
+// whose anchors the position translator interpolates over. While a worker
+// streams batches it shares the claiming job's id, with its final state,
+// coverage and confidence set by the complete call.
+type Alignment struct {
+	ID             string    `json:"id"`
+	EntryID        string    `json:"entry_id"`
+	EpubTextID     string    `json:"epub_text_id"`
+	State          string    `json:"state"`
+	Coverage       float64   `json:"coverage"`
+	MeanConfidence float64   `json:"mean_confidence"`
+	Model          string    `json:"model"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// AlignmentAnchor ties one canonical character offset to one point on
+// the audiobook's GLOBAL timeline — the same single notion of "where in
+// the tape" the player and stored positions use, never a per-track
+// offset. Confidence is the aligner's own belief in the pair, in [0,1].
+type AlignmentAnchor struct {
+	AlignmentID  string  `json:"-"`
+	CharOffset   int     `json:"char_offset"`
+	AudioSeconds float64 `json:"audio_seconds"`
+	Confidence   float64 `json:"confidence"`
+}
+
+// TranscriptSegment is one stretch of raw transcription output, kept for
+// debugging a bad alignment. Never read on a hot path.
+type TranscriptSegment struct {
+	AlignmentID string  `json:"-"`
+	AudioStart  float64 `json:"audio_start"`
+	AudioEnd    float64 `json:"audio_end"`
+	Text        string  `json:"text"`
+}

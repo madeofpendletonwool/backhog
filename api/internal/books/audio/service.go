@@ -88,6 +88,49 @@ func (s *Service) Timeline(ctx context.Context, userID, entryID string) (Timelin
 	return NewTimeline(tracks), nil
 }
 
+// TrackFile is one audio track resolved to the absolute path the
+// alignment worker needs, with containment verified against the
+// configured roots — the same check streaming applies, because the
+// worker reads the file directly off the same read-only mount.
+type TrackFile struct {
+	MediaFileID int64   `json:"id"`
+	Path        string  `json:"path"`
+	Duration    float64 `json:"duration_seconds"`
+	// Missing marks a file whose path is currently absent from its root
+	// (or resolves outside every root): the worker cannot read its
+	// bytes, and the job it belongs to can only fail.
+	Missing bool `json:"missing"`
+}
+
+// TrackFiles lists a book's attached audio in timeline order, each file
+// resolved to an absolute path with its measured duration. It is the
+// audio half of an alignment claim: the worker container mounts the
+// same library the API does, so API-side absolute paths are meaningful
+// there too.
+func (s *Service) TrackFiles(ctx context.Context, bookID string) ([]TrackFile, error) {
+	files, err := s.store.AudioMediaFilesForBook(ctx, bookID)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, ErrEmptyTimeline
+	}
+	out := make([]TrackFile, 0, len(files))
+	for _, f := range files {
+		tf := TrackFile{MediaFileID: f.ID, Missing: f.MissingAt != nil}
+		if abs, err := s.resolve(f.Root, f.Path); err == nil {
+			tf.Path = abs
+		} else {
+			tf.Missing = true
+		}
+		if d := s.durationOf(ctx, f); d > 0 {
+			tf.Duration = d
+		}
+		out = append(out, tf)
+	}
+	return out, nil
+}
+
 // durationOf returns a file's play time, preferring the stored value and
 // falling back to a header parse whose result is persisted. 0 means the file
 // could not be measured at all.

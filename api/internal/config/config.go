@@ -31,6 +31,12 @@ type Config struct {
 	// The directories are bind-mounted into the container and are never written
 	// to. Empty means the Books arena scanner is disabled.
 	MediaDirs []string
+	// AlignWorkerToken authenticates the optional alignment worker
+	// container against the /internal API (ALIGN_WORKER_TOKEN). Empty
+	// disables the internal endpoints entirely — the alignment queue is
+	// inert and everything else keeps working, which is the contract for
+	// a deployment that never enables alignment. Never logged.
+	AlignWorkerToken string
 }
 
 // Load reads configuration from the environment, applying defaults.
@@ -52,6 +58,7 @@ func Load() (Config, error) {
 	if len(c.MediaDirs) == 0 {
 		c.MediaDirs = splitPaths(os.Getenv("BOOK_LIBRARY_DIR"))
 	}
+	c.AlignWorkerToken = os.Getenv("ALIGN_WORKER_TOKEN")
 	if c.DatabasePath == "" {
 		return c, errors.New("DATABASE_PATH must not be empty")
 	}

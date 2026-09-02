@@ -41,10 +41,9 @@ type Server struct {
 	epubs    *booktext.Ingester
 	audio    *bookaudio.Service
 	// anchors supplies the alignment and page-map data the position
-	// translator interpolates over. Until forced alignment (Stage 7) and
-	// page anchors (Stage 9) land there is nothing to supply, so every
-	// translation reports itself underived and the API falls back to raw
-	// stored positions.
+	// translator interpolates over. Alignment anchors arrive through the
+	// queue below; the page map waits for the page-scan stage, so until
+	// then an entry simply has no page view.
 	anchors    position.Provider
 	eggLimiter eggLimiter
 }
@@ -63,7 +62,7 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
 		matcher:    media.NewMatcher(st, books),
-		anchors:    position.NoAnchors{},
+		anchors:    alignmentAnchors{store: st},
 		audio:      bookaudio.NewService(st, cfg.MediaDirs),
 		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
 	}
@@ -148,6 +147,14 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/books/{entryID}/files", s.handleAttachFiles)
 			r.Delete("/books/{entryID}/files/{fileID}", s.handleDetachFile)
 
+			// Alignment: queue the text↔audio mapping, watch it run,
+			// clear it. The job is worked by an optional container
+			// through /internal; with no worker it just sits queued, and
+			// everything else about the book keeps working.
+			r.Post("/books/{entryID}/align", s.handleBookAlignEnqueue)
+			r.Get("/books/{entryID}/align", s.handleBookAlignStatus)
+			r.Delete("/books/{entryID}/align", s.handleBookAlignDelete)
+
 			r.Route("/series", func(r chi.Router) {
 				r.Get("/", s.handleSeriesIndex)
 				// Static path first: chi routes it before the {seriesID} param.
@@ -224,6 +231,19 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/{projectID}/reorder", s.handleReorderProjectItem)
 			})
 		})
+	})
+
+	// The internal alignment worker API. It lives outside /api on
+	// purpose: nginx proxies exactly /api/ to this process, so nothing
+	// under /internal is reachable from the public vhost — only from
+	// the compose network, by a worker holding the shared token.
+	r.Route("/internal", func(r chi.Router) {
+		r.Use(s.requireAlignWorker)
+		r.Post("/align/claim", s.handleAlignClaim)
+		r.Post("/align/{jobID}/progress", s.handleAlignProgress)
+		r.Post("/align/{jobID}/segments", s.handleAlignSegments)
+		r.Post("/align/{jobID}/anchors", s.handleAlignAnchors)
+		r.Post("/align/{jobID}/complete", s.handleAlignComplete)
 	})
 
 	return r

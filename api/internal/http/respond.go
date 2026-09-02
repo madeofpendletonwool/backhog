@@ -48,9 +48,17 @@ func fail(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }
 
-// decode reads a JSON body into dst, rejecting unknown fields.
+// decode reads a JSON body into dst, rejecting unknown fields. The body
+// is capped at 1MB, which every request shape fits comfortably.
 func decode(r *http.Request, dst any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	return decodeMax(r, dst, 1<<20)
+}
+
+// decodeMax is decode with a caller-chosen cap, for the internal worker
+// endpoints whose streamed batches (anchors, transcript segments) are
+// legitimately larger than any user-typed request.
+func decodeMax(r *http.Request, dst any, maxBytes int64) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return errorf(http.StatusBadRequest, "invalid request body: "+err.Error())

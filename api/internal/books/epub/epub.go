@@ -42,6 +42,29 @@ type Doc struct {
 	// heading, list item, ...) in document order. Raw means pre-normalized;
 	// blank entries are possible and are dropped by the canonicalizer.
 	Blocks []string
+	// Images holds the document's internal illustrations in document
+	// order. Only references that resolve to a file actually inside this
+	// EPUB survive; see extractor.resolveAsset.
+	Images []Image
+}
+
+// Image is one illustration a spine document references. It carries no
+// bytes: the reader fetches those from the asset endpoint, which reopens
+// the EPUB and re-checks who is asking.
+//
+// Only *internal* references become an Image. A remote URL, a
+// protocol-relative one, a data: URI and a reference that climbs out of the
+// zip are all dropped during extraction, so nothing downstream — the
+// sidecar, the chapters payload, the reader — ever holds an address that
+// could reach a third party.
+type Image struct {
+	// Href is the image's path inside the zip, resolved against the
+	// document that referenced it, e.g. "OEBPS/Images/plate1.png".
+	Href string
+	Alt  string
+	// BeforeBlock is the index into Blocks of the block that follows this
+	// image; len(Blocks) means it trails every block in the document.
+	BeforeBlock int
 }
 
 // Document is the parse result: the spine in reading order.
@@ -88,7 +111,7 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 			continue
 		}
 		href := joinZipPath(path.Dir(container.RootfilePath), item.Href)
-		blocks, err := extractBlocks(zr, href)
+		blocks, images, err := extractBlocks(zr, href)
 		if err != nil {
 			return nil, err
 		}
@@ -98,6 +121,7 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 			Title:      matchingTitle(entries, href),
 			Depth:      matchingDepth(entries, href),
 			Blocks:     blocks,
+			Images:     images,
 		})
 	}
 	return doc, nil

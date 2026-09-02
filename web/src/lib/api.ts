@@ -6,6 +6,9 @@ import type {
   BookPosition,
   BookSearchResult,
   BookStats,
+  BookTextChapters,
+  BookTextDisplay,
+  BookTextSlice,
   DebtReport,
   Entry,
   GameList,
@@ -379,6 +382,22 @@ export const api = {
       method: "DELETE",
     }),
 
+  // --- canonical text (the reader) --------------------------------------
+  /**
+   * The spine with block offsets. Parses the EPUB on first call, so it is
+   * the slow one; everything after it is a slice of an already-parsed text.
+   */
+  bookTextChapters: (entryId: string) =>
+    request<BookTextChapters>(`/books/${entryId}/text/chapters`),
+
+  /** A byte range of the canonical text — one chapter's worth at a time. */
+  bookText: (entryId: string, from: number, to: number) =>
+    request<BookTextSlice>(`/books/${entryId}/text?from=${from}&to=${to}`),
+
+  /** One spine document as prose, block for block with its offsets. */
+  bookTextDisplay: (entryId: string, spineIndex: number) =>
+    request<BookTextDisplay>(`/books/${entryId}/text/display?spine=${spineIndex}`),
+
   // --- audiobook playback -----------------------------------------------
   /** The attached audiobook as one continuous timeline; 404 when there is none. */
   bookAudio: (entryId: string) => request<AudioTimeline>(`/books/${entryId}/audio`),
@@ -405,6 +424,16 @@ export const bookCoverUrl = (bookId: string) => `/api/covers/book/${bookId}`;
  */
 export const audioTrackUrl = (entryId: string, trackId: number) =>
   `/api/books/${entryId}/audio/${trackId}`;
+
+/**
+ * One illustration out of a book's EPUB, served from our own API.
+ *
+ * The href is always a path inside the archive — the parser never emits an
+ * off-origin one — and the endpoint re-checks ownership and containment on
+ * every request, so this URL is a request rather than a capability.
+ */
+export const bookAssetUrl = (entryId: string, href: string) =>
+  `/api/books/${entryId}/text/asset?href=${encodeURIComponent(href)}`;
 
 /**
  * The last position write of a session, sent while the page is going away.

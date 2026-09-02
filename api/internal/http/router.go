@@ -113,6 +113,13 @@ func (s *Server) Routes() http.Handler {
 			// demand — never part of the NAS scan.
 			r.Get("/books/{entryID}/text/chapters", s.handleBookTextChapters)
 			r.Get("/books/{entryID}/text", s.handleBookText)
+			// The same blocks as prose, which is what the reader renders;
+			// the canonical text above is folded for matching, not reading.
+			r.Get("/books/{entryID}/text/display", s.handleBookTextDisplay)
+			// The reader's illustrations, read straight out of the EPUB.
+			// Same containment rules as the audio stream, and the only way
+			// a book's images reach the page — nothing loads off-origin.
+			r.Get("/books/{entryID}/text/asset", s.handleBookTextAsset)
 
 			// The audiobook as one continuous timeline, and its tracks
 			// streamed from the NAS with byte-range support so a browser

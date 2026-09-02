@@ -199,6 +199,18 @@ func (s *Store) ClaimAlignmentJob(ctx context.Context, workerID string) (models.
 		return models.AlignmentJob{}, err
 	}
 
+	// A re-claim starts the job over, so whatever the previous attempt
+	// streamed has to go with it: a worker restarted mid-book
+	// re-transcribes from the beginning, and keeping the old partial
+	// output would interleave two runs into one duplicated transcript.
+	// The unfinished alignment row is the handle for all of it — its
+	// anchors and segments cascade. A finalized alignment is never
+	// touched, so a previous good result survives a fresh attempt.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM alignments WHERE id = ? AND state = 'aligning'`, jobID); err != nil {
+		return models.AlignmentJob{}, err
+	}
+
 	now := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE alignment_jobs SET

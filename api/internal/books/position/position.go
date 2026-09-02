@@ -40,22 +40,14 @@ type Anchor struct {
 	Confidence float64 `json:"confidence"`
 }
 
-// Provider supplies a library entry's anchors. It is the seam Stage 7 and
-// Stage 9 plug into: they add data, not methods. A provider that has nothing
-// for an entry returns no anchors and no error — an unaligned book is the
-// normal case, not a failure.
+// Provider supplies a library entry's anchors. It is the seam the
+// alignment and page-map stages plug into: they add data, not methods.
+// A provider that has nothing for an entry returns no anchors and no
+// error — an unaligned book is the normal case, not a failure.
 type Provider interface {
 	AudioAnchors(ctx context.Context, entryID string) ([]Anchor, error)
 	PageAnchors(ctx context.Context, entryID string) ([]Anchor, error)
 }
-
-// NoAnchors is the provider used until the alignment and page-map stages
-// land: every book is unaligned, so every translation reports ok == false and
-// the API falls back to raw stored positions.
-type NoAnchors struct{}
-
-func (NoAnchors) AudioAnchors(context.Context, string) ([]Anchor, error) { return nil, nil }
-func (NoAnchors) PageAnchors(context.Context, string) ([]Anchor, error)  { return nil, nil }
 
 // Translator converts one book's positions between coordinate spaces. Build
 // one per entry: it holds that entry's anchor maps and nothing else.

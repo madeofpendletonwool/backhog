@@ -162,7 +162,7 @@ func TestBookProgressMigration(t *testing.T) {
 	}
 
 	// Down removes both tables and leaves the rest of the schema intact.
-	if err := goose.Down(database, "migrations"); err != nil {
+	if err := goose.DownTo(database, "migrations", 15); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
 	for _, table := range []string{"book_progress", "reading_sessions"} {

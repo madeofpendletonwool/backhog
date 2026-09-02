@@ -20,6 +20,11 @@ services:
       # Optional: Books arena library roots, colon-separated. The paths are
       # container-side and must match the read-only bind mounts below.
       MEDIA_DIR: ${MEDIA_DIR:-}
+      # Optional: shared secret for the alignment worker container. Set it
+      # (here and identically in the worker) to enable the /internal
+      # alignment API; leave it empty and alignment stays off — reading,
+      # listening and tracking all work without it. Never logged.
+      ALIGN_WORKER_TOKEN: ${ALIGN_WORKER_TOKEN:-}
     volumes:
       - backhog-data:/data
       # Books arena: bind-mount the NAS library read-only, one entry per

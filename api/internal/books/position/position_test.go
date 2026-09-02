@@ -264,14 +264,24 @@ func TestLoadFromProvider(t *testing.T) {
 		t.Fatalf("loaded maps = audio %v, pages %v", tr.HasAudio(), tr.HasPages())
 	}
 
-	// The provider shipped until alignment lands leaves every method unable
-	// to answer, which is what makes the API report derived: false.
-	tr, err = Load(t.Context(), NoAnchors{}, "entry-1")
+	// A provider with nothing for an entry — an unaligned book — leaves
+	// every method unable to answer, which is what makes the API report
+	// derived: false.
+	tr, err = Load(t.Context(), stubProvider{}, "entry-1")
 	if err != nil {
-		t.Fatalf("load NoAnchors: %v", err)
+		t.Fatalf("load empty provider: %v", err)
 	}
 	if tr.HasAudio() || tr.HasPages() {
-		t.Error("NoAnchors produced a map")
+		t.Error("an empty provider produced a map")
+	}
+
+	// No provider at all is the same honest silence.
+	tr, err = Load(t.Context(), nil, "entry-1")
+	if err != nil {
+		t.Fatalf("load nil provider: %v", err)
+	}
+	if tr.HasAudio() || tr.HasPages() {
+		t.Error("a nil provider produced a map")
 	}
 
 	boom := errors.New("anchor store down")

@@ -50,5 +50,51 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The optional alignment worker. It is behind a compose profile, so a
+  # plain `docker compose up` never builds or pulls this multi-GB image;
+  # `docker compose --profile align up` opts in. Everything in the Books
+  # arena works without it — alignment jobs just stay queued.
+  align:
+    profiles: ["align"]
+    build:
+      context: ./align
+      args:
+        # The model is baked into the image, so switching it is a
+        # rebuild (`--profile align build`), not a restart. Sizes and
+        # the accuracy/speed trade are documented in align/Dockerfile.
+        WHISPER_MODEL: ${WHISPER_MODEL:-base.en}
+    environment:
+      BACKHOG_API_URL: http://api:8080
+      # Must be the same value as the api service above, and non-empty:
+      # an empty token disables the /internal API the worker claims from.
+      ALIGN_WORKER_TOKEN: ${ALIGN_WORKER_TOKEN:-}
+      # Leave unset to use every core the container is allowed.
+      WHISPER_THREADS: ${WHISPER_THREADS:-}
+    volumes:
+      # Read-only, exactly like the api service: the worker reads the
+      # audiobooks and the canonical EPUB text, and writes neither.
+      - backhog-data:/data:ro
+      # Books arena: the same NAS mounts the api service gets, at the
+      # same container paths — the API hands over absolute paths, so
+      # they have to mean the same thing in both containers.
+      # - /mnt/nas/audiobooks:/media/audiobooks:ro
+      # - /mnt/nas/ebooks:/media/ebooks:ro
+      # Scratch for one chunk of decoded audio at a time (~19 MB).
+      - align-scratch:/scratch
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # No shell in the way; the binary probes its own status endpoint.
+      test: ["CMD", "/app/align-worker", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # A worker killed mid-book leaves its claim to go stale; the API
+    # reclaims it and the restarted worker picks the job back up.
+    restart: unless-stopped
+
 volumes:
   backhog-data:
+  align-scratch:

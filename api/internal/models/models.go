@@ -844,6 +844,56 @@ type ReadingSession struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// Sources for a recorded page anchor: how the (page, char offset) pair
+// was produced. An OCR scan matched through the passage matcher carries
+// the matcher's confidence; a manual anchor is a reader saying "page 40
+// starts here", which is exact by declaration.
+const (
+	// PageAnchorSourceOCR is a camera scan matched into the text.
+	PageAnchorSourceOCR = "ocr"
+	// PageAnchorSourceManual is a reader-typed page position.
+	PageAnchorSourceManual = "manual"
+)
+
+// ValidPageAnchorSource reports whether s is a tracked anchor source.
+func ValidPageAnchorSource(s string) bool {
+	switch s {
+	case PageAnchorSourceOCR, PageAnchorSourceManual:
+		return true
+	}
+	return false
+}
+
+// PhysicalCopy is one printing of a book the user actually holds: the
+// thing a camera scan reads off of. Page numbers belong to the printing,
+// so anchors hang off the copy and never off the work — a user with two
+// printings of the same book has two copies with two independent page
+// maps.
+type PhysicalCopy struct {
+	ID        string `json:"id"`
+	UserID    string `json:"-"`
+	EntryID   string `json:"entry_id"`
+	EditionID string `json:"edition_id"`
+	Notes     string `json:"notes"`
+	// AnchorCount is computed on list, so the copy UI can say how much of
+	// a page map exists without fetching it.
+	AnchorCount int       `json:"anchor_count"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PageAnchor ties one printed page of one physical copy to the canonical
+// character offset where that page's text begins. Re-scanning a page
+// overwrites the anchor (last write wins) instead of stacking a
+// conflicting one, so a bad scan corrects rather than accumulates.
+type PageAnchor struct {
+	PhysicalCopyID string    `json:"-"`
+	PrintedPage    int       `json:"printed_page"`
+	CharOffset     int       `json:"char_offset"`
+	Source         string    `json:"source"`
+	Confidence     float64   `json:"confidence"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 // Alignment job states. The first four are the worker pipeline's live
 // positions; the last three are terminal. 'low_confidence' is a *usable*
 // alignment whose anchors should be treated skeptically — it exists so a

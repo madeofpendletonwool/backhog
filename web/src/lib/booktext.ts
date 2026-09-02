@@ -110,6 +110,46 @@ export function blockIndexAt(blocks: ReaderBlock[], offset: number): number {
   return found;
 }
 
+/**
+ * The [start, end) character span of the sentence sitting `fraction` of the
+ * way through a block's text, or null when the block holds no sentence.
+ *
+ * The fraction is an *estimate*: the canonical text is folded (case and
+ * punctuation dropped), so byte offsets into it never map exactly onto the
+ * display string — but the word order is identical, and picking which of a
+ * paragraph's handful of sentences a position falls in only needs the
+ * neighborhood right, not the character. It is what the read-along highlight
+ * and the handoff confirmation use to point at a sentence, and both say
+ * "estimated" when it matters.
+ */
+export function sentenceSpanAt(text: string, fraction: number): [number, number] | null {
+  if (!text.trim()) return null;
+  const target = Math.min(1, Math.max(0, fraction)) * text.length;
+
+  let start = 0;
+  let span: [number, number] | null = null;
+  for (let i = 0; i < text.length; i += 1) {
+    if (!".!?…".includes(text[i])) continue;
+    // A terminator owns its closing quotes and brackets, and only counts
+    // when the sentence really ends there — "3.5" and "Dr." don't.
+    let end = i + 1;
+    while (end < text.length && "\"'”’)]".includes(text[end])) end += 1;
+    if (end < text.length && !/\s/.test(text[end])) continue;
+    if (end >= target) {
+      span = [start, end];
+      break;
+    }
+    start = end;
+    while (start < text.length && /\s/.test(text[start])) start += 1;
+  }
+  if (!span) span = [start, text.length];
+
+  let [begin, finish] = span;
+  while (begin < finish && /\s/.test(text[begin])) begin += 1;
+  while (finish > begin && /\s/.test(text[finish - 1])) finish -= 1;
+  return finish > begin ? [begin, finish] : null;
+}
+
 /** Chapters that hold text, which are the ones worth listing in a TOC. */
 export function readableChapters(chapters: TextChapter[]): TextChapter[] {
   return chapters.filter((chapter) => chapter.char_end > chapter.char_start);

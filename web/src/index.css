@@ -222,6 +222,24 @@ body {
   animation: fade-rise 0.35s var(--ease-spring) both;
 }
 
+/* The reader's "you are here" pulse: the block the player handed off to
+   lights up once and fades, so the eye lands on the right paragraph. The
+   colour is supplied inline from the reading surface, so it works on all
+   three papers. */
+@keyframes reader-flash {
+  from {
+    background-color: var(--reader-flash-from);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.reader-flash {
+  animation: reader-flash 2.4s ease-out both;
+  border-radius: 4px;
+}
+
 /* iOS Safari zooms the whole viewport when an input smaller than 16px gains
    focus, which violently pans a phone-sized layout around. Keep form controls
    at 16px on touch screens. */

@@ -498,6 +498,135 @@ type Insights struct {
 	Superlatives []Superlative    `json:"superlatives"`
 }
 
+// Kinds of superlative on the "Your Reading Problem" dashboard. They mirror
+// the gaming ones without pretending to be the same stat: a book has an
+// author and a subject where a game has a genre and a platform, and a book
+// is the only one of the two you can start over from page one three times.
+const (
+	BookSuperlativeOldestUnopened   = "oldest_unopened"
+	BookSuperlativeLongestUnread    = "longest_unread"
+	BookSuperlativeUnreadAuthor     = "unread_author"
+	BookSuperlativeNeglectedSubject = "neglected_subject"
+	BookSuperlativeRestarted        = "restarted"
+)
+
+// ReadingPace is how fast you actually get through a book, measured from
+// reading_sessions rather than assumed. PagesPerHour is always populated so
+// the "years at your pace" number is never magic; Measured says whether it
+// came from your own sessions or from the fallback default.
+type ReadingPace struct {
+	PagesPerHour float64 `json:"pages_per_hour"`
+	// CharsPerHour is the raw measurement PagesPerHour is derived from,
+	// exposed so the page conversion is auditable rather than hidden.
+	CharsPerHour float64 `json:"chars_per_hour"`
+	// CharsPerPage is the constant that converts one into the other.
+	CharsPerPage int  `json:"chars_per_page"`
+	Measured     bool `json:"measured"`
+	// SessionHours is how much instrumented reading the measurement rests on;
+	// below the minimum it stays 0 and Measured is false.
+	SessionHours float64 `json:"session_hours"`
+	// HoursPerWeek90d / HoursPerWeekAll mirror Pace: how much time you
+	// actually spend reading, from the same sessions. Null means no data.
+	HoursPerWeek90d *float64 `json:"hours_per_week_90d"`
+	HoursPerWeekAll *float64 `json:"hours_per_week_all"`
+}
+
+// ReadingDebt is the books counterpart of DebtReport: how much unread book
+// you own, in pages and in hours, and when it clears at your real pace.
+type ReadingDebt struct {
+	BooksOwned  int `json:"books_owned"`
+	UnreadBooks int `json:"unread_books"`
+	// PagesOwed counts every page you have not read yet: the whole book for
+	// something in the backlog, the unread remainder for something started.
+	PagesOwed float64 `json:"pages_owed"`
+	// HoursOwed is PageHours + AudioHours.
+	HoursOwed float64 `json:"hours_owed"`
+	// PageHours is the part estimated from page counts and your reading pace;
+	// AudioHours is the part measured from real attached audiobook durations,
+	// which is the honest number wherever a book has audio files.
+	PageHours  float64 `json:"page_hours"`
+	AudioHours float64 `json:"audio_hours"`
+	// AudioBooks is how many unread books were sized from audio rather than
+	// pages; UnsizedBooks is how many contribute nothing because neither a
+	// page count nor an audiobook is known.
+	AudioBooks   int `json:"audio_books"`
+	UnsizedBooks int `json:"unsized_books"`
+	// ShortBooksHours is the quick-wins slice: unread books under
+	// shortBookPages long.
+	ShortBooksHours float64        `json:"short_books_hours"`
+	Pace            ReadingPace    `json:"pace"`
+	Projection      DebtProjection `json:"projection"`
+}
+
+// ReadingHeadline is the top row of the reading dashboard: the size of the
+// problem, in the two units a book is measured in.
+type ReadingHeadline struct {
+	BooksOwned  int     `json:"books_owned"`
+	UnreadBooks int     `json:"unread_books"`
+	PagesOwed   float64 `json:"pages_owed"`
+	HoursOwed   float64 `json:"hours_owed"`
+	// YearsAtCurrentRate is how long HoursOwed takes at your trailing 90-day
+	// reading rate. Null when you have not logged enough to have one.
+	YearsAtCurrentRate *float64 `json:"years_at_current_rate"`
+}
+
+// BookSuperlativePayload carries the numbers behind one book superlative.
+// Which fields are set depends on the kind: book-backed stats fill
+// Book/EntryID/AddedOn/Pages/Hours, bucket stats (author, subject) fill the
+// counts.
+type BookSuperlativePayload struct {
+	Book    *Book  `json:"book,omitempty"`
+	EntryID string `json:"entry_id,omitempty"`
+	// AddedOn is the date the book entered the library (YYYY-MM-DD).
+	AddedOn string `json:"added_on,omitempty"`
+	// Pages / Hours size the book the superlative turns on.
+	Pages *int     `json:"pages,omitempty"`
+	Hours *float64 `json:"hours,omitempty"`
+
+	// Name is the author or subject a bucket stat is about.
+	Name string `json:"name,omitempty"`
+	// Owned / Read count books for a bucket stat; a wishlist is not owned.
+	Owned int `json:"owned,omitempty"`
+	Read  int `json:"read,omitempty"`
+	// Starts is how many separate times a book was picked up again.
+	Starts int `json:"starts,omitempty"`
+}
+
+// BookSuperlative is one uncomfortable reading stat, the mirror of
+// Superlative. Label is pre-rendered so the copy lives in one place.
+type BookSuperlative struct {
+	Kind    string                 `json:"kind"`
+	Payload BookSuperlativePayload `json:"payload"`
+	Label   string                 `json:"label"`
+}
+
+// ReadingInsights is the "Your Reading Problem" dashboard payload. Pace is
+// hoisted out of the debt report and shown explicitly, so the projected years
+// are legible rather than magic.
+type ReadingInsights struct {
+	Headline     ReadingHeadline   `json:"headline"`
+	Pace         ReadingPace       `json:"pace"`
+	Superlatives []BookSuperlative `json:"superlatives"`
+}
+
+// ReadingPick is one category's answer to "what should I read?", the books
+// mirror of TonightPick. The reason is built server-side so the API stays the
+// source of truth for why a book was suggested.
+type ReadingPick struct {
+	Entry  Entry   `json:"entry"`
+	Score  float64 `json:"score"`
+	Reason string  `json:"reason"`
+}
+
+// ReadingPicksResult is the four-category answer to a time budget. Any
+// category is null when the shelf has nothing to offer it.
+type ReadingPicksResult struct {
+	Continue *ReadingPick `json:"continue"`
+	ShortWin *ReadingPick `json:"short_win"`
+	Wildcard *ReadingPick `json:"wildcard"`
+	Rescue   *ReadingPick `json:"rescue"`
+}
+
 // Achievement tiers, in ascending order of prestige.
 const (
 	TierBronze    = "bronze"

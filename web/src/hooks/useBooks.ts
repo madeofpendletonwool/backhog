@@ -23,7 +23,7 @@ export interface BookLibraryParams {
 
 /** Invalidates every view whose contents depend on book entry state. */
 function invalidateBooks(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const key of ["library", "books", "queue", "stats", "bookStats", "bookFacets", "lists", "list", "entry", "projects", "project"]) {
+  for (const key of ["library", "books", "queue", "stats", "bookStats", "bookFacets", "readingInsights", "readingDebt", "lists", "list", "entry", "projects", "project"]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }
@@ -59,6 +59,19 @@ export function useBookStats(enabled = true) {
 
 export function useBookFacets() {
   return useQuery({ queryKey: ["bookFacets"], queryFn: api.bookFacets });
+}
+
+/**
+ * "Your Reading Problem": the pages and hours you owe yourself, your measured
+ * reading pace, and the superlatives. `enabled` mirrors useBookStats — the
+ * shared debt page only wants this when the media filter is on books.
+ */
+export function useReadingInsights(enabled = true) {
+  return useQuery({ queryKey: ["readingInsights"], queryFn: api.readingInsights, enabled });
+}
+
+export function useReadingDebt(enabled = true) {
+  return useQuery({ queryKey: ["readingDebt"], queryFn: api.readingDebt, enabled });
 }
 
 /**

@@ -1,10 +1,11 @@
 import { cn } from "@/lib/cn";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
 import { RATES, SLEEP_MINUTES, useAudioClock, useAudioPlayer } from "@/hooks/useAudioPlayer";
 import { useTheme } from "@/hooks/useTheme";
-import { bookCoverUrl } from "@/lib/api";
+import { api, bookCoverUrl } from "@/lib/api";
 import { accentStyle, byline, formatRemaining, formatTimecode } from "@/lib/format";
 import type { GiName } from "@/lib/gameicons";
 import { Gi } from "./ui/Gi";
@@ -205,13 +206,15 @@ function SeekBar() {
   );
 }
 
-/** The drawer: finer skips, speed, the sleep timer, and the chapter list. */
+/** The drawer: the way back to the text, skips, speed, sleep, and chapters. */
 function Expanded() {
   const player = useAudioPlayer();
   const { timeline, trackIndex } = player;
 
   return (
     <div className="mb-3 space-y-4 border-b-2 border-line pb-3">
+      <ContinueReading />
+
       <Section label="Skip">
         <div className="flex flex-wrap gap-1.5">
           {[-30, -15, 15, 30].map((delta) => (
@@ -284,6 +287,71 @@ function Expanded() {
           </ul>
         </Section>
       )}
+    </div>
+  );
+}
+
+/**
+ * The reverse handoff: "Continue reading" opens the reader on the sentence
+ * being narrated right now. The translation is the server's — a speculative
+ * lookup, nothing stored — and the player keeps playing through the
+ * navigation, so the reader's read-along takes over where the tap happened.
+ */
+function ContinueReading() {
+  const player = useAudioPlayer();
+  const clock = useAudioClock();
+  const navigate = useNavigate();
+  const entry = player.entry;
+
+  // The stored position's audio view doubles as the alignment check: it is
+  // derived exactly when a map exists for this book.
+  const { data: position } = useQuery({
+    queryKey: ["bookPosition", entry?.id],
+    queryFn: () => api.bookPosition(entry!.id),
+    enabled: Boolean(entry),
+  });
+  const aligned = position?.audio?.derived === true;
+
+  const [pending, setPending] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+  const hintTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(hintTimer.current), []);
+
+  const say = (message: string) => {
+    setHint(message);
+    window.clearTimeout(hintTimer.current);
+    hintTimer.current = window.setTimeout(() => setHint(null), 6000);
+  };
+
+  if (!entry) return null;
+
+  const reason = aligned
+    ? "Open the reader on the sentence being narrated"
+    : "This audiobook isn't aligned to the text yet — run Align on the book's page, and this opens the reader in the right place";
+
+  const open = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      const translation = await api.translateBookPosition(entry.id, { audio: clock });
+      navigate(`/books/${entry.id}/read?offset=${translation.char_offset}`);
+    } catch {
+      say("This audiobook isn't aligned to the text yet — run Align on the book's page.");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div>
+      <Button variant="secondary" className="w-full" disabled={!aligned} loading={pending} onClick={open} title={reason}>
+        <Gi name="scroll-unfurled" className="size-3.5" />
+        Continue reading
+      </Button>
+      {!aligned && position && (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-ink-500">{reason}.</p>
+      )}
+      {hint && <p className="mt-1.5 text-[11px] leading-relaxed text-amber-300/90">{hint}</p>}
     </div>
   );
 }

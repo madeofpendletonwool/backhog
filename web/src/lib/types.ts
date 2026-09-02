@@ -814,6 +814,8 @@ export interface PositionAudio {
   total_duration: number;
   derived: boolean;
   confidence: number;
+  /** Seconds to the nearest alignment anchor; 0 means it was measured. */
+  anchor_distance: number;
 }
 
 /** Which spine document an offset falls in. */
@@ -830,6 +832,8 @@ export interface PositionPage {
   page: number;
   derived: boolean;
   confidence: number;
+  /** Pages to the nearest page-map anchor; 0 means it was measured. */
+  anchor_distance: number;
 }
 
 /**
@@ -870,4 +874,71 @@ export interface PositionWriteResult {
   status: Status;
   status_changed: boolean;
   offer_finished: boolean;
+}
+
+/**
+ * GET /api/books/{entryId}/position?char=|audio= — a speculative lookup: one
+ * arbitrary position translated into the other spaces through the anchor
+ * maps, with nothing read from or written to stored progress. This is what
+ * both handoff confirmations and the read-along highlight ask before they
+ * move anybody.
+ */
+export interface PositionTranslation {
+  query: { space: "char" | "audio"; value: number };
+  /** The queried offset, or the one derived from the queried second. */
+  char_offset: number;
+  percent: number;
+  char_count: number;
+  chapter: PositionChapter | null;
+  /** Only present for `?char=` lookups, and only when an alignment exists. */
+  audio: PositionAudio | null;
+  /** Only present for `?char=` lookups, and only when a page map exists. */
+  page: PositionPage | null;
+  /** Whether the translation this response exists for went through a map. */
+  derived: boolean;
+  confidence: number;
+  /**
+   * How far the query sat from the nearest anchor, in the space it was
+   * asked in — seconds for `?audio=`, characters for `?char=`. Zero means
+   * it landed on something measured.
+   */
+  anchor_distance: number;
+  /** The alignment the answer was derived through, when there is one. */
+  alignment: AlignmentSummary | null;
+}
+
+/** How much of a book an alignment covers, and how much it believed itself. */
+export interface AlignmentSummary {
+  state: "ready" | "low_confidence";
+  coverage: number;
+  mean_confidence: number;
+}
+
+/** The worker pipeline's view of one alignment job. */
+export interface AlignmentJobView {
+  id: string;
+  entry_id: string;
+  state: "queued" | "claimed" | "transcribing" | "aligning" | "ready" | "failed" | "low_confidence";
+  /** 0–1 while the pipeline is running. */
+  progress: number;
+  stage_detail: string;
+  error?: string | null;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** GET /api/books/{entryId}/align — where an entry's alignment stands. */
+export interface AlignmentStatusView {
+  job: AlignmentJobView | null;
+  alignment: {
+    id: string;
+    state: "aligning" | "ready" | "low_confidence" | "failed";
+    coverage: number;
+    mean_confidence: number;
+    model: string;
+    created_at: string;
+  } | null;
+  /** False when no worker is configured, so a queued job will sit forever. */
+  worker_enabled: boolean;
 }

@@ -84,40 +84,60 @@ func (t *Translator) HasAudio() bool { return len(t.audio.anchors) > 0 }
 // HasPages reports whether a page map exists for this entry.
 func (t *Translator) HasPages() bool { return len(t.page.anchors) > 0 }
 
+// Translation is one derivation, carried with everything a client needs to
+// be honest about it: the value, the confidence of the anchor segment it
+// came from, and how far the query sat from the nearest anchor on the axis
+// the query was made in. Zero on an exact anchor, large mid-segment — the
+// number that lets a UI say "estimated" instead of implying precision.
+type Translation struct {
+	Value          float64
+	Confidence     float64
+	AnchorDistance float64
+}
+
 // CharToAudio derives the audiobook second holding a character offset.
 func (t *Translator) CharToAudio(charOffset int) (seconds, confidence float64, ok bool) {
-	v, c, ok := t.audio.interpolate(float64(charOffset), anchorChar, anchorValue)
-	if !ok {
-		return 0, 0, false
-	}
-	return math.Max(0, v), c, true
+	tr, ok := t.CharToAudioT(charOffset)
+	return tr.Value, tr.Confidence, ok
 }
 
 // AudioToChar derives the character offset being read at an audiobook second.
 func (t *Translator) AudioToChar(seconds float64) (charOffset int, confidence float64, ok bool) {
-	v, c, ok := t.audio.interpolate(seconds, anchorValue, anchorChar)
-	if !ok {
-		return 0, 0, false
-	}
-	return roundNonNegative(v), c, true
+	tr, ok := t.AudioToCharT(seconds)
+	return int(tr.Value), tr.Confidence, ok
 }
 
 // CharToPage derives the printed page holding a character offset.
 func (t *Translator) CharToPage(charOffset int) (page int, confidence float64, ok bool) {
-	v, c, ok := t.page.interpolate(float64(charOffset), anchorChar, anchorValue)
-	if !ok {
-		return 0, 0, false
-	}
-	return roundNonNegative(v), c, true
+	tr, ok := t.CharToPageT(charOffset)
+	return int(tr.Value), tr.Confidence, ok
 }
 
 // PageToChar derives the character offset a printed page starts at.
 func (t *Translator) PageToChar(page int) (charOffset int, confidence float64, ok bool) {
-	v, c, ok := t.page.interpolate(float64(page), anchorValue, anchorChar)
-	if !ok {
-		return 0, 0, false
-	}
-	return roundNonNegative(v), c, true
+	tr, ok := t.PageToCharT(page)
+	return int(tr.Value), tr.Confidence, ok
+}
+
+// CharToAudioT is CharToAudio with the anchor distance reported too.
+func (t *Translator) CharToAudioT(charOffset int) (Translation, bool) {
+	return t.audio.interpolate(float64(charOffset), anchorChar, anchorValue, clampNonNegative)
+}
+
+// AudioToCharT is AudioToChar with the anchor distance reported too.
+func (t *Translator) AudioToCharT(seconds float64) (Translation, bool) {
+	tr, ok := t.audio.interpolate(seconds, anchorValue, anchorChar, roundNonNegative)
+	return tr, ok
+}
+
+// CharToPageT is CharToPage with the anchor distance reported too.
+func (t *Translator) CharToPageT(charOffset int) (Translation, bool) {
+	return t.page.interpolate(float64(charOffset), anchorChar, anchorValue, roundNonNegative)
+}
+
+// PageToCharT is PageToChar with the anchor distance reported too.
+func (t *Translator) PageToCharT(page int) (Translation, bool) {
+	return t.page.interpolate(float64(page), anchorValue, anchorChar, roundNonNegative)
 }
 
 // anchorMap is a strictly increasing sequence of anchors, readable in either
@@ -166,30 +186,42 @@ func newAnchorMap(in []Anchor) anchorMap {
 
 // interpolate maps x from the key axis onto the value axis: binary search for
 // the bracketing pair, then linear interpolation across it. key and val pick
-// which axis is which, so the same code runs both directions.
+// which axis is which, so the same code runs both directions. adjust is the
+// output axis's own tidying (rounding a discrete coordinate, clamping a
+// non-negative one); the confidence and anchor distance are decided before
+// it runs, so adjusting the value never polishes the honesty.
 //
 // A hit exactly on an anchor returns that anchor's own value and confidence —
 // no interpolation error, no penalty. Between two anchors the confidence is
 // the *lower* of the pair: a segment is only as trustworthy as its weaker
 // end. Outside the span the answer is clamped to the nearest anchor and its
-// confidence damped by outsidePenalty.
-func (m anchorMap) interpolate(x float64, key, val func(Anchor) float64) (float64, float64, bool) {
+// confidence damped by outsidePenalty. AnchorDistance is always the gap
+// between x and the nearest anchor *on the key axis*, in key-axis units —
+// seconds for an audio query, characters for a text one — because that is
+// the distance the query actually travelled from something measured.
+func (m anchorMap) interpolate(x float64, key, val func(Anchor) float64, adjust func(float64) float64) (Translation, bool) {
 	n := len(m.anchors)
 	if n == 0 || math.IsNaN(x) {
-		return 0, 0, false
+		return Translation{}, false
 	}
 
 	if first := m.anchors[0]; x <= key(first) {
 		if x == key(first) {
-			return val(first), first.Confidence, true
+			return Translation{Value: adjust(val(first)), Confidence: first.Confidence}, true
 		}
-		return val(first), first.Confidence * outsidePenalty, true
+		return Translation{
+			Value: adjust(val(first)), Confidence: first.Confidence * outsidePenalty,
+			AnchorDistance: key(first) - x,
+		}, true
 	}
 	if last := m.anchors[n-1]; x >= key(last) {
 		if x == key(last) {
-			return val(last), last.Confidence, true
+			return Translation{Value: adjust(val(last)), Confidence: last.Confidence}, true
 		}
-		return val(last), last.Confidence * outsidePenalty, true
+		return Translation{
+			Value: adjust(val(last)), Confidence: last.Confidence * outsidePenalty,
+			AnchorDistance: x - key(last),
+		}, true
 	}
 
 	// Strictly inside the span, so n >= 2 and the invariant
@@ -206,22 +238,32 @@ func (m anchorMap) interpolate(x float64, key, val func(Anchor) float64) (float6
 
 	a, b := m.anchors[lo], m.anchors[hi]
 	if x == key(a) {
-		return val(a), a.Confidence, true
+		return Translation{Value: adjust(val(a)), Confidence: a.Confidence}, true
 	}
 	t := (x - key(a)) / (key(b) - key(a))
-	return val(a) + t*(val(b)-val(a)), math.Min(a.Confidence, b.Confidence), true
+	nearest := math.Min(x-key(a), key(b)-x)
+	return Translation{
+		Value:          adjust(val(a) + t*(val(b)-val(a))),
+		Confidence:     math.Min(a.Confidence, b.Confidence),
+		AnchorDistance: nearest,
+	}, true
 }
 
 func anchorChar(a Anchor) float64  { return float64(a.CharOffset) }
 func anchorValue(a Anchor) float64 { return a.Value }
 
+// clampNonNegative floors an audio coordinate at zero: an extrapolation
+// before the first anchor may land on a negative second, and there is no
+// such thing as the tape at -1s.
+func clampNonNegative(v float64) float64 { return math.Max(0, v) }
+
 // roundNonNegative rounds an interpolated coordinate to the integer the
 // discrete axes (character offset, page number) are counted in. Clamped at
 // zero: an interpolation may land marginally below the first anchor, and
 // there is no such thing as character -1.
-func roundNonNegative(v float64) int {
+func roundNonNegative(v float64) float64 {
 	if v <= 0 {
 		return 0
 	}
-	return int(math.Round(v))
+	return math.Round(v)
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -64,6 +65,10 @@ type audioView struct {
 	// the book has no alignment yet, not from char_offset.
 	Derived    bool    `json:"derived"`
 	Confidence float64 `json:"confidence"`
+	// AnchorDistance is how far this position sits from the nearest
+	// alignment anchor, in seconds. Zero means it landed on a measured
+	// point; anything else was interpolated across the gap.
+	AnchorDistance float64 `json:"anchor_distance"`
 }
 
 // pageView is the printed page of the entry's edition. It only ever appears
@@ -73,6 +78,8 @@ type pageView struct {
 	Page       int     `json:"page"`
 	Derived    bool    `json:"derived"`
 	Confidence float64 `json:"confidence"`
+	// AnchorDistance is the gap to the nearest page-map anchor, in pages.
+	AnchorDistance float64 `json:"anchor_distance"`
 }
 
 // positionRequest carries exactly one of the three ways to say where you are.
@@ -152,9 +159,23 @@ func (s *Server) loadBookViews(ctx context.Context, userID, entryID, bookID stri
 }
 
 // handleGetBookPosition serves a book entry's position in all three spaces.
+// With a `char` or `audio` query parameter it becomes the speculative
+// translation instead: an arbitrary position placed in the other spaces
+// through the anchor maps, nothing read from or written to stored progress.
 func (s *Server) handleGetBookPosition(w http.ResponseWriter, r *http.Request) {
 	userID, entryID, bookID, ok := s.bookEntry(w, r)
 	if !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	charParam, audioParam := q.Get("char"), q.Get("audio")
+	if charParam != "" || audioParam != "" {
+		if given(charParam != "", audioParam != "") != 1 {
+			fail(w, errorf(http.StatusBadRequest, "send exactly one of char or audio"))
+			return
+		}
+		s.translateBookPosition(w, r, userID, entryID, bookID, charParam, audioParam)
 		return
 	}
 
@@ -169,6 +190,178 @@ func (s *Server) handleGetBookPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, renderPosition(progress, views))
+}
+
+// translationQuery records which space a speculative lookup was asked in,
+// so a client can tell the echoed input from the derived answers.
+type translationQuery struct {
+	Space string  `json:"space"`
+	Value float64 `json:"value"`
+}
+
+// alignmentView is the summary a speculative lookup carries alongside its
+// answer: how much of the book the map covers and how much the aligner
+// believed it, which is what a UI needs to warn before a low-confidence
+// handoff instead of after one.
+type alignmentView struct {
+	State          string  `json:"state"`
+	Coverage       float64 `json:"coverage"`
+	MeanConfidence float64 `json:"mean_confidence"`
+}
+
+// translationResponse answers "where would this be in the other space?" —
+// the question behind both handoff buttons' confirmations and the reader's
+// read-along. It never reads stored progress and never writes any: the
+// reader and player both need to look before they leap.
+//
+// Asked with ?char=N it answers with the audio view derived through the
+// alignment (null when there is none — the stored position's raw timestamp
+// fallback is deliberately out of reach here, because it describes where
+// listening *was*, not where this offset would be) and the page view through
+// the page map. Asked with ?audio=S it answers with the character offset the
+// tape is narrating at that second. Either way the response carries the
+// translation's confidence and its distance to the nearest anchor, and the
+// alignment summary that grades how much the answer should be trusted.
+type translationResponse struct {
+	Query      translationQuery `json:"query"`
+	CharOffset int              `json:"char_offset"`
+	Percent    float64          `json:"percent"`
+	CharCount  int              `json:"char_count"`
+	Chapter    *chapterView     `json:"chapter"`
+	Audio      *audioView       `json:"audio"`
+	Page       *pageView        `json:"page"`
+	// Derived, Confidence and AnchorDistance describe the translation this
+	// response exists for: char→audio when queried by char, audio→char when
+	// queried by audio. Derived is false only when nothing could be
+	// translated at all, in which case confidence is 0.
+	Derived        bool           `json:"derived"`
+	Confidence     float64        `json:"confidence"`
+	AnchorDistance float64        `json:"anchor_distance"`
+	Alignment      *alignmentView `json:"alignment"`
+}
+
+// translateBookPosition is the speculative half of GET position: exactly
+// one of charParam/audioParam names the space the question was asked in.
+func (s *Server) translateBookPosition(w http.ResponseWriter, r *http.Request,
+	userID, entryID, bookID, charParam, audioParam string) {
+
+	views, err := s.loadBookViews(r.Context(), userID, entryID, bookID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+
+	out := translationResponse{Alignment: s.alignmentSummary(r.Context(), entryID)}
+
+	if audioParam != "" {
+		seconds, err := strconv.ParseFloat(audioParam, 64)
+		if err != nil || seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+			fail(w, errorf(http.StatusBadRequest, "audio must be a non-negative number of seconds"))
+			return
+		}
+		if !views.hasTimeline {
+			fail(w, errorf(http.StatusNotFound, "no audiobook is attached to this book"))
+			return
+		}
+		// Past the end of the tape there are no words left to be reading;
+		// the question still has an answer, it is just the last one.
+		if views.timeline.TotalDuration > 0 && seconds > views.timeline.TotalDuration {
+			seconds = views.timeline.TotalDuration
+		}
+
+		tr, ok := views.translator.AudioToCharT(seconds)
+		if !ok {
+			fail(w, errorf(http.StatusUnprocessableEntity,
+				"this audiobook has not been aligned to the text yet, so a timestamp cannot be placed in the book"))
+			return
+		}
+
+		out.Query = translationQuery{Space: "audio", Value: seconds}
+		out.CharOffset = int(tr.Value)
+		out.Derived, out.Confidence, out.AnchorDistance = true, tr.Confidence, tr.AnchorDistance
+		out.Chapter = chapterAt(views.chapters, out.CharOffset)
+		out.CharCount = views.charCount
+		out.Percent = percentAtOffset(out.CharOffset, views)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	charOffset, err := strconv.Atoi(charParam)
+	if err != nil || charOffset < 0 {
+		fail(w, errorf(http.StatusBadRequest, "char must be a non-negative character offset"))
+		return
+	}
+	if views.charCount > 0 && charOffset > views.charCount {
+		fail(w, errorf(http.StatusBadRequest, "char is outside this book's text"))
+		return
+	}
+
+	out.Query = translationQuery{Space: "char", Value: float64(charOffset)}
+	out.CharOffset = charOffset
+	out.Chapter = chapterAt(views.chapters, charOffset)
+	out.CharCount = views.charCount
+	out.Percent = percentAtOffset(charOffset, views)
+
+	// No raw fallback here on purpose: a speculative lookup asks what the
+	// map says about this offset, and the map is the only thing that can
+	// answer. Where the stored position would fall back to the raw
+	// timestamp, this reports no audio view at all.
+	if views.translator.HasAudio() {
+		if tr, ok := views.translator.CharToAudioT(charOffset); ok {
+			trackID, trackNumber, trackSeconds := int64(0), 0, 0.0
+			if pos, err := views.timeline.Locate(tr.Value); err == nil {
+				trackID, trackNumber, trackSeconds = pos.MediaFileID, pos.Number, pos.TrackSeconds
+			}
+			out.Audio = &audioView{
+				Seconds: tr.Value, TrackID: trackID, TrackNumber: trackNumber,
+				TrackSeconds: trackSeconds, TotalDuration: views.timeline.TotalDuration,
+				Derived: true, Confidence: tr.Confidence, AnchorDistance: tr.AnchorDistance,
+			}
+		}
+	}
+	if views.translator.HasPages() {
+		if tr, ok := views.translator.CharToPageT(charOffset); ok {
+			out.Page = &pageView{
+				Page: int(tr.Value), Derived: true,
+				Confidence: tr.Confidence, AnchorDistance: tr.AnchorDistance,
+			}
+		}
+	}
+
+	// The top-level honesty numbers are the audio translation's when there
+	// is one — that is the direction the handoff travels — and the page
+	// map's for a book whose only map is a printed one.
+	switch {
+	case out.Audio != nil:
+		out.Derived, out.Confidence, out.AnchorDistance = true, out.Audio.Confidence, out.Audio.AnchorDistance
+	case out.Page != nil:
+		out.Derived, out.Confidence, out.AnchorDistance = true, out.Page.Confidence, out.Page.AnchorDistance
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// alignmentSummary grades the map a speculative answer came from, or nil
+// when the book has no usable alignment.
+func (s *Server) alignmentSummary(ctx context.Context, entryID string) *alignmentView {
+	alignment, err := s.store.AlignmentForEntry(ctx, entryID)
+	if err != nil || alignment.ID == "" {
+		return nil
+	}
+	return &alignmentView{
+		State:          alignment.State,
+		Coverage:       alignment.Coverage,
+		MeanConfidence: alignment.MeanConfidence,
+	}
+}
+
+// percentAtOffset measures an offset against the canonical text's length.
+// A book whose text has never been parsed has no denominator and reports 0
+// rather than a made-up number — the same honesty a stored position uses.
+func percentAtOffset(charOffset int, v bookViews) float64 {
+	if v.charCount > 0 {
+		return math.Min(100, float64(charOffset)/float64(v.charCount)*100)
+	}
+	return 0
 }
 
 // handlePutBookPosition stores a position given in whichever space the client
@@ -468,14 +661,14 @@ func audioAt(p models.BookProgress, v bookViews) *audioView {
 		return nil
 	}
 
-	global, confidence, derived := 0.0, 0.0, false
+	global, confidence, derived, distance := 0.0, 0.0, false, 0.0
 	switch {
 	case v.translator != nil && v.translator.HasAudio():
-		seconds, conf, ok := v.translator.CharToAudio(p.CharOffset)
+		tr, ok := v.translator.CharToAudioT(p.CharOffset)
 		if !ok {
 			return nil
 		}
-		global, confidence, derived = seconds, conf, true
+		global, confidence, derived, distance = tr.Value, tr.Confidence, true, tr.AnchorDistance
 	case p.RawAudioSeconds != nil && p.RawAudioFileID != nil:
 		seconds, err := v.timeline.Global(*p.RawAudioFileID, *p.RawAudioSeconds)
 		if err != nil {
@@ -491,10 +684,11 @@ func audioAt(p models.BookProgress, v bookViews) *audioView {
 	}
 
 	out := &audioView{
-		Seconds:       global,
-		TotalDuration: v.timeline.TotalDuration,
-		Derived:       derived,
-		Confidence:    confidence,
+		Seconds:        global,
+		TotalDuration:  v.timeline.TotalDuration,
+		Derived:        derived,
+		Confidence:     confidence,
+		AnchorDistance: distance,
 	}
 	if pos, err := v.timeline.Locate(global); err == nil {
 		out.TrackID, out.TrackNumber, out.TrackSeconds = pos.MediaFileID, pos.Number, pos.TrackSeconds
@@ -507,11 +701,14 @@ func pageAt(p models.BookProgress, v bookViews) *pageView {
 	if v.translator == nil || !v.translator.HasPages() {
 		return nil
 	}
-	page, confidence, ok := v.translator.CharToPage(p.CharOffset)
+	tr, ok := v.translator.CharToPageT(p.CharOffset)
 	if !ok {
 		return nil
 	}
-	return &pageView{Page: page, Derived: true, Confidence: confidence}
+	return &pageView{
+		Page: int(tr.Value), Derived: true,
+		Confidence: tr.Confidence, AnchorDistance: tr.AnchorDistance,
+	}
 }
 
 // chapterAt finds the spine document owning an offset. Ranges are

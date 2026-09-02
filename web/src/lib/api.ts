@@ -1,5 +1,7 @@
 import type {
   AchievementStatus,
+  AlignmentJobView,
+  AlignmentStatusView,
   AudioTimeline,
   Book,
   BookFacets,
@@ -22,6 +24,7 @@ import type {
   PlayOrder,
   PlaySession,
   Platform,
+  PositionTranslation,
   PositionWrite,
   PositionWriteResult,
   Project,
@@ -428,6 +431,29 @@ export const api = {
       method: "PUT",
       body: body(write),
     }),
+
+  /**
+   * A speculative lookup: translate one arbitrary position without touching
+   * stored progress. Exactly one of `char` (a canonical offset) or `audio`
+   * (a global second on the tape) may be given.
+   */
+  translateBookPosition: (
+    entryId: string,
+    query: { char: number } | { audio: number },
+  ) =>
+    request<PositionTranslation>(
+      `/books/${entryId}/position?${
+        "char" in query ? `char=${Math.round(query.char)}` : `audio=${query.audio}`
+      }`,
+    ),
+
+  /** Where an entry's alignment stands: its job, its result, its worker. */
+  bookAlignStatus: (entryId: string) =>
+    request<AlignmentStatusView>(`/books/${entryId}/align`),
+
+  /** Queues an alignment; idempotent while one is already in flight. */
+  enqueueAlignment: (entryId: string) =>
+    request<{ job: AlignmentJobView }>(`/books/${entryId}/align`, { method: "POST" }),
 };
 
 /** Cover images are served by our own API from the local cache. */

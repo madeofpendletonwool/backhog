@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/cn";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -217,6 +217,8 @@ export function BookDetailPage() {
           </Panel>
 
           <UnattachedFiles entryId={entry.id} />
+
+          <AlignmentPanel entryId={entry.id} />
 
           <ListMembership entry={entry} />
 
@@ -448,6 +450,213 @@ function UnattachedFiles({ entryId }: { entryId: string }) {
         Review in Book files
       </Link>
     </Panel>
+  );
+}
+
+/**
+ * The alignment status surface, and the one place a book's text↔audio map
+ * can be started, watched, understood or retried. Every state gets honest
+ * words — including the two easy to get wrong: a queued job with no worker
+ * running (it will wait forever, so say so), and a low-confidence result,
+ * which is a usable map that deserves a warning, not an error.
+ */
+function AlignmentPanel({ entryId }: { entryId: string }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["bookAlign", entryId],
+    queryFn: () => api.bookAlignStatus(entryId),
+    refetchInterval: (query) => {
+      const state = query.state.data?.job?.state;
+      return state && ACTIVE_JOB_STATES.has(state) ? 4000 : false;
+    },
+  });
+
+  // The two halves an alignment joins, shared with the read/listen buttons'
+  // queries — a book missing either gets the reason, not a button that 422s.
+  const { data: text } = useQuery({
+    queryKey: ["bookTextChapters", entryId],
+    queryFn: () => api.bookTextChapters(entryId),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const { data: timeline } = useQuery({
+    queryKey: ["bookAudio", entryId],
+    queryFn: () => api.bookAudio(entryId),
+    retry: false,
+  });
+
+  const enqueue = useMutation({
+    mutationFn: () => api.enqueueAlignment(entryId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["bookAlign", entryId] }),
+  });
+
+  const job = data?.job ?? null;
+  const alignment = data?.alignment ?? null;
+  const active = job !== null && ACTIVE_JOB_STATES.has(job.state);
+  const hasText = (text?.char_count ?? 0) > 0;
+  const hasAudio = (timeline?.tracks.length ?? 0) > 0;
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">Audio alignment</h2>
+      <p className="mb-3 text-xs leading-relaxed text-ink-500">
+        The map that lets reading and listening hand off to each other.
+      </p>
+
+      {!hasText || !hasAudio ? (
+        <>
+          <StatusLine tone="idle" label="Not possible yet" />
+          <p className="mt-2 text-xs leading-relaxed text-ink-400">
+            {!hasText && !hasAudio
+              ? "This book needs an ebook and an audiobook attached before they can be lined up."
+              : !hasText
+                ? "An ebook has to be attached (and DRM-free) before there is text to align the audiobook against."
+                : "An audiobook has to be attached before there is anything to align the text against."}
+          </p>
+          <Link
+            to="/books/files"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg text-sm text-brand-400 transition-colors hover:text-brand-300 focus-visible:focus-ring"
+          >
+            <Gi name="full-folder" className="size-4" />
+            Book files
+          </Link>
+        </>
+      ) : !job && !alignment ? (
+        <>
+          <StatusLine tone="idle" label="Not aligned" />
+          <p className="mt-2 text-xs leading-relaxed text-ink-400">
+            Aligning transcribes the audiobook and matches it against the text, so positions
+            translate both ways.
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-3"
+            loading={enqueue.isPending}
+            onClick={() => enqueue.mutate()}
+          >
+            <Gi name="linked-rings" className="size-3.5" />
+            Align this book
+          </Button>
+        </>
+      ) : active && job ? (
+        <>
+          <StatusLine
+            tone="working"
+            label={
+              job.state === "queued"
+                ? "Queued"
+                : job.state === "claimed"
+                  ? "Starting"
+                  : job.state === "transcribing"
+                    ? "Transcribing"
+                    : "Aligning"
+            }
+            detail={
+              job.state === "transcribing" || job.state === "aligning"
+                ? `${Math.round(job.progress * 100)}%`
+                : undefined
+            }
+          />
+          {(job.state === "transcribing" || job.state === "aligning") && (
+            <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-ink-800">
+              <div
+                className="h-full rounded-full bg-status-playing transition-[width] duration-500"
+                style={{ width: `${Math.max(2, Math.round(job.progress * 100))}%` }}
+              />
+            </div>
+          )}
+          <p className="mt-2 text-xs leading-relaxed text-ink-400">
+            {job.state === "queued" && data?.worker_enabled === false
+              ? "No alignment worker is running, so this will wait until one is. The rest of the book keeps working meanwhile."
+              : job.state === "queued"
+                ? "Waiting for the alignment worker to pick it up."
+                : job.state === "claimed"
+                  ? job.stage_detail || "The worker is getting set up."
+                  : job.stage_detail ||
+                    "Turning the audiobook into text and matching it to the pages. This runs at a few times listening speed, so a long book takes a while."}
+          </p>
+        </>
+      ) : job?.state === "failed" ? (
+        <>
+          <StatusLine tone="failed" label="Alignment failed" />
+          <p className="mt-2 text-xs leading-relaxed text-red-300">
+            {job.error || "The worker could not finish this alignment."}
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-3"
+            loading={enqueue.isPending}
+            onClick={() => enqueue.mutate()}
+          >
+            <Gi name="refresh" className="size-3.5" />
+            Try again
+          </Button>
+        </>
+      ) : alignment && (alignment.state === "ready" || alignment.state === "low_confidence") ? (
+        <>
+          <StatusLine
+            tone={alignment.state === "ready" ? "good" : "warn"}
+            label={alignment.state === "ready" ? "Ready" : "Low confidence"}
+          />
+          <p className="mt-2 font-display text-[11px] uppercase tracking-wider text-ink-300">
+            {Math.round(alignment.coverage * 100)}% covered ·{" "}
+            {Math.round(alignment.mean_confidence * 100)}% confident
+          </p>
+          {alignment.state === "low_confidence" && (
+            <p className="mt-2 text-xs leading-relaxed text-amber-300/90">
+              This audiobook doesn't match this ebook closely enough — it may be abridged or a
+              different translation. Handoff between reading and listening still works, but expect
+              it to land near, not exactly on, your page.
+            </p>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-2 text-ink-400"
+            loading={enqueue.isPending}
+            onClick={() => enqueue.mutate()}
+          >
+            <Gi name="refresh" className="size-3.5" />
+            Re-run alignment
+          </Button>
+        </>
+      ) : null}
+    </Panel>
+  );
+}
+
+const ACTIVE_JOB_STATES = new Set(["queued", "claimed", "transcribing", "aligning"]);
+
+/** One labelled dot and word — the state, at a glance. */
+function StatusLine({
+  tone,
+  label,
+  detail,
+}: {
+  tone: "idle" | "working" | "good" | "warn" | "failed";
+  label: string;
+  detail?: string;
+}) {
+  const toneClass = {
+    idle: "bg-ink-500",
+    working: "bg-status-playing",
+    good: "bg-status-played",
+    warn: "bg-amber-300",
+    failed: "bg-status-dropped",
+  }[tone];
+
+  return (
+    <p className="flex items-baseline gap-2">
+      <span className={cn("size-2 shrink-0 translate-y-[-1px] rounded-full", toneClass)} />
+      <span className="font-display text-[11px] uppercase tracking-wider text-ink-200">
+        {label}
+      </span>
+      {detail && (
+        <span className="font-display text-[11px] tracking-wider text-ink-400">{detail}</span>
+      )}
+    </p>
   );
 }
 

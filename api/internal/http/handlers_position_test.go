@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -551,5 +552,246 @@ func TestReadingSessions(t *testing.T) {
 		if status, body := app.api(t, http.MethodPost, "/api/books/"+positionEntry+"/sessions", tc.body); status != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400: %v", tc.name, status, body)
 		}
+	}
+}
+
+// --- speculative translation ---------------------------------------------
+//
+// GET position?char= / ?audio= is the "where would this be?" lookup both
+// handoff buttons make before they move anyone. Its contract: derived
+// answers carry confidence and anchor distance, stored progress is never
+// read as a shortcut and never written, and a book with no alignment gets
+// an honest null rather than a silently borrowed position.
+
+func TestBookPositionTranslatesCharSpeculatively(t *testing.T) {
+	app := newPositionTestApp(t, fixedAnchors{
+		audio: []position.Anchor{
+			{CharOffset: 0, Value: 0, Confidence: 0.9},
+			{CharOffset: 40, Value: 10, Confidence: 0.8},
+		},
+		pages: []position.Anchor{
+			{CharOffset: 0, Value: 1, Confidence: 0.6},
+			{CharOffset: 40, Value: 11, Confidence: 0.6},
+		},
+	})
+	count := app.charCount(t)
+
+	// A stored position that must survive every speculative lookup below.
+	if _, body := app.api(t, http.MethodPut, "/api/books/"+positionEntry+"/position",
+		map[string]any{"char_offset": 20}); body["status"] != "playing" {
+		t.Fatalf("put: %v", body)
+	}
+
+	// Three points, three different trust stories. Mid-segment: pure
+	// interpolation, the weaker anchor's confidence, twenty characters
+	// from either neighbour.
+	status, got := app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position?char=20", nil)
+	if status != http.StatusOK {
+		t.Fatalf("translate status = %d: %v", status, got)
+	}
+	if got["char_offset"] != 20.0 || got["derived"] != true || got["confidence"] != 0.8 {
+		t.Errorf("mid-segment = %v/%v/%v, want 20/true/0.8",
+			got["char_offset"], got["derived"], got["confidence"])
+	}
+	if got["anchor_distance"] != 20.0 {
+		t.Errorf("anchor_distance = %v, want the 20 chars to either anchor", got["anchor_distance"])
+	}
+	audio := got["audio"].(map[string]any)
+	if audio["seconds"] != 5.0 || audio["derived"] != true || audio["confidence"] != 0.8 {
+		t.Errorf("audio = %v, want 5s derived at 0.8", audio)
+	}
+	if audio["track_id"] != float64(positionTrackOne) {
+		t.Errorf("track = %v, want the first track", audio["track_id"])
+	}
+	page := got["page"].(map[string]any)
+	if page["page"] != 6.0 || page["confidence"] != 0.6 {
+		t.Errorf("page = %v, want page 6 at 0.6", page)
+	}
+
+	// Dead on an anchor: exact, full confidence, no distance to confess.
+	_, got = app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position?char=0", nil)
+	audio = got["audio"].(map[string]any)
+	if audio["seconds"] != 0.0 || audio["confidence"] != 0.9 || audio["anchor_distance"] != 0.0 {
+		t.Errorf("on-anchor = %v, want 0s at 0.9 with no distance", audio)
+	}
+
+	// Outside the anchor span but inside the text: clamped to the last
+	// anchor and marked half as trustworthy rather than extrapolated into
+	// back matter.
+	past := count - 1
+	_, got = app.api(t, http.MethodGet,
+		"/api/books/"+positionEntry+"/position?char="+strconv.Itoa(past), nil)
+	audio = got["audio"].(map[string]any)
+	if audio["seconds"] != 10.0 {
+		t.Errorf("past-the-end seconds = %v, want the clamped 10", audio["seconds"])
+	}
+	if audio["confidence"] != 0.4 || audio["anchor_distance"] != float64(past-40) {
+		t.Errorf("past-the-end honesty = %v/%v, want 0.4/%d",
+			audio["confidence"], audio["anchor_distance"], past-40)
+	}
+
+	// Nothing speculatively looked at may have moved the stored position.
+	_, got = app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position", nil)
+	if got["char_offset"] != 20.0 {
+		t.Errorf("stored char_offset = %v after speculative lookups, want the untouched 20", got["char_offset"])
+	}
+}
+
+func TestBookPositionTranslatesAudioSpeculatively(t *testing.T) {
+	app := newPositionTestApp(t, fixedAnchors{
+		audio: []position.Anchor{
+			{CharOffset: 0, Value: 0, Confidence: 0.9},
+			{CharOffset: 40, Value: 10, Confidence: 0.8},
+		},
+	})
+	app.charCount(t)
+
+	// Halfway between two anchors, asked in seconds: the distance is
+	// reported in the space the question was asked in.
+	status, got := app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position?audio=5", nil)
+	if status != http.StatusOK {
+		t.Fatalf("translate status = %d: %v", status, got)
+	}
+	query := got["query"].(map[string]any)
+	if query["space"] != "audio" || query["value"] != 5.0 {
+		t.Errorf("query = %v, want audio 5", query)
+	}
+	if got["char_offset"] != 20.0 || got["derived"] != true || got["confidence"] != 0.8 {
+		t.Errorf("audio→char = %v/%v/%v, want 20/true/0.8",
+			got["char_offset"], got["derived"], got["confidence"])
+	}
+	if got["anchor_distance"] != 5.0 {
+		t.Errorf("anchor_distance = %v, want the 5s to either anchor", got["anchor_distance"])
+	}
+	if chapter, ok := got["chapter"].(map[string]any); !ok {
+		t.Errorf("chapter = %#v, want the document holding char 20", got["chapter"])
+	} else if chapter["char_start"].(float64) > 20 || chapter["char_end"].(float64) <= 20 {
+		t.Errorf("chapter [%v,%v) does not contain char 20", chapter["char_start"], chapter["char_end"])
+	}
+
+	// Past the end of the tape the question still has an answer — the
+	// last one — but it says how far outside the measured map it is.
+	_, got = app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position?audio=9999", nil)
+	if got["char_offset"] != 40.0 || got["confidence"] != 0.4 {
+		t.Errorf("past-the-tape = %v/%v, want char 40 at 0.4", got["char_offset"], got["confidence"])
+	}
+	if q := got["query"].(map[string]any); q["value"] != 135.0 {
+		t.Errorf("query value = %v, want the clamped 135s tape end", q["value"])
+	}
+
+	// Speculation writes nothing: the stored position never existed, and
+	// it still must not after translating.
+	_, got = app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position", nil)
+	if got["char_offset"] != 0.0 || got["updated_at"] != nil {
+		t.Errorf("stored position = %v/%v, want the untouched unopened book", got["char_offset"], got["updated_at"])
+	}
+}
+
+func TestBookPositionTranslateWithoutAlignmentIsHonest(t *testing.T) {
+	app := newPositionTestApp(t, nil)
+	app.charCount(t)
+
+	// The reader-side preview on an unaligned book: everything the reader
+	// already knows comes back, and the audio view is honestly absent —
+	// never the stored raw timestamp borrowed as if it were an answer.
+	status, got := app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position?char=10", nil)
+	if status != http.StatusOK {
+		t.Fatalf("translate status = %d: %v", status, got)
+	}
+	if got["char_offset"] != 10.0 || got["derived"] != false || got["confidence"] != 0.0 {
+		t.Errorf("unaligned translate = %v, want char 10 with nothing derived", got)
+	}
+	if got["audio"] != nil || got["page"] != nil || got["alignment"] != nil {
+		t.Errorf("unaligned translate invented views: %v", got)
+	}
+
+	// The player-side preview has nothing to stand on at all.
+	status, body := app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position?audio=5", nil)
+	if status != http.StatusUnprocessableEntity {
+		t.Errorf("unaligned audio translate = %d, want 422: %v", status, body)
+	}
+
+	// A book with neither map still answers the text question itself.
+	status, got = app.api(t, http.MethodGet, "/api/books/"+positionAudioOnly+"/position?char=10", nil)
+	if status != http.StatusOK {
+		t.Fatalf("audio-only translate status = %d: %v", status, got)
+	}
+	if got["char_count"] != 0.0 || got["percent"] != 0.0 {
+		t.Errorf("audio-only translate = %v, want no denominator and no percent", got)
+	}
+}
+
+func TestBookPositionTranslateGradesByItsAlignment(t *testing.T) {
+	app := newPositionTestApp(t, fixedAnchors{
+		audio: []position.Anchor{
+			{CharOffset: 0, Value: 0, Confidence: 0.5},
+			{CharOffset: 40, Value: 10, Confidence: 0.5},
+		},
+	})
+	app.charCount(t)
+
+	var textID string
+	if err := app.store.DB().QueryRow(`SELECT id FROM epub_texts LIMIT 1`).Scan(&textID); err != nil {
+		t.Fatalf("find parsed text: %v", err)
+	}
+	exec := func(q string, args ...any) {
+		if _, err := app.store.DB().Exec(q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	exec(`INSERT INTO alignments (id, entry_id, epub_text_id, state, coverage, mean_confidence, model)
+	      VALUES ('al-low', ?, ?, 'low_confidence', 0.4, 0.5, 'test-model')`, positionEntry, textID)
+	exec(`INSERT INTO alignment_anchors (alignment_id, char_offset, audio_seconds, confidence)
+	      VALUES ('al-low', 0, 0, 0.5), ('al-low', 40, 10, 0.5)`)
+
+	_, got := app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position?char=20", nil)
+	alignment, ok := got["alignment"].(map[string]any)
+	if !ok {
+		t.Fatalf("alignment = %#v, want the low-confidence summary", got["alignment"])
+	}
+	if alignment["state"] != "low_confidence" || alignment["coverage"] != 0.4 || alignment["mean_confidence"] != 0.5 {
+		t.Errorf("alignment = %v, want low_confidence/0.4/0.5", alignment)
+	}
+	// The handoff itself still answers: usable, but with the honesty to
+	// warn about it.
+	if got["audio"] == nil || got["derived"] != true {
+		t.Errorf("low_confidence handoff = %v, want a derived audio view", got)
+	}
+}
+
+func TestBookPositionTranslateRejectsBadQueries(t *testing.T) {
+	app := newPositionTestApp(t, nil)
+	count := app.charCount(t)
+
+	for _, tc := range []struct {
+		name string
+		path string
+		want int
+	}{
+		{"both spaces at once", "?char=1&audio=2", http.StatusBadRequest},
+		{"garbage char", "?char=chapter-three", http.StatusBadRequest},
+		{"negative char", "?char=-1", http.StatusBadRequest},
+		{"char past the text", "?char=" + strconv.Itoa(count+1), http.StatusBadRequest},
+		{"garbage audio", "?audio=three-minutes-in", http.StatusBadRequest},
+		{"negative audio", "?audio=-1", http.StatusBadRequest},
+	} {
+		if status, body := app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position"+tc.path, nil); status != tc.want {
+			t.Errorf("%s: status = %d, want %d: %v", tc.name, status, tc.want, body)
+		}
+	}
+
+	if status, _ := app.api(t, http.MethodGet, "/api/books/nope/position?char=1", nil); status != http.StatusNotFound {
+		t.Errorf("unknown entry = %d, want 404", status)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookie jar: %v", err)
+	}
+	stranger := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	register(t, app.ts.URL, stranger, "translator@example.com", "translator", "hogwash123")
+	if status, _ := app.do(t, stranger, http.MethodGet,
+		"/api/books/"+positionEntry+"/position?char=1", nil); status != http.StatusNotFound {
+		t.Errorf("stranger translate = %d, want 404", status)
 	}
 }

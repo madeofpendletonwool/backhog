@@ -1,8 +1,11 @@
 package http
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +15,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	booktext "github.com/collinpendleton/backhog/api/internal/books"
 	bookaudio "github.com/collinpendleton/backhog/api/internal/books/audio"
+	"github.com/collinpendleton/backhog/api/internal/books/passage"
 	"github.com/collinpendleton/backhog/api/internal/books/position"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/media"
@@ -40,10 +44,13 @@ type Server struct {
 	matcher  *media.Matcher
 	epubs    *booktext.Ingester
 	audio    *bookaudio.Service
+	// passage places paper-page text in the canonical text; it reads the
+	// same companion files the ingester writes and is nil exactly when
+	// the ingester is.
+	passage *passage.Matcher
 	// anchors supplies the alignment and page-map data the position
-	// translator interpolates over. Alignment anchors arrive through the
-	// queue below; the page map waits for the page-scan stage, so until
-	// then an entry simply has no page view.
+	// translator interpolates over: alignment anchors arrive through the
+	// worker queue, page anchors from the physical copies' scans.
 	anchors    position.Provider
 	eggLimiter eggLimiter
 }
@@ -58,9 +65,23 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 		slog.Error("epub text dir unavailable", "dir", cfg.EpubTextDir, "error", err)
 		epubs = nil
 	}
+	// The passage matcher shares the ingester's directory, so it follows
+	// it into nil on the same failure.
+	var match *passage.Matcher
+	if epubs != nil {
+		ing := epubs
+		match = passage.New(func(_ context.Context, textID string) (string, error) {
+			data, err := os.ReadFile(ing.TextPath(textID))
+			if err != nil {
+				return "", fmt.Errorf("read canonical text: %w", err)
+			}
+			return string(data), nil
+		})
+	}
 	return &Server{
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
+		passage:    match,
 		matcher:    media.NewMatcher(st, books),
 		anchors:    alignmentAnchors{store: st},
 		audio:      bookaudio.NewService(st, cfg.MediaDirs),
@@ -154,6 +175,18 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/books/{entryID}/align", s.handleBookAlignEnqueue)
 			r.Get("/books/{entryID}/align", s.handleBookAlignStatus)
 			r.Delete("/books/{entryID}/align", s.handleBookAlignDelete)
+
+			// The physical-copy bridge: place text read off a paper page
+			// in the canonical text, register printings of a book the
+			// user holds, and pin pages as anchors the position
+			// endpoints interpolate over.
+			r.Post("/books/{entryID}/passage", s.handleBookPassage)
+			r.Get("/books/{entryID}/copies", s.handleListBookCopies)
+			r.Post("/books/{entryID}/copies", s.handleCreateBookCopy)
+			r.Patch("/books/{entryID}/copies/{copyID}", s.handleUpdateBookCopy)
+			r.Delete("/books/{entryID}/copies/{copyID}", s.handleDeleteBookCopy)
+			r.Get("/books/{entryID}/copies/{copyID}/pages", s.handleListBookCopyPages)
+			r.Post("/books/{entryID}/copies/{copyID}/pages", s.handleSaveBookPageAnchor)
 
 			r.Route("/series", func(r chi.Router) {
 				r.Get("/", s.handleSeriesIndex)

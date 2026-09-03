@@ -25,9 +25,10 @@ import (
 
 // alignmentAnchors is the position translator's live anchor source: the
 // audio map is read from the entry's newest usable alignment, and the
-// page map stays empty until the page-scan stage lands. An entry with
-// no alignment is the normal case, reported as no anchors — not an
-// error — exactly as the Provider contract promises.
+// page map from the printing the entry is anchored to — the copy
+// registered for its edition. An entry with neither is the normal case,
+// reported as no anchors — not an error — exactly as the Provider
+// contract promises.
 type alignmentAnchors struct{ store *store.Store }
 
 func (a alignmentAnchors) AudioAnchors(ctx context.Context, entryID string) ([]position.Anchor, error) {
@@ -50,8 +51,20 @@ func (a alignmentAnchors) AudioAnchors(ctx context.Context, entryID string) ([]p
 	return out, nil
 }
 
-func (a alignmentAnchors) PageAnchors(context.Context, string) ([]position.Anchor, error) {
-	return nil, nil
+func (a alignmentAnchors) PageAnchors(ctx context.Context, entryID string) ([]position.Anchor, error) {
+	stored, err := a.store.PageAnchorsForEntry(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]position.Anchor, 0, len(stored))
+	for _, s := range stored {
+		out = append(out, position.Anchor{
+			CharOffset: s.CharOffset,
+			Value:      float64(s.PrintedPage),
+			Confidence: s.Confidence,
+		})
+	}
+	return out, nil
 }
 
 // handleBookAlignEnqueue queues an alignment for one of the caller's

@@ -404,3 +404,115 @@ func TestPhysicalCopiesAndAnchors(t *testing.T) {
 		t.Errorf("page view survived its copy: %v", page)
 	}
 }
+
+// TestPageMapSeedAndErrorBar covers the honesty half of the page bridge:
+// a registered printing is usable before anybody scans anything, every
+// derived page carries an error bar, scanning tightens it, and a map
+// that cannot bound its own error says so with a null bar instead of
+// inventing one.
+func TestPageMapSeedAndErrorBar(t *testing.T) {
+	app := newEpubTestApp(t)
+	app.attachEpub(t, passageEpubFixture(t))
+	text := app.canonicalText(t)
+	mid := len(text) / 2
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := app.store.DB().Exec(q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	exec(`INSERT INTO book_editions (id, book_id, page_count) VALUES ('OL1M', 'OL1W', 320)`)
+	exec(`UPDATE library_entries SET edition_id = 'OL1M' WHERE id = ?`, epubFixtureEntry)
+
+	pageAt := func(t *testing.T, offset int) map[string]any {
+		t.Helper()
+		status, body := app.send(t, http.MethodGet,
+			"/api/books/"+epubFixtureEntry+"/position?char="+fmt.Sprint(offset), nil)
+		if status != http.StatusOK {
+			t.Fatalf("translate status = %d: %v", status, body)
+		}
+		page, _ := body["page"].(map[string]any)
+		return page
+	}
+
+	// Nothing is registered yet, so there is no printing whose pages
+	// these would be.
+	if page := pageAt(t, mid); page != nil {
+		t.Fatalf("page view for a book with no physical copy: %v", page)
+	}
+
+	status, body := app.send(t, http.MethodPost, "/api/books/"+epubFixtureEntry+"/copies",
+		map[string]string{"edition_id": "OL1M"})
+	if status != http.StatusCreated {
+		t.Fatalf("create copy status = %d: %v", status, body)
+	}
+	copyID := body["copy"].(map[string]any)["id"].(string)
+
+	// Registering the copy is enough: the printing's own page count
+	// stretched across the text answers immediately, in the middle of a
+	// 320-page book, with a bar wide enough to admit it is a guess.
+	seeded := pageAt(t, mid)
+	if seeded == nil {
+		t.Fatal("a registered printing with a page count produced no page view")
+	}
+	if got := seeded["page"].(float64); got < 120 || got > 200 {
+		t.Errorf("seeded page = %v, want roughly halfway through a 320-page printing", got)
+	}
+	seededMargin, ok := seeded["margin"].(float64)
+	if !ok {
+		t.Fatalf("seeded page view carries no error bar: %v", seeded)
+	}
+	if seededMargin < 10 {
+		t.Errorf("seeded bar = ±%v, want a wide one — nobody has looked at the paper", seededMargin)
+	}
+
+	// Scanning pages tightens it. Three anchors around the midpoint turn
+	// a whole-book guess into a local interpolation.
+	pin := func(page, offset int) {
+		t.Helper()
+		status, body := app.send(t, http.MethodPost,
+			"/api/books/"+epubFixtureEntry+"/copies/"+copyID+"/pages",
+			map[string]any{"printed_page": page, "char_offset": offset, "source": "ocr", "confidence": 0.95})
+		if status != http.StatusOK {
+			t.Fatalf("pin page %d: status = %d: %v", page, status, body)
+		}
+	}
+	pin(120, mid-len(text)/8)
+	pin(200, mid+len(text)/8)
+
+	scanned := pageAt(t, mid)
+	if scanned == nil {
+		t.Fatal("page view disappeared once anchors existed")
+	}
+	scannedMargin, ok := scanned["margin"].(float64)
+	if !ok {
+		t.Fatalf("scanned page view carries no error bar: %v", scanned)
+	}
+	if scannedMargin >= seededMargin {
+		t.Errorf("bar did not tighten with scans: ±%v after, ±%v before", scannedMargin, seededMargin)
+	}
+	if got := scanned["confidence"].(float64); got != 0.95 {
+		t.Errorf("confidence = %v, want the scanned anchors' 0.95", got)
+	}
+
+	// A printing whose page count nobody recorded, with a single scan on
+	// it, knows where one page is and nothing about how fast pages go by.
+	// That answer goes out with a null bar rather than a made-up one.
+	exec(`UPDATE book_editions SET page_count = NULL WHERE id = 'OL1M'`)
+	for _, page := range []int{120, 200} {
+		exec(`DELETE FROM page_anchors WHERE physical_copy_id = ? AND printed_page = ?`, copyID, page)
+	}
+	pin(150, mid)
+
+	lone := pageAt(t, mid+2000)
+	if lone == nil {
+		t.Fatal("a single anchor produced no page view")
+	}
+	if lone["page"].(float64) != 150 {
+		t.Errorf("single-anchor page = %v, want the only anchor's 150", lone["page"])
+	}
+	if lone["margin"] != nil {
+		t.Errorf("single-anchor bar = %v, want null — the map has no scale", lone["margin"])
+	}
+}

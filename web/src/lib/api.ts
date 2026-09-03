@@ -21,6 +21,9 @@ import type {
   MediaFile,
   MediaScanStatus,
   NamedRef,
+  PageAnchor,
+  PassageResult,
+  PhysicalCopy,
   PlayOrder,
   PlaySession,
   Platform,
@@ -454,6 +457,48 @@ export const api = {
   /** Queues an alignment; idempotent while one is already in flight. */
   enqueueAlignment: (entryId: string) =>
     request<{ job: AlignmentJobView }>(`/books/${entryId}/align`, { method: "POST" }),
+
+  // --- the paper bridge ---------------------------------------------------
+  /**
+   * Places a stretch of text read off a printed page in the canonical text.
+   * 422 means the passage was too short or matched nothing — both are
+   * answers, not failures, and the scan dialog says so in words.
+   */
+  matchBookPassage: (entryId: string, text: string) =>
+    request<PassageResult>(`/books/${entryId}/passage`, {
+      method: "POST",
+      body: body({ text }),
+    }),
+
+  /** The printings of this book the reader holds, with their map sizes. */
+  bookCopies: (entryId: string) =>
+    request<{ copies: PhysicalCopy[] }>(`/books/${entryId}/copies`),
+
+  /** Registers a printing. 409 means it is already registered. */
+  createBookCopy: (entryId: string, editionId: string, notes = "") =>
+    request<{ copy: PhysicalCopy }>(`/books/${entryId}/copies`, {
+      method: "POST",
+      body: body({ edition_id: editionId, notes }),
+    }),
+
+  /** Drops a printing and its whole page map; scanning rebuilds it. */
+  deleteBookCopy: (entryId: string, copyId: string) =>
+    request<void>(`/books/${entryId}/copies/${copyId}`, { method: "DELETE" }),
+
+  /** One printing's page map, by page number. */
+  bookCopyPages: (entryId: string, copyId: string) =>
+    request<{ anchors: PageAnchor[] }>(`/books/${entryId}/copies/${copyId}/pages`),
+
+  /** Pins one printed page to a canonical offset, last write wins. */
+  saveBookPageAnchor: (
+    entryId: string,
+    copyId: string,
+    anchor: { printed_page: number; char_offset: number; source: "ocr" | "manual"; confidence?: number },
+  ) =>
+    request<{ anchor: PageAnchor }>(`/books/${entryId}/copies/${copyId}/pages`, {
+      method: "POST",
+      body: body(anchor),
+    }),
 };
 
 /** Cover images are served by our own API from the local cache. */

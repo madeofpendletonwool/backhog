@@ -3,6 +3,11 @@ web/dist/
 web/node_modules/
 api/backhog
 
+# Vendored OCR runtime — 14 MB of Tesseract WASM and language data copied out
+# of node_modules by web/scripts/vendor-ocr.mjs on every build. npm pins the
+# versions in the lockfile; the bytes do not belong in git.
+web/public/assets/ocr/
+
 # Local data
 *.db
 *.db-shm

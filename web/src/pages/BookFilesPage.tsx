@@ -3,10 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Dialog } from "@/components/ui/Dialog";
 import { Gi } from "@/components/ui/Gi";
-import { Button, EmptyState, Input, Panel, Spinner } from "@/components/ui/primitives";
+import { Button, EmptyState, Input, Panel, Select, Spinner } from "@/components/ui/primitives";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatDuration } from "@/lib/format";
+import { byline, formatDuration } from "@/lib/format";
 import type { Book, MediaCandidate, MediaSuggestion } from "@/lib/types";
 
 /**
@@ -22,6 +22,7 @@ export function BookFilesPage() {
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
   const [showSkipped, setShowSkipped] = useState(false);
+  const [kind, setKind] = useState<"" | "audio" | "epub">("");
 
   const scan = useQuery({ queryKey: ["media", "scan"], queryFn: api.mediaScanStatus });
   const queue = useQuery({
@@ -134,7 +135,8 @@ export function BookFilesPage() {
     invalidate();
   };
 
-  const candidates = queue.data?.candidates ?? [];
+  const allCandidates = queue.data?.candidates ?? [];
+  const candidates = kind ? allCandidates.filter((c) => c.kind === kind) : allCandidates;
   const skipped = queue.data?.skipped ?? [];
   const bulkableCount = candidates.filter((c) => c.high_confidence && c.suggestions?.[0]).length;
 
@@ -148,6 +150,16 @@ export function BookFilesPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Select
+            aria-label="Filter by file type"
+            value={kind}
+            onChange={(event) => setKind(event.target.value as "" | "audio" | "epub")}
+            className="w-auto"
+          >
+            <option value="">All types</option>
+            <option value="audio">Audio</option>
+            <option value="epub">Ebooks</option>
+          </Select>
           {scan.data?.running && (
             <span className="flex items-center gap-2 text-xs text-ink-400">
               <Spinner />
@@ -188,6 +200,18 @@ export function BookFilesPage() {
           <Spinner className="size-6" />
         </div>
       ) : candidates.length === 0 ? (
+        allCandidates.length > 0 ? (
+          <EmptyState
+            icon={<Gi name={kind === "audio" ? "headphones" : "scroll-unfurled"} className="size-8" />}
+            title={`No ${kind === "audio" ? "audiobooks" : "ebooks"} to review`}
+            description="Every candidate of this type is attached or decided. Clear the filter to see the rest of the queue."
+            action={
+              <Button variant="ghost" onClick={() => setKind("")}>
+                Show all types
+              </Button>
+            }
+          />
+        ) : (
         <EmptyState
           icon={<Gi name="book-pile" className="size-8" />}
           title={queue.data ? "Nothing to review" : "No scan yet"}
@@ -203,6 +227,7 @@ export function BookFilesPage() {
             </Button>
           }
         />
+        )
       ) : (
         <>
           {bulkableCount > 0 && (
@@ -360,12 +385,16 @@ function CandidateRow({
             </details>
           </div>
 
-          <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
+          <div className="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:max-w-64 sm:min-w-0 sm:items-end">
             {top ? (
               <>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-ink-100">{top.book.title}</p>
-                  <p className="text-xs text-ink-400">{(top.book.authors ?? []).join(", ")}</p>
+                <div className="min-w-0 max-w-full text-right">
+                  <p className="truncate text-sm font-semibold text-ink-100" title={top.book.title}>
+                    {top.book.title}
+                  </p>
+                  <p className="truncate text-xs text-ink-400" title={byline(top.book)}>
+                    {byline(top.book)}
+                  </p>
                   <p className="mt-0.5 font-display text-[10px] uppercase tracking-wider text-ink-500">
                     {Math.round(top.confidence * 100)}% · from {top.signal} ·{" "}
                     {top.in_library ? "in your library" : "Open Library"}

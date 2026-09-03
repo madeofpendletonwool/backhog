@@ -6,8 +6,8 @@ import (
 	"encoding/binary"
 )
 
-// Fixture builders: minimal but structurally valid mp3, m4b and epub files so
-// the scanner tests exercise the real tag and container parsers.
+// Fixture builders: minimal but structurally valid mp3, m4b, opus and epub
+// files so the scanner tests exercise the real tag and container parsers.
 
 // buildMP3 writes an ID3v2.3 tag followed by n synthetic MPEG1 Layer III
 // frames (128kbps, 44.1kHz, 1152 samples per frame ≈ 26.12ms each).
@@ -106,9 +106,13 @@ func buildEPUB(encrypted bool) []byte {
 </container>`,
 		"OEBPS/content.opf": `<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
     <dc:identifier id="id">urn:uuid:test</dc:identifier>
+    <dc:identifier opf:scheme="ISBN">9780306406157</dc:identifier>
     <dc:title>Fixture Book</dc:title>
+    <dc:creator opf:role="ill">Fixture Illustrator</dc:creator>
+    <dc:creator opf:role="aut">Fixture Author</dc:creator>
+    <dc:language>en</dc:language>
   </metadata>
 </package>`,
 	}
@@ -129,4 +133,88 @@ func buildEPUB(encrypted bool) []byte {
 		panic(err)
 	}
 	return buf.Bytes()
+}
+
+// buildOpus writes a structurally valid Ogg Opus stream: an OpusHead page, an
+// OpusTags page carrying Vorbis comments, and an audio page whose granule
+// position sets the duration. Real pages with real CRCs, so both the tag
+// library and opusDuration parse this the way they parse a Libro.fm download.
+//
+// seconds is what the file should measure. The granule is computed back from
+// it, with a deliberately non-zero pre-skip so a parser that forgets to
+// subtract the priming samples reads a measurably wrong length.
+func buildOpus(title, artist, album string, seconds float64) []byte {
+	// An Opus granule always ticks at 48 kHz whatever the source rate was,
+	// and 312 is the usual libopus lookahead.
+	const granuleRate, preSkip = 48000, 312
+	granule := uint64(seconds*granuleRate) + preSkip
+
+	head := make([]byte, 19)
+	copy(head, "OpusHead")
+	head[8] = 1 // version
+	head[9] = 2 // channel count
+	binary.LittleEndian.PutUint16(head[10:12], preSkip)
+	binary.LittleEndian.PutUint32(head[12:16], 48000) // original sample rate
+	// head[16:18] output gain, head[18] channel mapping family: all zero.
+
+	var tags bytes.Buffer
+	tags.WriteString("OpusTags")
+	vendor := "backhog test fixture"
+	_ = binary.Write(&tags, binary.LittleEndian, uint32(len(vendor)))
+	tags.WriteString(vendor)
+	comments := []string{"TITLE=" + title, "ARTIST=" + artist, "ALBUM=" + album}
+	_ = binary.Write(&tags, binary.LittleEndian, uint32(len(comments)))
+	for _, c := range comments {
+		_ = binary.Write(&tags, binary.LittleEndian, uint32(len(c)))
+		tags.WriteString(c)
+	}
+
+	var out bytes.Buffer
+	// beginning-of-stream, then the tag page, then an end-of-stream audio
+	// page whose granule is the whole stream's length.
+	out.Write(oggPage(head, 0x02, 0, 0))
+	out.Write(oggPage(tags.Bytes(), 0x00, 0, 1))
+	out.Write(oggPage([]byte("not really opus audio"), 0x04, granule, 2))
+	return out.Bytes()
+}
+
+// oggPage frames one packet as a single Ogg page and computes its CRC. The
+// packet must be under 255 bytes so it fits in one lacing segment, which is
+// true of every header this fixture writes.
+func oggPage(packet []byte, flags byte, granule uint64, sequence uint32) []byte {
+	if len(packet) >= 255 {
+		panic("oggPage: fixture packets must fit one lacing segment")
+	}
+	// 27 header bytes, then a one-entry lacing table, then the packet.
+	page := make([]byte, 0, 27+1+len(packet))
+	page = append(page, "OggS"...)
+	page = append(page, 0)     // stream structure version
+	page = append(page, flags) // 0x02 BOS, 0x04 EOS
+	page = binary.LittleEndian.AppendUint64(page, granule)
+	page = binary.LittleEndian.AppendUint32(page, 0xB4C4C0DE) // stream serial
+	page = binary.LittleEndian.AppendUint32(page, sequence)
+	page = binary.LittleEndian.AppendUint32(page, 0) // CRC placeholder
+	page = append(page, 1)                           // one lacing segment
+	page = append(page, byte(len(packet)))
+	page = append(page, packet...)
+
+	binary.LittleEndian.PutUint32(page[22:26], oggCRC(page))
+	return page
+}
+
+// oggCRC is Ogg's own CRC32: polynomial 0x04c11db7, no reflection and no
+// final inversion, computed over the page with its CRC field zeroed.
+func oggCRC(page []byte) uint32 {
+	var crc uint32
+	for _, b := range page {
+		crc ^= uint32(b) << 24
+		for i := 0; i < 8; i++ {
+			if crc&0x80000000 != 0 {
+				crc = (crc << 1) ^ 0x04c11db7
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	return crc
 }

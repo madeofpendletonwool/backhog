@@ -658,13 +658,18 @@ export interface MediaFile {
   missing_at?: string | null;
 }
 
-/** One file the scanner refused to inventory, with the reason why. */
+/** One file the scanner did not inventory, with the reason why. */
 export interface MediaSkipped {
   id: number;
   root: string;
   path: string;
   ext: string;
-  reason: "unsupported_extension" | "drm_epub";
+  /**
+   * Four different statements, not one shrug: DRM we refuse, a Kindle format
+   * we chose not to parse, a metadata sidecar that is not a book at all, and
+   * genuinely unrecognised files.
+   */
+  reason: "unsupported_extension" | "drm_epub" | "format_unhandled" | "sidecar_metadata";
   size_bytes: number;
   seen_at: string;
 }
@@ -675,8 +680,12 @@ export interface MediaSuggestion {
   confidence: number;
   /** Where the book came from: the user's library or an Open Library search. */
   source: "library" | "openlibrary";
-  /** Which facts produced the confidence: tags, directory layout, filename. */
-  signal: "tags" | "directory" | "filename";
+  /**
+   * Which facts produced the confidence. "sidecar" is an OPF metadata block
+   * — a .opf beside the files, or the epub's own package document — and
+   * outranks the rest.
+   */
+  signal: "sidecar" | "tags" | "directory" | "filename";
   in_library: boolean;
   /** The user's library entry, when owned — the attach API is entry-keyed. */
   entry_id?: string;
@@ -722,6 +731,8 @@ export interface MediaScanStatus {
     restored: number;
     missing: number;
     unsupported: number;
+    /** .opf metadata sidecars parsed and fed to the matcher. */
+    sidecars: number;
     failed: number;
     error?: string;
   } | null;

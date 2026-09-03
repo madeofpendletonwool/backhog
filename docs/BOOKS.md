@@ -109,6 +109,7 @@ The book-specific hierarchy, one table per concept:
 | `library_entries` | your copy of the work | + `media_type`, `book_id`, nullable `edition_id` | The spine. `edition_id` is the printing the entry is anchored to, recorded at add time |
 | `physical_copies` | the lump of paper | `(user, entry, edition)` UNIQUE | The thing page anchors attach to — a second printing is a second row with its own map |
 | `media_files` | EPUB & audiobook files | `(root, path)` UNIQUE | The NAS inventory — pointed-at, never uploaded |
+| `media_sidecars` | parsed `.opf` metadata | `(root, path)` UNIQUE | Replaced per root each scan; the matcher's best evidence |
 | `epub_texts` / `epub_chapters` | parsed canonical text | per media file | See above |
 | `book_progress` | position | entry PK | One row per entry: `char_offset` is the truth |
 | `reading_sessions` | consumption log | per user, per entry | `mode` ∈ read/listen; `chars_advanced` |
@@ -139,15 +140,41 @@ Two shapes worth internalising:
 - **Rows are never deleted.** A path that disappears is flagged
   `missing_at`, so an unmounted NAS doesn't destroy the book
   associations; the next scan that sees it clears the flag.
-- **Unsupported files are counted and shown, not hidden**: `media_skipped`
-  records each with a reason (`unsupported_extension`, `drm_epub`), so a
-  user whose library is half Audible sees *why* those files aren't
-  there.
+- **Files that are not inventoried are counted and shown, not hidden**:
+  `media_skipped` records each with a reason, so a user whose library is
+  half Audible sees *why* those files aren't there. The reason
+  distinguishes four different statements: `drm_epub` and
+  `unsupported_extension` (which covers `.aax`/`.aaxc` and genuinely
+  unrecognised files), `format_unhandled` for Kindle formats this tool
+  recognises and chose not to parse, and `sidecar_metadata` for a `.opf`,
+  which is not a book at all.
+- **`.opf` sidecars are mined, not skipped**: `media_sidecars` holds the
+  parsed metadata block of every `.opf` found next to the books — title,
+  author, series, ISBN, work key. Rows are replaced per root on each scan
+  like `media_skipped`, because a sidecar describes what is on disk right
+  now and carries no user state. The matcher reads them all in one query
+  and never touches the filesystem itself: the candidates endpoint is
+  polled every 1.5s while a scan runs.
+- **`meta_version` gates the fast path**: `(size, mtime)` alone would mean
+  a better metadata extractor only ever reached files that happened to
+  change afterwards. The scanner's constant joins the comparison, so
+  bumping it re-reads every file's metadata exactly once and then goes
+  quiet — `books.ParserVersion`'s trick, applied to the inventory.
 - `media_ignores` is the per-user "stop asking me about this file".
 - The attach matcher (`match.go`) groups audio directories into ordered
-  candidates and proposes (book, confidence) suggestions from ID3/MP4
-  tags, directory layout and filenames — above 0.72 the UI offers them
-  for bulk confirmation; nothing auto-attaches.
+  candidates and proposes (book, confidence) suggestions. Evidence is a
+  ladder, expressed as ordering rather than arithmetic — the first source
+  that yields a title wins: an OPF metadata block (a `.opf` beside the
+  files, or an epub's own package document), then ID3/MP4/Vorbis tags,
+  then directory layout, then the bare filename. Above 0.72 the UI offers
+  them for bulk confirmation; nothing auto-attaches.
+- **An identifier is an identity, not a resemblance.** When that metadata
+  carries an ISBN or an Open Library work key, the matcher resolves it
+  through `GetByISBN`/`GetByWorkKey` and suggests the result outright
+  instead of scoring a title against it — a printing whose subtitle
+  differs from the work's would otherwise be marked down for being
+  correct. These lookups share the memo cache, the inline budget and the
+  background queue with title searches.
 
 Audio playback (`api/internal/books/audio/`) treats N files as one
 tape: everything outside the package works in **global seconds**, track
@@ -357,11 +384,28 @@ the attach flow, the audio streamer and the alignment worker only ever
 service that gets them. Backhog inventories the NAS; it does not own
 it. Path containment is re-checked on every served request.
 
-**4. Supported formats are epub / mp3 / m4a / m4b, and DRM is out of
-scope by decision.** `.aax`, `.aaxc` and DRM-wrapped epubs are skipped
-and *reported* (`media_skipped`), never half-supported. This tool is
-for the DRM-free crowd; do not add "just one container" of DRM
-circumvention.
+**4. Supported formats are epub / mp3 / m4a / m4b / opus, and both DRM
+and Kindle formats are out of scope by decision.** `.aax`, `.aaxc` and
+DRM-wrapped epubs are skipped and *reported* (`media_skipped`), never
+half-supported. This tool is for the DRM-free crowd; do not add "just
+one container" of DRM circumvention.
+
+`.mobi` / `.azw` / `.azw3` are a *different* refusal and are labelled as
+one (`format_unhandled`). They carry no DRM here — they are simply not
+parsed, because reading them means PalmDOC LZ77, HUFF/CDIC Huffman
+decompression and KF8 fragment reassembly, with no pure-Go reader in
+existence to build on. That is a library in its own repo, and until it
+exists the honest answer is to name the format and point at the EPUB of
+the same book. Do not half-implement it inside the scanner.
+
+Every container parser in the API is hand-rolled pure Go and stays that
+way: the image is distroless with `CGO_ENABLED=0`, so there is no
+ffprobe to reach for. Opus duration comes from the last Ogg page's
+granule position minus the encoder's pre-skip, over the fixed 48 kHz
+granule clock — header reads only, like the MP3 and MP4 parsers beside
+it. (Ogg Opus needs Safari 17.4 or newer on the client; that is a
+browser limitation, not a reason to transcode files we promised never to
+write to.)
 
 **5. One position, and it's the char offset.** Audio seconds and pages
 are derived views, never independently stored truths — the single

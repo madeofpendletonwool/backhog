@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -299,5 +300,87 @@ func TestParseNotAZip(t *testing.T) {
 	data := []byte("this is not an epub at all")
 	if _, err := Parse(bytes.NewReader(data), int64(len(data))); err == nil {
 		t.Fatal("garbage input must fail")
+	}
+}
+
+// ParseMetadata is the one decoder behind both an EPUB's own package document
+// and a standalone Calibre .opf, so the cases here are the shapes those two
+// actually arrive in.
+func TestParseMetadata(t *testing.T) {
+	const calibre = `<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uuid_id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier opf:scheme="calibre" id="uuid_id">2804</dc:identifier>
+    <dc:identifier opf:scheme="ISBN">978-0-385-33420-4</dc:identifier>
+    <dc:title>Breakfast of Champions</dc:title>
+    <dc:creator opf:role="aut" opf:file-as="Vonnegut, Kurt">Kurt Vonnegut</dc:creator>
+    <dc:language>eng</dc:language>
+    <dc:date>1973-01-01</dc:date>
+    <meta name="calibre:series" content="Kilgore Trout"/>
+    <meta name="calibre:series_index" content="2"/>
+  </metadata>
+</package>`
+	m, err := ParseMetadata(strings.NewReader(calibre))
+	if err != nil {
+		t.Fatalf("parse calibre opf: %v", err)
+	}
+	if m.Title != "Breakfast of Champions" {
+		t.Errorf("title = %q", m.Title)
+	}
+	if len(m.Authors) != 1 || m.Authors[0] != "Kurt Vonnegut" {
+		t.Errorf("authors = %v", m.Authors)
+	}
+	if m.Series != "Kilgore Trout" || m.SeriesIndex != "2" {
+		t.Errorf("series = %q #%q", m.Series, m.SeriesIndex)
+	}
+	if m.Language != "eng" || m.Date != "1973-01-01" {
+		t.Errorf("language/date = %q / %q", m.Language, m.Date)
+	}
+	// Identifiers stay exactly as written; deciding which is an ISBN and
+	// normalizing it is the caller's job.
+	if len(m.Identifiers) != 2 || m.Identifiers[1].Value != "978-0-385-33420-4" {
+		t.Errorf("identifiers = %+v", m.Identifiers)
+	}
+}
+
+// Creator roles decide who the author is. A file that credits an illustrator
+// and a translator alongside the author must not name either of them.
+func TestParseMetadataPrefersCreditedAuthors(t *testing.T) {
+	const doc = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Good Omens</dc:title>
+    <dc:creator opf:role="ill">Some Illustrator</dc:creator>
+    <dc:creator opf:role="trl">Some Translator</dc:creator>
+    <dc:creator opf:role="aut">Terry Pratchett</dc:creator>
+    <dc:creator>Neil Gaiman</dc:creator>
+    <meta property="belongs-to-collection">Discworld</meta>
+    <meta property="group-position">38</meta>
+  </metadata>
+</package>`
+	m, err := ParseMetadata(strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The credited author first, the unroled creator after it, and neither
+	// the illustrator nor the translator at all.
+	if len(m.Authors) != 2 || m.Authors[0] != "Terry Pratchett" || m.Authors[1] != "Neil Gaiman" {
+		t.Fatalf("authors = %v", m.Authors)
+	}
+	if m.Series != "Discworld" || m.SeriesIndex != "38" {
+		t.Errorf("EPUB 3 collection = %q #%q", m.Series, m.SeriesIndex)
+	}
+}
+
+// ReadMetadata resolves the OPF through container.xml, and reports DRM the
+// same way Parse does — one open answers both questions for the scanner.
+func TestReadMetadataFromEpub(t *testing.T) {
+	data := buildEPUB2(t)
+	m, err := ReadMetadata(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if m.Empty() {
+		t.Errorf("metadata block came back empty: %+v", m)
 	}
 }

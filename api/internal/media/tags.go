@@ -1,21 +1,20 @@
 package media
 
 import (
-	"archive/zip"
 	"encoding/json"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/dhowden/tag"
 
 	"github.com/collinpendleton/backhog/api/internal/books/audio"
 )
 
-// audioTags is the JSON shape of the container_metadata column: the embedded
-// ID3/MP4 tag set, under the tag names the containers actually use. Mapping
-// those onto "author" and "narrator" is an interpretation the attach stage
-// makes; the raw tags are kept faithful here.
+// audioTags is the JSON shape of the container_metadata column for an audio
+// file: the embedded ID3/MP4/Vorbis tag set, under the tag names the
+// containers actually use. Mapping those onto "author" and "narrator" is an
+// interpretation the attach stage makes; the raw tags are kept faithful here.
+// The epub side of the same column is bookTags, in sidecar.go.
 type audioTags struct {
 	Title       string `json:"title,omitempty"`
 	Artist      string `json:"artist,omitempty"`
@@ -47,7 +46,9 @@ func readAudioMetadata(path, ext string) (json.RawMessage, *float64) {
 	return metadata, readAudioDuration(f, ext)
 }
 
-// readAudioTags pulls the ID3 (mp3) or MP4 atom (m4a/m4b) tag set.
+// readAudioTags pulls the ID3 (mp3), MP4 atom (m4a/m4b) or Vorbis comment
+// (opus) tag set. The dispatch is the tag library's own: it sniffs the
+// container rather than trusting the extension.
 func readAudioTags(f *os.File) json.RawMessage {
 	m, err := tag.ReadFrom(f)
 	if err != nil {
@@ -88,21 +89,4 @@ func readAudioDuration(f *os.File, ext string) *float64 {
 		return nil
 	}
 	return &seconds
-}
-
-// epubEncrypted reports whether an EPUB carries META-INF/encryption.xml —
-// the marker for DRM-protected books, which this tool does not support and
-// does not work around.
-func epubEncrypted(path string) (bool, error) {
-	r, err := zip.OpenReader(path)
-	if err != nil {
-		return false, err
-	}
-	defer r.Close()
-	for _, f := range r.File {
-		if strings.TrimSpace(f.Name) == "META-INF/encryption.xml" {
-			return true, nil
-		}
-	}
-	return false, nil
 }

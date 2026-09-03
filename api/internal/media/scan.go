@@ -22,15 +22,27 @@ import (
 )
 
 // supportedExtensions maps file extensions to media file kinds. Everything
-// else — .aax, .aaxc, cover art — is unsupported and only counted, never
-// inventoried. DRM of any form is deliberately out of scope: this tool is
-// DRM-free by decision.
+// else — .aax, .aaxc, .mobi, cover art — is not inventoried and only counted,
+// but it is counted *with a reason* (see recordSkip). DRM of any form is
+// deliberately out of scope: this tool is DRM-free by decision.
 var supportedExtensions = map[string]string{
 	".mp3":  models.MediaFileAudio,
 	".m4a":  models.MediaFileAudio,
 	".m4b":  models.MediaFileAudio,
+	".opus": models.MediaFileAudio,
 	".epub": models.MediaFileEpub,
 }
+
+// metaVersion is the version of the metadata extraction the scanner performs:
+// embedded audio tags, and an epub's own OPF package metadata. It joins
+// (size, mtime) in the fast-path comparison, so bumping it here re-reads every
+// file's metadata exactly once on the next scan and then goes quiet. Without
+// it, improving the extractor would only ever affect files that happened to
+// change afterwards. This is books.ParserVersion's trick, applied to the
+// inventory rather than to the canonical text.
+//
+// 1: audio container tags; epub OPF title/author/series/identifiers.
+const metaVersion = 1
 
 // ScanResult summarises one scan, live while it runs and frozen as the last
 // result once it finishes.
@@ -43,7 +55,8 @@ type ScanResult struct {
 	Changed     int        `json:"changed"`     // rows refreshed (size/mtime moved)
 	Restored    int        `json:"restored"`    // previously-missing files back
 	Missing     int        `json:"missing"`     // paths gone since last scan
-	Unsupported int        `json:"unsupported"` // skipped: wrong type or DRM
+	Unsupported int        `json:"unsupported"` // skipped: wrong type, DRM, or unhandled
+	Sidecars    int        `json:"sidecars"`    // .opf metadata files parsed
 	Failed      int        `json:"failed"`      // files that errored mid-scan
 	Error       string     `json:"error,omitempty"`
 }
@@ -135,7 +148,8 @@ func (r *Runner) Run(ctx context.Context) (ScanResult, error) {
 	r.reset(roots)
 
 	s := &scan{runner: r, roots: roots, seen: map[string]map[string]bool{},
-		skipped: map[string][]models.MediaSkipped{}}
+		skipped:  map[string][]models.MediaSkipped{},
+		sidecars: map[string][]models.MediaSidecar{}}
 	s.mutate(func(l *ScanResult) { l.StartedAt = time.Now(); l.Roots = roots })
 
 	var err error
@@ -165,8 +179,22 @@ func (r *Runner) Run(ctx context.Context) (ScanResult, error) {
 		err = r.store.InsertMediaFiles(ctx, s.inserts)
 	}
 	if err == nil {
-		for root, files := range s.skipped {
-			if err = r.store.ReplaceMediaSkipped(ctx, root, files); err != nil {
+		// Keyed on the roots actually walked, not on the accumulator: a root
+		// whose last unsupported file was deleted has no entry in s.skipped
+		// and still needs its stale rows cleared.
+		for _, root := range s.walkedRoots() {
+			if err = r.store.ReplaceMediaSkipped(ctx, root, s.skipped[root]); err != nil {
+				break
+			}
+		}
+	}
+	if err == nil {
+		// Swapped per root like the skipped rows, and for the same reason:
+		// a sidecar describes what is on disk right now, so a root that was
+		// walked replaces its set wholesale. Roots that were unavailable this
+		// run have no entry here and keep whatever they had.
+		for _, root := range s.walkedRoots() {
+			if err = r.store.ReplaceMediaSidecars(ctx, root, s.sidecars[root]); err != nil {
 				break
 			}
 		}
@@ -206,6 +234,9 @@ type scan struct {
 	// skipped accumulates this run's unsupported-file rows per root, so the
 	// attach UI can explain the missing half of a library.
 	skipped map[string][]models.MediaSkipped
+	// sidecars accumulates this run's parsed .opf metadata per root, swapped
+	// at the end of the scan alongside skipped.
+	sidecars map[string][]models.MediaSidecar
 }
 
 // walkRoot walks one root, classifying files and queueing writes. Errors on
@@ -251,18 +282,36 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 		size, mtime := info.Size(), info.ModTime().UnixNano()
 
 		if !supported {
-			// Includes .aax/.aaxc and any other format: skipped and reported
-			// in the summary, never inventoried — but remembered, so the
-			// attach UI can show *why* they are missing.
-			s.recordSkip(root, rel, ext, models.MediaSkipUnsupported, size, mtime)
+			// Three different statements, not one shrug. An .opf is not a
+			// book at all — it is the answer key next to the books, so it is
+			// parsed for the matcher and recorded as accounted-for. A Kindle
+			// file is a format this tool chose not to parse. Everything else
+			// (.aax/.aaxc, cover art, ...) is genuinely unrecognised. None of
+			// the three is ever inventoried, and all three are remembered so
+			// the attach UI can show *why* they are missing.
+			switch {
+			case ext == sidecarExtension:
+				if car, ok := parseSidecar(root, rel, path); ok {
+					car.SeenAt = s.live().StartedAt
+					s.sidecars[root] = append(s.sidecars[root], car)
+					s.mutate(func(l *ScanResult) { l.Sidecars++ })
+				}
+				s.recordSkip(root, rel, ext, models.MediaSkipSidecar, size, mtime)
+			case knownUnhandled[ext]:
+				s.recordSkip(root, rel, ext, models.MediaSkipFormatUnhandled, size, mtime)
+			default:
+				s.recordSkip(root, rel, ext, models.MediaSkipUnsupported, size, mtime)
+			}
 			s.mutate(func(l *ScanResult) { l.Unsupported++ })
 			return nil
 		}
 
-		if stamp, ok := s.index[root][rel]; ok && stamp.Size == size && stamp.Mtime == mtime {
-			// Cheap path: (size, mtime) unchanged, so the file is not opened
-			// at all — no tag read, no hash, no write. If it was flagged
-			// missing, the flag clears and the row keeps its book_id.
+		if stamp, ok := s.index[root][rel]; ok && stamp.Size == size && stamp.Mtime == mtime &&
+			stamp.MetaVersion == metaVersion {
+			// Cheap path: (size, mtime) unchanged and the metadata was read by
+			// the current extractor, so the file is not opened at all — no tag
+			// read, no hash, no write. If it was flagged missing, the flag
+			// clears and the row keeps its book_id.
 			if stamp.Missing {
 				s.restores = append(s.restores, stamp.ID)
 				s.mutate(func(l *ScanResult) { l.Found++; l.Restored++ })
@@ -274,21 +323,26 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 		}
 
 		file := models.MediaFile{
-			Root:      root,
-			Path:      rel,
-			Kind:      kind,
-			SizeBytes: size,
-			Mtime:     mtime,
-			ScannedAt: s.live().StartedAt,
+			Root:        root,
+			Path:        rel,
+			Kind:        kind,
+			SizeBytes:   size,
+			Mtime:       mtime,
+			MetaVersion: metaVersion,
+			ScannedAt:   s.live().StartedAt,
 		}
 		switch kind {
 		case models.MediaFileEpub:
-			encrypted, err := epubEncrypted(path)
+			// One open answers both questions: DRM, and what the book's own
+			// OPF says it is. Without the metadata an epub is matched on its
+			// filename alone, which is the weakest evidence there is.
+			encrypted, tags, err := readEpubMetadata(path)
 			if err != nil {
 				slog.Warn("media scan epub", "path", path, "error", err)
 				s.mutate(func(l *ScanResult) { l.Failed++ })
 				return nil
 			}
+			file.ContainerMetadata = marshalTags(tags)
 			if encrypted {
 				// DRM-wrapped epub: unsupported after all. The path stays out
 				// of the seen set, so an existing row is flagged missing by
@@ -345,6 +399,20 @@ func (s *scan) missingIDs() []int64 {
 		}
 	}
 	return ids
+}
+
+// walkedRoots lists the roots this scan actually walked, in configured order.
+// A root that was unavailable has no seen map, exactly as in missingIDs: its
+// stored rows must survive an unmounted NAS rather than being replaced with
+// nothing.
+func (s *scan) walkedRoots() []string {
+	var roots []string
+	for _, root := range s.roots {
+		if s.seen[root] != nil {
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }
 
 func (s *scan) live() ScanResult {

@@ -31,6 +31,11 @@ const (
 	SourceSignalTags  = "tags"
 	SourceSignalDir   = "directory"
 	SourceSignalFile  = "filename"
+	// SourceSignalSidecar is an OPF metadata block: a .opf file sitting
+	// beside the books, or an epub's own package document. It outranks
+	// everything else because it is the only source that was written to
+	// describe the book rather than to name a file.
+	SourceSignalSidecar = "sidecar"
 )
 
 // Suggestion is one proposed (book, confidence) pair for a candidate.
@@ -163,7 +168,9 @@ func (m *Matcher) worker() {
 	}
 }
 
-// searchInBackground answers one queued query, off any request's clock.
+// searchInBackground answers one queued lookup, off any request's clock.
+// Identity keys and free-text queries share the queue, the memo cache and
+// the timeout; only the provider call differs.
 func (m *Matcher) searchInBackground(query string) {
 	defer m.clearPending(query)
 	if _, ok := m.lookupSearch(query); ok {
@@ -171,6 +178,10 @@ func (m *Matcher) searchInBackground(query string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), backgroundSearchTimeout)
 	defer cancel()
+	if isIdentityKey(query) {
+		m.fetchIdentity(ctx, query)
+		return
+	}
 	m.fetchAndCache(ctx, query)
 }
 
@@ -203,7 +214,39 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 		}
 	}
 
-	groups := groupCandidates(files, ignored)
+	sidecars, err := m.store.ListMediaSidecars(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	groups := groupCandidates(files, ignored, sidecarsByDir(sidecars))
+
+	// Exact identifiers first: a group whose metadata carries an ISBN or a
+	// work key does not need to be guessed at, and resolving it also spares
+	// the search budget below. Cached identities apply instantly, uncached
+	// ones share the same inline allowance as searches.
+	if m.books != nil {
+		inlineCtx, cancel := context.WithTimeout(ctx, inlineSearchTimeout)
+		defer cancel()
+		inline := inlineSearchBudget
+		for i := range groups {
+			g := &groups[i]
+			isbn, workKey := g.identity()
+			for _, key := range identityKeys(isbn, workKey) {
+				if cached, ok := m.lookupSearch(key); ok {
+					g.exact = append(g.exact, cached...)
+					continue
+				}
+				if inline <= 0 {
+					m.enqueueSearch(key)
+					continue
+				}
+				inline--
+				g.exact = append(g.exact, m.fetchIdentity(inlineCtx, key)...)
+			}
+		}
+	}
+
 	for i := range groups {
 		scoreAgainst(&groups[i], owned, ownedIDs, entryIDs)
 	}
@@ -220,7 +263,9 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 		inline := inlineSearchBudget
 		for i := range groups {
 			g := &groups[i]
-			if topClearsLibrary(*g) {
+			if len(g.exact) > 0 || topClearsLibrary(*g) {
+				// Already identified, by an identifier or by the user's own
+				// library: a title search cannot improve on either.
 				continue
 			}
 			query := g.searchQuery()
@@ -287,6 +332,75 @@ func (m *Matcher) fetchAndCache(ctx context.Context, query string) []models.Book
 	return fetched
 }
 
+// Identity lookups share the memo cache with free-text searches, so they
+// need a key that cannot collide with a title. A query built by
+// group.searchQuery is a title and author; these prefixes are not.
+const (
+	identityISBNPrefix = "isbn:"
+	identityWorkPrefix = "work:"
+)
+
+// identityKeys lists the cache keys for whatever exact identifiers a group
+// declared, in the order they are worth asking about: an ISBN names a
+// specific printing, a work key names the work directly.
+func identityKeys(isbn, workKey string) []string {
+	var keys []string
+	if workKey != "" {
+		keys = append(keys, identityWorkPrefix+workKey)
+	}
+	if isbn != "" {
+		keys = append(keys, identityISBNPrefix+isbn)
+	}
+	return keys
+}
+
+// isIdentityKey reports whether a queued lookup is an identifier rather than
+// a title search.
+func isIdentityKey(key string) bool {
+	return strings.HasPrefix(key, identityISBNPrefix) || strings.HasPrefix(key, identityWorkPrefix)
+}
+
+// fetchIdentity resolves one identifier to its work and memoizes it, sharing
+// fetchAndCache's caching and failure behaviour: a lookup that could not
+// finish is not cached, so it is retried rather than remembered as empty.
+func (m *Matcher) fetchIdentity(ctx context.Context, key string) []models.Book {
+	var (
+		found metadata.Book
+		err   error
+	)
+	switch {
+	case strings.HasPrefix(key, identityISBNPrefix):
+		found, err = m.books.GetByISBN(ctx, strings.TrimPrefix(key, identityISBNPrefix))
+	case strings.HasPrefix(key, identityWorkPrefix):
+		found, err = m.books.GetByWorkKey(ctx, strings.TrimPrefix(key, identityWorkPrefix))
+	default:
+		return nil
+	}
+	if err != nil {
+		// A sidecar naming a book Open Library has never catalogued is
+		// ordinary, not a malfunction; the group falls back to its title.
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "media match identity out of time", "key", key, "error", err)
+		} else {
+			slog.DebugContext(ctx, "media match identity unresolved", "key", key, "error", err)
+		}
+		return nil
+	}
+	if err := m.store.UpsertBook(ctx, found, ""); err != nil {
+		slog.WarnContext(ctx, "media match cache book", "book_id", found.ID, "error", err)
+		return nil
+	}
+	book, err := m.store.GetBook(ctx, found.ID)
+	if err != nil {
+		return nil
+	}
+	resolved := []models.Book{book}
+	if ctx.Err() == nil {
+		m.saveSearch(key, resolved)
+	}
+	return resolved
+}
+
 // enqueueSearch asks the background worker to look the query up. Queries
 // already queued or in flight are skipped; a dropped query (worker gone or
 // queue full) simply gets re-requested by a later candidates call.
@@ -350,9 +464,16 @@ type group struct {
 	dirPath string
 	files   []models.MediaFile
 	signal  signal
+	// sidecar is the .opf found in this group's directory, when there is
+	// one. Nil is the normal case for a library without Calibre metadata.
+	sidecar *models.MediaSidecar
 
 	providerBooks []models.Book
-	suggestions   []Suggestion
+	// exact holds books resolved from an ISBN or an Open Library work key
+	// rather than from a title search. They are an identity, not a
+	// resemblance, so they bypass scoring entirely.
+	exact       []models.Book
+	suggestions []Suggestion
 }
 
 // signal is what the files say about themselves: a title/author extraction
@@ -361,7 +482,7 @@ type signal struct {
 	title  string
 	author string
 	weight float64
-	source string // SourceSignalTags | SourceSignalDir | SourceSignalFile
+	source string // SourceSignalSidecar | SourceSignalTags | SourceSignalDir | SourceSignalFile
 }
 
 // discDirPattern matches the per-platter directory names rippers produce:
@@ -386,11 +507,36 @@ func groupDir(dir string) string {
 	}
 }
 
+// sidecarKey addresses a directory's OPF sidecar exactly the way an audio
+// group is addressed, so "which book does this directory hold" has one
+// answer whichever kind of file is in it.
+type sidecarKey struct{ root, dir string }
+
+// sidecarsByDir indexes parsed sidecars by the directory they describe. A
+// directory holding more than one .opf picks deterministically —
+// Calibre's own metadata.opf first, then path order — because an arbitrary
+// choice would make the same library match differently on each scan.
+func sidecarsByDir(cars []models.MediaSidecar) map[sidecarKey]models.MediaSidecar {
+	byDir := map[sidecarKey]models.MediaSidecar{}
+	for _, car := range cars {
+		k := sidecarKey{car.Root, groupDir(path.Dir(car.Path))}
+		if held, ok := byDir[k]; ok {
+			heldRank, carRank := sidecarPreference(held.Path), sidecarPreference(car.Path)
+			if heldRank < carRank || (heldRank == carRank && held.Path <= car.Path) {
+				continue
+			}
+		}
+		byDir[k] = car
+	}
+	return byDir
+}
+
 // groupCandidates splits unattached files into candidates: audio files
 // sharing a directory become one ordered audiobook; every EPUB stands
 // alone. Ignored files drop out before grouping, so a fully-ignored
 // directory disappears. Groups come back in a deterministic order.
-func groupCandidates(files []models.MediaFile, ignored map[int64]bool) []group {
+func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
+	sidecars map[sidecarKey]models.MediaSidecar) []group {
 	type key struct{ root, dir string }
 	audioDirs := map[key][]models.MediaFile{}
 	var epubs []models.MediaFile
@@ -441,9 +587,41 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool) []group {
 	for i := range groups {
 		g := &groups[i]
 		orderTracks(g.files)
+		if car, ok := sidecars[sidecarKey{g.root, groupDir(g.dirPath)}]; ok {
+			g.sidecar = &car
+		}
 		g.signal = extractSignal(g)
 	}
 	return groups
+}
+
+// identity returns the exact identifiers this group's OPF metadata declares:
+// a normalized ISBN and an Open Library work key, either or both possibly
+// empty. A sidecar beside the files wins over an epub's own package document
+// for the same reason it wins for the title.
+func (g *group) identity() (isbn, workKey string) {
+	if g.sidecar != nil {
+		isbn, workKey = g.sidecar.ISBN, g.sidecar.WorkKey
+	}
+	if isbn != "" && workKey != "" {
+		return isbn, workKey
+	}
+	for _, f := range g.files {
+		if len(f.ContainerMetadata) == 0 {
+			continue
+		}
+		var tags bookTags
+		if err := json.Unmarshal(f.ContainerMetadata, &tags); err != nil {
+			continue
+		}
+		if isbn == "" {
+			isbn = tags.ISBN
+		}
+		if workKey == "" {
+			workKey = tags.WorkKey
+		}
+	}
+	return isbn, workKey
 }
 
 // orderTracks sorts an audio group's files into listening order: tag track
@@ -631,11 +809,26 @@ func looksLikePerson(s string) bool {
 	return len(fields) >= 2
 }
 
-// extractSignal pulls (title, author) from a group, in priority order.
-// Embedded tags win when present — rippers are usually careful with them;
-// the /Author Name/Book Title directory layout is the near-universal
-// audiobook convention; the bare filename is the weakest evidence.
+// extractSignal pulls (title, author) from a group, in priority order. An
+// OPF metadata block wins outright — a .opf beside the files, or an epub's
+// own package document, is the only evidence that was written to describe
+// the book rather than to name a file. Embedded tags come next, since
+// rippers are usually careful with them; then the /Author Name/Book Title
+// directory layout, the near-universal audiobook convention; and the bare
+// filename last, which is the weakest evidence there is.
+//
+// The ladder is expressed as ordering, not arithmetic: the first source that
+// yields a title is the one used, so adding this tier did not disturb the
+// existing weights.
 func extractSignal(g *group) signal {
+	if s, ok := signalFromSidecar(g.sidecar); ok {
+		return s
+	}
+	if g.kind == models.MediaFileEpub {
+		if s, ok := signalFromBookTags(g.files); ok {
+			return s
+		}
+	}
 	if g.kind == models.MediaFileAudio {
 		if s, ok := signalFromTags(g.files); ok {
 			return s
@@ -709,6 +902,42 @@ func extractSignal(g *group) signal {
 		weight = 0.75
 	}
 	return signal{title: fileTitle, author: fileAuthor, weight: weight, source: SourceSignalFile}
+}
+
+// signalFromSidecar reads a directory's .opf. A sidecar is only stored when
+// it names a book (see parseSidecar), so any sidecar reaching here is usable.
+func signalFromSidecar(car *models.MediaSidecar) (signal, bool) {
+	if car == nil {
+		return signal{}, false
+	}
+	title := cleanTitle(car.Title)
+	if title == "" {
+		return signal{}, false
+	}
+	return signal{title: title, author: cleanAuthor(car.Author),
+		weight: 1.0, source: SourceSignalSidecar}, true
+}
+
+// signalFromBookTags reads an epub's own OPF metadata out of the
+// container_metadata the scanner stored. Same evidence as a sidecar, from
+// inside the file instead of beside it.
+func signalFromBookTags(files []models.MediaFile) (signal, bool) {
+	for _, f := range files {
+		if len(f.ContainerMetadata) == 0 {
+			continue
+		}
+		var tags bookTags
+		if err := json.Unmarshal(f.ContainerMetadata, &tags); err != nil {
+			continue
+		}
+		title := cleanTitle(tags.Title)
+		if title == "" {
+			continue
+		}
+		return signal{title: title, author: cleanAuthor(tags.Author()),
+			weight: 1.0, source: SourceSignalSidecar}, true
+	}
+	return signal{}, false
 }
 
 // signalFromTags prefers the album (the book) over the per-track title (a
@@ -1068,6 +1297,19 @@ func scoreAgainst(g *group, owned []models.Book, ownedIDs map[string]bool, entry
 			return
 		}
 		byID[b.ID] = &Suggestion{Book: b, Confidence: conf, Source: source,
+			Signal: g.signal.source, InLibrary: ownedIDs[b.ID], EntryID: entryIDs[b.ID]}
+	}
+	// Identity before resemblance. A book resolved from an ISBN or a work
+	// key was *named* by the metadata, so it does not go through scoreBook:
+	// a printing whose subtitle differs from the work's title would
+	// otherwise be scored down for being correct. Seeded first so the
+	// scored passes below can only ever confirm it.
+	for _, b := range g.exact {
+		source := SourceOpenLibrary
+		if ownedIDs[b.ID] {
+			source = SourceLibrary
+		}
+		byID[b.ID] = &Suggestion{Book: b, Confidence: 1, Source: source,
 			Signal: g.signal.source, InLibrary: ownedIDs[b.ID], EntryID: entryIDs[b.ID]}
 	}
 	for _, b := range owned {

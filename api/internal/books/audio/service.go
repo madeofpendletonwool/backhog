@@ -227,14 +227,21 @@ func (s *Service) resolve(root, rel string) (string, error) {
 
 // ContentType maps an audiobook file extension onto the type browsers need to
 // pick a decoder. Unknown extensions never reach here from the scanner, which
-// only inventories these three, but an octet-stream fallback is safer than
+// inventories only these four, but an octet-stream fallback is safer than
 // letting ServeContent sniff a byte range.
+//
+// Ogg Opus plays in every current browser, but Safari only gained it in 17.4;
+// an older Safari client gets a track it cannot decode. That is a client
+// limitation, not something to work around by transcoding files we promised
+// never to write to.
 func ContentType(p string) string {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".mp3":
 		return "audio/mpeg"
 	case ".m4a", ".m4b":
 		return "audio/mp4"
+	case ".opus":
+		return "audio/ogg"
 	}
 	return "application/octet-stream"
 }

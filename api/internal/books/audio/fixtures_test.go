@@ -72,3 +72,52 @@ func be64(v uint64) []byte {
 	binary.BigEndian.PutUint64(b, v)
 	return b
 }
+
+// buildOpus writes a structurally valid Ogg Opus stream: an OpusHead page and
+// an end-of-stream page whose granule position carries the length. preSkip is
+// a parameter so a test can prove the priming samples are subtracted rather
+// than counted as audio.
+func buildOpus(seconds float64, preSkip uint16) []byte {
+	granule := uint64(seconds*48000) + uint64(preSkip)
+
+	head := make([]byte, 19)
+	copy(head, "OpusHead")
+	head[8], head[9] = 1, 2 // version, channel count
+	binary.LittleEndian.PutUint16(head[10:12], preSkip)
+	binary.LittleEndian.PutUint32(head[12:16], 48000)
+
+	var out bytes.Buffer
+	out.Write(oggPage(head, 0x02, 0, 0))
+	out.Write(oggPage([]byte("audio"), 0x04, granule, 1))
+	return out.Bytes()
+}
+
+// oggPage frames one packet as a single Ogg page with a real CRC. Packets
+// must fit one lacing segment, which every header here does.
+func oggPage(packet []byte, flags byte, granule uint64, sequence uint32) []byte {
+	page := make([]byte, 0, 28+len(packet))
+	page = append(page, "OggS"...)
+	page = append(page, 0, flags)
+	page = binary.LittleEndian.AppendUint64(page, granule)
+	page = binary.LittleEndian.AppendUint32(page, 0xB4C4C0DE) // stream serial
+	page = binary.LittleEndian.AppendUint32(page, sequence)
+	page = binary.LittleEndian.AppendUint32(page, 0) // CRC placeholder
+	page = append(page, 1, byte(len(packet)))
+	page = append(page, packet...)
+
+	// Ogg's CRC32: polynomial 0x04c11db7, no reflection, no final inversion,
+	// over the page with its CRC field zeroed.
+	var crc uint32
+	for _, b := range page {
+		crc ^= uint32(b) << 24
+		for i := 0; i < 8; i++ {
+			if crc&0x80000000 != 0 {
+				crc = (crc << 1) ^ 0x04c11db7
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	binary.LittleEndian.PutUint32(page[22:26], crc)
+	return page
+}

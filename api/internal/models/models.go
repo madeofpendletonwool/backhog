@@ -45,8 +45,9 @@ func ValidMediaType(s string) bool {
 }
 
 // Media file kinds for the scanned Books arena library. Audio covers mp3,
-// m4a and m4b; epub is text. Anything else (.aax, .aaxc, DRM-wrapped epub,
-// ...) is unsupported and never inventoried.
+// m4a, m4b and opus; epub is text. Anything else (.aax, .aaxc, .mobi,
+// DRM-wrapped epub, ...) is not inventoried — it is recorded in media_skipped
+// with a reason instead.
 const (
 	MediaFileAudio = "audio"
 	MediaFileEpub  = "epub"
@@ -741,6 +742,13 @@ type MediaFile struct {
 	// ContainerMetadata is the embedded ID3/MP4 tag set as a JSON object
 	// (see internal/media), or NULL when the file carries none.
 	ContainerMetadata json.RawMessage `json:"container_metadata,omitempty"`
+	// MetaVersion is the version of the metadata extractor that produced
+	// ContainerMetadata. The scanner's (size, mtime) fast path also requires
+	// this to match, so bumping the extractor re-reads every file's metadata
+	// exactly once instead of leaving old rows behind forever.
+	// Not served: the readers that build a MediaFile do not select it, and
+	// it means nothing to a client.
+	MetaVersion int `json:"-"`
 	// BookID is the attached book. Plain TEXT with no FK by design: the books
 	// table arrives in migration 00011 and the FK is added once it is
 	// guaranteed present. NULL means not attached yet.
@@ -752,10 +760,23 @@ type MediaFile struct {
 }
 
 // Reasons a file was skipped by the scanner. DRM formats are refused, not
-// worked around — this tool is DRM-free by decision.
+// worked around — this tool is DRM-free by decision. The other two reasons
+// exist so that "not inventoried" stops meaning "we have no idea what this
+// is": a Kindle file is a format we chose not to parse, and an .opf is not a
+// book at all.
 const (
 	MediaSkipUnsupported = "unsupported_extension"
 	MediaSkipDRM         = "drm_epub"
+	// MediaSkipFormatUnhandled is a recognised ebook format this tool does
+	// not parse (.mobi, .azw, .azw3). Not a DRM refusal and not an unknown
+	// extension: reading Kindle formats means a PalmDOC/HUFF-CDIC/KF8 parser,
+	// which belongs in its own library, not bolted into the scanner.
+	MediaSkipFormatUnhandled = "format_unhandled"
+	// MediaSkipSidecar is a metadata sidecar (.opf) — the answer key next to
+	// the books rather than a missing one. It is parsed into media_sidecars
+	// and fed to the matcher; the skip row exists only so the file is
+	// accounted for rather than silently vanishing.
+	MediaSkipSidecar = "sidecar_metadata"
 )
 
 // MediaSkipped is one file the scanner refused to inventory: an unsupported
@@ -773,6 +794,34 @@ type MediaSkipped struct {
 	// Mtime is unix nanoseconds, as reported by the filesystem.
 	Mtime  int64     `json:"mtime"`
 	SeenAt time.Time `json:"seen_at"`
+}
+
+// MediaSidecar is the metadata block of one .opf file found next to a
+// library's books — a Calibre "metadata.opf", or a "Title - Author.opf"
+// beside a single file. It is not a book and never gets a media_files row;
+// it is authoritative evidence about the directory it sits in, which is why
+// the matcher prefers it over embedded tags, directory layout and filenames.
+//
+// Rows are replaced per root on each scan, exactly like MediaSkipped: the
+// sidecar is a property of what is on disk right now, never user state.
+type MediaSidecar struct {
+	ID   int64  `json:"id"`
+	Root string `json:"root"`
+	Path string `json:"path"`
+	// Title and Author are the dc:title / dc:creator the file declares.
+	Title  string `json:"title"`
+	Author string `json:"author"`
+	// Series and SeriesIndex come from Calibre's meta pair when present.
+	Series      string `json:"series,omitempty"`
+	SeriesIndex string `json:"series_index,omitempty"`
+	Language    string `json:"language,omitempty"`
+	// ISBN is normalized and validated at parse time, so a non-empty value
+	// is safe to hand straight to an ISBN lookup.
+	ISBN string `json:"isbn,omitempty"`
+	// WorkKey is an Open Library work key (OL12345W) when the sidecar
+	// carries one — an exact identity, not a search term.
+	WorkKey string    `json:"work_key,omitempty"`
+	SeenAt  time.Time `json:"seen_at"`
 }
 
 // EpubText is the canonical-text index row for one parsed EPUB media file.

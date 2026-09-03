@@ -12,13 +12,18 @@ import (
 )
 
 // MediaFileStamp is the cheap change-detection snapshot the scanner keeps in
-// memory for every row: (size, mtime) unchanged means the file is skipped
-// without being opened.
+// memory for every row: (size, mtime, meta_version) unchanged means the file
+// is skipped without being opened.
 type MediaFileStamp struct {
-	ID      int64
-	Size    int64
-	Mtime   int64
-	Missing bool
+	ID    int64
+	Size  int64
+	Mtime int64
+	// MetaVersion is the extractor version that produced the row's
+	// container_metadata. It joins the fast-path comparison so that bumping
+	// the extractor re-reads every file once rather than only the files that
+	// happen to change afterwards.
+	MetaVersion int
+	Missing     bool
 }
 
 // MediaFileFilter describes a media file query. Zero values mean "no filter".
@@ -35,7 +40,7 @@ type MediaFileFilter struct {
 // MediaFileIndex loads every media file keyed by root, then by path, so one
 // SELECT drives the whole change-detection pass instead of a query per file.
 func (s *Store) MediaFileIndex(ctx context.Context) (map[string]map[string]MediaFileStamp, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT root, path, id, size_bytes, mtime, missing_at FROM media_files`)
+	rows, err := s.db.QueryContext(ctx, `SELECT root, path, id, size_bytes, mtime, meta_version, missing_at FROM media_files`)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +51,8 @@ func (s *Store) MediaFileIndex(ctx context.Context) (map[string]map[string]Media
 		var root, path string
 		var stamp MediaFileStamp
 		var missingAt sql.NullTime
-		if err := rows.Scan(&root, &path, &stamp.ID, &stamp.Size, &stamp.Mtime, &missingAt); err != nil {
+		if err := rows.Scan(&root, &path, &stamp.ID, &stamp.Size, &stamp.Mtime,
+			&stamp.MetaVersion, &missingAt); err != nil {
 			return nil, err
 		}
 		stamp.Missing = missingAt.Valid
@@ -62,22 +68,22 @@ func (s *Store) MediaFileIndex(ctx context.Context) (map[string]map[string]Media
 // batch. The scanner only inserts paths it did not see in the index, so the
 // (root, path) unique constraint holds by construction.
 func (s *Store) InsertMediaFiles(ctx context.Context, files []models.MediaFile) error {
-	const cols = `(root, path, kind, size_bytes, mtime, duration_seconds, container_metadata, scanned_at)`
+	const cols = `(root, path, kind, size_bytes, mtime, duration_seconds, container_metadata, meta_version, scanned_at)`
 	const batchSize = 128
 	for start := 0; start < len(files); start += batchSize {
 		end := min(start+batchSize, len(files))
 		batch := files[start:end]
 
 		var sb strings.Builder
-		args := make([]any, 0, len(batch)*8)
+		args := make([]any, 0, len(batch)*9)
 		sb.WriteString(`INSERT INTO media_files ` + cols + ` VALUES `)
 		for i, f := range batch {
 			if i > 0 {
 				sb.WriteByte(',')
 			}
-			sb.WriteString(`(?,?,?,?,?,?,?,?)`)
+			sb.WriteString(`(?,?,?,?,?,?,?,?,?)`)
 			args = append(args, f.Root, f.Path, f.Kind, f.SizeBytes, f.Mtime,
-				f.DurationSeconds, rawJSONArg(f.ContainerMetadata), f.ScannedAt)
+				f.DurationSeconds, rawJSONArg(f.ContainerMetadata), f.MetaVersion, f.ScannedAt)
 		}
 		if _, err := s.db.ExecContext(ctx, sb.String(), args...); err != nil {
 			return fmt.Errorf("insert media files: %w", err)
@@ -93,10 +99,10 @@ func (s *Store) UpdateMediaFileContent(ctx context.Context, f models.MediaFile) 
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE media_files
 		SET kind = ?, size_bytes = ?, mtime = ?, duration_seconds = ?, container_metadata = ?,
-		    scanned_at = ?, missing_at = NULL
+		    meta_version = ?, scanned_at = ?, missing_at = NULL
 		WHERE id = ?`,
 		f.Kind, f.SizeBytes, f.Mtime, f.DurationSeconds, rawJSONArg(f.ContainerMetadata),
-		f.ScannedAt, f.ID)
+		f.MetaVersion, f.ScannedAt, f.ID)
 	return err
 }
 

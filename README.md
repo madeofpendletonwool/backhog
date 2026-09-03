@@ -134,11 +134,26 @@ those mounts is ever written to.
 
 ### Formats and DRM
 
-Supported: **epub** for text, **mp3 / m4a / m4b** for audio. Anything
-else — Audible `.aax` / `.aaxc`, DRM-wrapped epubs — is skipped and
-*shown* as unsupported with a reason, not silently ignored. DRM is out
-of scope by decision: this is a tool for the DRM-free crowd (Libro.fm
-downloads, Libby rips, indie EPUBs).
+Supported: **epub** for text, **mp3 / m4a / m4b / opus** for audio.
+Anything else is skipped and *shown* with a reason rather than silently
+ignored — and the reason says which kind of "no" it is:
+
+- **DRM** — Audible `.aax` / `.aaxc` and DRM-wrapped epubs. Out of scope
+  by decision: this is a tool for the DRM-free crowd (Libro.fm
+  downloads, Libby rips, indie EPUBs).
+- **Kindle formats** — `.mobi`, `.azw`, `.azw3` are recognised but not
+  parsed. Reading them means PalmDOC LZ77, HUFF/CDIC Huffman
+  decompression and KF8 fragment reassembly, and no pure-Go reader for
+  any of that exists to build on. That is a library in its own right,
+  not something to bolt into a scanner; attach the EPUB of the same
+  book instead.
+- **Metadata sidecars** — a Calibre `.opf` is not a missing book, it is
+  the answer key. It gets parsed for title, author, series and ISBN and
+  used to match the books beside it, which is more reliable than any
+  guess made from a filename.
+
+An `.opf` inside an EPUB is read the same way, so every ebook is matched
+on what it says it is rather than on what somebody named the file.
 
 ### Metadata
 

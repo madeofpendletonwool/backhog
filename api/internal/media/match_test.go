@@ -36,6 +36,14 @@ func (f *fakeProvider) GetEditions(_ context.Context, _ string) ([]metadata.Book
 // files, then returns the matcher's candidates.
 func matchCandidates(t *testing.T, provider metadata.BookProvider, library []metadata.Book, files []models.MediaFile) []Candidate {
 	t.Helper()
+	return matchCandidatesWith(t, provider, library, files, nil)
+}
+
+// matchCandidatesWith is matchCandidates plus the parsed .opf inventory the
+// scanner would have recorded for the same tree.
+func matchCandidatesWith(t *testing.T, provider metadata.BookProvider, library []metadata.Book,
+	files []models.MediaFile, sidecars []models.MediaSidecar) []Candidate {
+	t.Helper()
 	st := newTestStore(t)
 	ctx := context.Background()
 	userID := testUser(t, st)
@@ -49,6 +57,15 @@ func matchCandidates(t *testing.T, provider metadata.BookProvider, library []met
 	}
 	if err := st.InsertMediaFiles(ctx, files); err != nil {
 		t.Fatalf("insert files: %v", err)
+	}
+	byRoot := map[string][]models.MediaSidecar{}
+	for _, car := range sidecars {
+		byRoot[car.Root] = append(byRoot[car.Root], car)
+	}
+	for root, cars := range byRoot {
+		if err := st.ReplaceMediaSidecars(ctx, root, cars); err != nil {
+			t.Fatalf("insert sidecars: %v", err)
+		}
 	}
 	m := NewMatcher(st, provider)
 	candidates, err := m.Candidates(ctx, userID)
@@ -733,5 +750,164 @@ func TestAnthologyDemotedAgainstRealBook(t *testing.T) {
 func TestTruncatedTokenMatches(t *testing.T) {
 	if s := titleScore("Harry Potter and The Gobl", "Harry Potter and the Goblet of Fire"); s < 0.5 {
 		t.Errorf("truncated title scored %.2f, want a real match", s)
+	}
+}
+
+// sidecarRow is the parsed .opf the scanner would have stored for a directory.
+func sidecarRow(pathStr, title, author, isbn string) models.MediaSidecar {
+	return models.MediaSidecar{Root: "/nas", Path: pathStr, Title: title,
+		Author: author, ISBN: isbn, SeenAt: scannedNow}
+}
+
+// A .opf beside the files outranks everything else. Here the tags, the
+// directory and the filename all say the wrong book — which is exactly the
+// case a Calibre library hits, where the audio was ripped under one name and
+// the sidecar carries the catalogued one.
+func TestSignalFromSidecarOutranksTagsAndNames(t *testing.T) {
+	files := []models.MediaFile{
+		taggedAudio("Misc/unsorted/track01.mp3", "Track 01", "Unknown Artist", "Rip 2009", 1),
+		taggedAudio("Misc/unsorted/track02.mp3", "Track 02", "Unknown Artist", "Rip 2009", 2),
+	}
+	sidecars := []models.MediaSidecar{
+		sidecarRow("Misc/unsorted/metadata.opf", "Anathem", "Neal Stephenson", ""),
+	}
+	cs := matchCandidatesWith(t, nil, testLibrary, files, sidecars)
+	c := findCandidate(t, cs, "audio:/nas:Misc/unsorted")
+
+	if c.TitleGuess != "Anathem" || c.AuthorGuess != "Neal Stephenson" {
+		t.Fatalf("guess = %q by %q; want the sidecar's, not the tags'", c.TitleGuess, c.AuthorGuess)
+	}
+	if len(c.Suggestions) == 0 {
+		t.Fatal("no suggestions from a sidecar that names a book in the library")
+	}
+	top := c.Suggestions[0]
+	if top.Book.ID != "OL1W" || top.Signal != SourceSignalSidecar {
+		t.Errorf("top suggestion = %+v; want OL1W via the sidecar signal", top)
+	}
+	if !c.HighConfidence {
+		t.Errorf("sidecar match should clear the bulk-confirm bar: %v", top.Confidence)
+	}
+}
+
+// A sidecar in the book's own directory still applies when the audio sits in
+// per-disc subfolders, because both resolve through groupDir.
+func TestSidecarAppliesAcrossDiscFolders(t *testing.T) {
+	files := []models.MediaFile{
+		plainAudio("Rips/dune-rip/CD 1/01.mp3"),
+		plainAudio("Rips/dune-rip/CD 2/01.mp3"),
+	}
+	sidecars := []models.MediaSidecar{
+		sidecarRow("Rips/dune-rip/metadata.opf", "Dune", "Frank Herbert", ""),
+	}
+	cs := matchCandidatesWith(t, nil, testLibrary, files, sidecars)
+	c := findCandidate(t, cs, "audio:/nas:Rips/dune-rip")
+	if c.TitleGuess != "Dune" {
+		t.Errorf("title guess = %q; want the sidecar to reach across disc folders", c.TitleGuess)
+	}
+}
+
+// Calibre's own metadata.opf wins when a directory holds more than one, so
+// the same tree matches the same way on every scan.
+func TestSidecarPickIsDeterministic(t *testing.T) {
+	cars := []models.MediaSidecar{
+		sidecarRow("Books/Dune/aaa-export.opf", "Wrong Book", "Nobody", ""),
+		sidecarRow("Books/Dune/metadata.opf", "Dune", "Frank Herbert", ""),
+		sidecarRow("Books/Dune/zzz-export.opf", "Also Wrong", "Nobody", ""),
+	}
+	byDir := sidecarsByDir(cars)
+	got := byDir[sidecarKey{"/nas", "Books/Dune"}]
+	if got.Title != "Dune" {
+		t.Errorf("picked %q; want Calibre's metadata.opf to win", got.Title)
+	}
+	// And the same answer regardless of the order they arrive in.
+	reversed := []models.MediaSidecar{cars[2], cars[1], cars[0]}
+	if sidecarsByDir(reversed)[sidecarKey{"/nas", "Books/Dune"}].Title != "Dune" {
+		t.Error("sidecar choice depends on input order")
+	}
+}
+
+// isbnProvider resolves exactly one ISBN and fails every title search, so a
+// test can prove a match came from the identifier and not from a query.
+type isbnProvider struct {
+	isbn     string
+	book     metadata.Book
+	searches int
+}
+
+func (p *isbnProvider) Search(_ context.Context, _ string, _ int) ([]metadata.Book, error) {
+	p.searches++
+	return nil, nil
+}
+func (p *isbnProvider) GetByWorkKey(_ context.Context, _ string) (metadata.Book, error) {
+	return metadata.Book{}, fmt.Errorf("not implemented in tests")
+}
+func (p *isbnProvider) GetByISBN(_ context.Context, isbn string) (metadata.Book, error) {
+	if isbn == p.isbn {
+		return p.book, nil
+	}
+	return metadata.Book{}, fmt.Errorf("no such isbn %q", isbn)
+}
+func (p *isbnProvider) GetEditions(_ context.Context, _ string) ([]metadata.BookEdition, error) {
+	return nil, fmt.Errorf("not implemented in tests")
+}
+
+// An ISBN is an identity, not a resemblance. The sidecar's title here is the
+// printing's ("...: A Novel"), which scores poorly against the work title —
+// and must still resolve exactly, without spending a title search.
+func TestSidecarISBNResolvesExactly(t *testing.T) {
+	provider := &isbnProvider{
+		isbn: "9780385334204",
+		book: metadata.Book{ID: "OL9W", Title: "Breakfast of Champions",
+			Authors: []string{"Kurt Vonnegut"}},
+	}
+	files := []models.MediaFile{epubFile("Breakfast of Champions (2804)/book.epub")}
+	sidecars := []models.MediaSidecar{
+		sidecarRow("Breakfast of Champions (2804)/metadata.opf",
+			"Breakfast of Champions: A Novel of the Nineteen Seventies",
+			"Kurt Vonnegut", "9780385334204"),
+	}
+	cs := matchCandidatesWith(t, provider, nil, files, sidecars)
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates, want 1: %v", len(cs), keysOf(cs))
+	}
+	c := cs[0]
+	if len(c.Suggestions) == 0 {
+		t.Fatal("an ISBN that resolves should produce a suggestion")
+	}
+	top := c.Suggestions[0]
+	if top.Book.ID != "OL9W" {
+		t.Fatalf("top suggestion = %+v; want the ISBN's book", top)
+	}
+	if top.Confidence != 1 {
+		t.Errorf("confidence = %v; an identifier match is an identity, not a score", top.Confidence)
+	}
+	if provider.searches != 0 {
+		t.Errorf("ran %d title searches; an identified group should need none", provider.searches)
+	}
+}
+
+// An epub's own OPF metadata is the same evidence as a sidecar, from inside
+// the file, and beats a filename that names the wrong thing.
+func TestEpubMetadataOutranksFilename(t *testing.T) {
+	f := epubFile("downloads/pg0042-final-v2.epub")
+	raw, err := json.Marshal(bookTags{Title: "Anathem", Authors: []string{"Neal Stephenson"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.ContainerMetadata = raw
+
+	cs := matchCandidates(t, nil, testLibrary, []models.MediaFile{f})
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates, want 1: %v", len(cs), keysOf(cs))
+	}
+	c := cs[0]
+	if c.TitleGuess != "Anathem" || c.AuthorGuess != "Neal Stephenson" {
+		t.Fatalf("guess = %q by %q; want the epub's own metadata", c.TitleGuess, c.AuthorGuess)
+	}
+	if len(c.Suggestions) == 0 || c.Suggestions[0].Book.ID != "OL1W" {
+		t.Errorf("suggestions = %+v; want OL1W", c.Suggestions)
+	}
+	if c.Suggestions[0].Signal != SourceSignalSidecar {
+		t.Errorf("signal = %q; want %q", c.Suggestions[0].Signal, SourceSignalSidecar)
 	}
 }

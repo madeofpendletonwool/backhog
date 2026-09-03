@@ -234,6 +234,7 @@ func (s *Server) Routes() http.Handler {
 			r.Route("/achievements", func(r chi.Router) {
 				r.Get("/", s.handleAchievements)
 				r.Get("/season", s.handleSeason)
+				r.Get("/reading-season", s.handleReadingSeason)
 				r.Post("/{achievementID}/egg", s.handleAchievementEgg)
 			})
 

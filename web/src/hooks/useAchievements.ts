@@ -26,6 +26,11 @@ export function useSeason() {
   return useQuery({ queryKey: ["season"], queryFn: () => api.season() });
 }
 
+/** The books arena's year card, same shape as useSeason. */
+export function useReadingSeason() {
+  return useQuery({ queryKey: ["reading-season"], queryFn: () => api.readingSeason() });
+}
+
 /**
  * Fires an easter egg. Silent by design: when the endpoint rejects the id,
  * throttles, or is unreachable, nothing happens — an egg that doesn't hatch

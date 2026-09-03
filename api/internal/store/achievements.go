@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -69,12 +70,33 @@ func (s *Store) UnlockEgg(ctx context.Context, userID, achievementID string) (mo
 // evaluateAchievementsTx runs the catalogue against one triggering event,
 // inside the caller's transaction so the unlock lands atomically with the
 // status change or session that earned it. The entry snapshot is read in-tx
-// and therefore includes the mutation that triggered evaluation.
+// and therefore includes the mutation that triggered evaluation. The entry's
+// media type routes the event to its own arena's snapshot and half of the
+// catalogue — same spine, same ledger, two sets of aggregates.
 // droppedAtFallback carries the pre-update finished_at for resumed entries
 // whose drop predates the status history table. wasQueueTop carries the
 // entry's top-of-queue state from before the finishing update cleared its
 // position — the snapshot itself can no longer see it.
 func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind string, droppedAtFallback *time.Time, wasQueueTop bool) ([]unlockStub, error) {
+	var mediaType string
+	err := tx.QueryRowContext(ctx,
+		`SELECT media_type FROM library_entries WHERE user_id = ? AND id = ?`,
+		userID, entryID).Scan(&mediaType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if mediaType == models.MediaBook {
+		return evaluateBookEventTx(ctx, tx, userID, entryID, kind, droppedAtFallback)
+	}
+	return evaluateGameEventTx(ctx, tx, userID, entryID, kind, droppedAtFallback, wasQueueTop)
+}
+
+// evaluateGameEventTx is the games arena's event evaluation: the game
+// snapshot, then the game and arena-agnostic halves of the catalogue.
+func evaluateGameEventTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind string, droppedAtFallback *time.Time, wasQueueTop bool) ([]unlockStub, error) {
 	var e achievements.Entry
 	var finishedAt sql.NullTime
 	err := tx.QueryRowContext(ctx, `
@@ -92,6 +114,7 @@ func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, ki
 		return nil, err
 	}
 	e.ID = entryID
+	e.MediaType = models.MediaGame
 	e.At = time.Now()
 	if finishedAt.Valid {
 		e.At = finishedAt.Time
@@ -111,10 +134,19 @@ func evaluateAchievementsTx(ctx context.Context, tx *sql.Tx, userID, entryID, ki
 		return nil, err
 	}
 
+	return unlockMatchingTx(ctx, tx, userID, entryID, kind, e, models.MediaGame)
+}
+
+// unlockMatchingTx runs the event through every catalogue definition the
+// entry's domain allows and inserts the unlocks that fire. Eggs never unlock
+// from events — only the egg endpoint can tip them — and definitions without
+// a predicate can never fire.
+func unlockMatchingTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind string, e achievements.Entry, mediaType string) ([]unlockStub, error) {
 	var newly []unlockStub
 	for _, def := range achievements.Catalogue {
-		// Eggs never unlock from events — only the egg endpoint can tip
-		// them — and entries without a predicate can never fire.
+		if !def.MatchesDomain(mediaType) {
+			continue
+		}
 		if def.Achievement.Egg || def.Predicate == nil ||
 			!def.Predicate(achievements.Event{Kind: kind, Entry: e}) {
 			continue
@@ -172,7 +204,7 @@ func snapshotAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e *ach
 	// The peak-unplayed sweep: one pass over every owned entry's
 	// contribution interval, evaluated in Go. Libraries are hundreds of
 	// rows, not millions.
-	timeline, err := loadUnplayedTimelineTx(ctx, tx, userID)
+	timeline, err := loadUnplayedTimelineTx(ctx, tx, userID, models.MediaGame)
 	if err != nil {
 		return err
 	}
@@ -513,13 +545,17 @@ type unplayedTimeline struct {
 	events []timelineEvent // sorted by (at, delta): interval ends before starts
 }
 
-// loadUnplayedTimelineTx reads every owned entry's interval endpoints.
-// Pre-feature played/dropped rows without finished_at collapse to an empty
-// interval at created_at, mirroring the backfill's timestamp fallback.
-func loadUnplayedTimelineTx(ctx context.Context, tx *sql.Tx, userID string) (*unplayedTimeline, error) {
+// loadUnplayedTimelineTx reads every owned entry's interval endpoints. The
+// timeline is scoped to one media type — the games arena and the books arena
+// measure their piles separately, the same way every other aggregate here
+// is scoped. Pre-feature played/dropped rows without finished_at collapse
+// to an empty interval at created_at, mirroring the backfill's timestamp
+// fallback.
+func loadUnplayedTimelineTx(ctx context.Context, tx *sql.Tx, userID, mediaType string) (*unplayedTimeline, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT status, created_at, finished_at FROM library_entries
-		WHERE user_id = ? AND media_type = 'game' AND status NOT IN ('wishlist','ignored')`, userID)
+		WHERE user_id = ? AND media_type = ? AND status NOT IN ('wishlist','ignored')`,
+		userID, mediaType)
 	if err != nil {
 		return nil, err
 	}
@@ -600,13 +636,14 @@ func finishMonthStreak(months map[string]int, at time.Time) int {
 	return streak
 }
 
-// additions returns every non-wishlist acquisition timestamp in order —
+// additionsTx returns every non-wishlist acquisition timestamp in order —
 // ignored entries included, an acquisition is an acquisition — for the
-// backfill's running same-year addition counts.
-func additionsTx(ctx context.Context, tx *sql.Tx, userID string) ([]time.Time, error) {
+// backfill's running same-year addition counts. Scoped to one media type,
+// like every aggregate here.
+func additionsTx(ctx context.Context, tx *sql.Tx, userID, mediaType string) ([]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT created_at FROM library_entries
-		WHERE user_id = ? AND media_type = 'game' AND status <> 'wishlist'`, userID)
+		WHERE user_id = ? AND media_type = ? AND status <> 'wishlist'`, userID, mediaType)
 	if err != nil {
 		return nil, err
 	}
@@ -971,13 +1008,18 @@ func parseDBTime(s string) (time.Time, bool) {
 
 // insertUnlockTx records an unlock idempotently and returns its timestamp, or
 // nil when the user already had it. entryID is nil for unlocks with no
-// triggering game (time-window achievements).
+// triggering game (time-window achievements). The domain annotation comes
+// from the catalogue, so the ledger can be read per arena without it.
 func insertUnlockTx(ctx context.Context, tx *sql.Tx, userID, achievementID string, entryID *string) (*time.Time, error) {
+	domain := models.DomainGame
+	if def := achievements.ByID(achievementID); def != nil {
+		domain = def.Domain
+	}
 	var at time.Time
 	err := tx.QueryRowContext(ctx, `
-		INSERT OR IGNORE INTO achievement_unlocks (id, user_id, achievement_id, entry_id)
-		VALUES (?, ?, ?, ?) RETURNING unlocked_at`,
-		newID(), userID, achievementID, entryID).Scan(&at)
+		INSERT OR IGNORE INTO achievement_unlocks (id, user_id, achievement_id, entry_id, domain)
+		VALUES (?, ?, ?, ?, ?) RETURNING unlocked_at`,
+		newID(), userID, achievementID, entryID, domain).Scan(&at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1004,6 +1046,9 @@ func (s *Store) BackfillAchievements(ctx context.Context, userID string) error {
 	defer tx.Rollback()
 
 	if err := s.backfillAchievementsTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := s.backfillBookAchievementsTx(ctx, tx, userID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1070,11 +1115,11 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	// finish — a game added in March must not count against a February
 	// finish. Finishes replay in ascending At order, so one pointer
 	// serves the whole pass.
-	timeline, err := loadUnplayedTimelineTx(ctx, tx, userID)
+	timeline, err := loadUnplayedTimelineTx(ctx, tx, userID, models.MediaGame)
 	if err != nil {
 		return err
 	}
-	additions, err := additionsTx(ctx, tx, userID)
+	additions, err := additionsTx(ctx, tx, userID, models.MediaGame)
 	if err != nil {
 		return err
 	}
@@ -1082,7 +1127,7 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 	// resume events to replay. Pre-feature data has no history rows, so
 	// comebacks backfill only where history exists — the gap fills in as
 	// users actually cycle games.
-	arcs, resumes, err := loadUserDropArcsTx(ctx, tx, userID)
+	arcs, resumes, err := loadUserDropArcsTx(ctx, tx, userID, models.MediaGame)
 	if err != nil {
 		return err
 	}
@@ -1248,7 +1293,8 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 
 		ev := achievements.Event{Kind: achievements.EventFinished, Entry: played[i]}
 		for _, def := range achievements.Catalogue {
-			if def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
+			if !def.MatchesDomain(models.MediaGame) ||
+				def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &played[i].ID); err != nil {
@@ -1265,7 +1311,8 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 			DropHistory: []achievements.DropCycle{{DroppedAt: r.droppedAt, ResumedAt: &r.at}},
 		}}
 		for _, def := range achievements.Catalogue {
-			if def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
+			if !def.MatchesDomain(models.MediaGame) ||
+				def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &r.entryID); err != nil {
@@ -1313,7 +1360,8 @@ func (s *Store) backfillAchievementsTx(ctx context.Context, tx *sql.Tx, userID s
 		dropped[i].UnplayedCount, dropped[i].PeakUnplayedCount = timeline.stateAt(dropped[i].At)
 		ev := achievements.Event{Kind: achievements.EventDropped, Entry: dropped[i]}
 		for _, def := range achievements.Catalogue {
-			if def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
+			if !def.MatchesDomain(models.MediaGame) ||
+				def.Achievement.Egg || def.Predicate == nil || !def.Predicate(ev) {
 				continue
 			}
 			if _, err := insertUnlockTx(ctx, tx, userID, def.Achievement.ID, &dropped[i].ID); err != nil {
@@ -1335,15 +1383,18 @@ type resumeReplay struct {
 
 // loadUserDropArcsTx reads every entry's status history for the user and
 // returns the drop arcs per entry (for the finish predicates) plus the
-// resume transitions to replay (for the resume predicates). Real history
-// rows only — a pre-feature drop that is still dropped has no arc, and one
-// that was resumed before the feature left no resume row.
-func loadUserDropArcsTx(ctx context.Context, tx *sql.Tx, userID string) (map[string][]achievements.DropCycle, []resumeReplay, error) {
+// resume transitions to replay (for the resume predicates), scoped to one
+// media type — the games backfill replays game comebacks, the books
+// backfill reads book arcs. Real history rows only — a pre-feature drop
+// that is still dropped has no arc, and one that was resumed before the
+// feature left no resume row.
+func loadUserDropArcsTx(ctx context.Context, tx *sql.Tx, userID, mediaType string) (map[string][]achievements.DropCycle, []resumeReplay, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT h.entry_id, h.from_status, h.to_status, h.changed_at
 		FROM entry_status_history h
-		WHERE h.user_id = ?
-		ORDER BY h.entry_id, h.changed_at, h.rowid`, userID)
+		JOIN library_entries e ON e.id = h.entry_id
+		WHERE h.user_id = ? AND e.media_type = ?
+		ORDER BY h.entry_id, h.changed_at, h.rowid`, userID, mediaType)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1432,6 +1483,21 @@ func (s *Store) evaluateTimeWindowAchievementsTx(ctx context.Context, tx *sql.Tx
 		return nil
 	}
 	snap := achievements.TimeSnapshot{Now: time.Now(), LastAcquiredAt: lastAcquired}
+
+	// The books arena's lazy aggregate: the deepest page map a single
+	// physical copy carries, scanned pages only — a hand-typed anchor is a
+	// correction, not a mapping session.
+	var mapped sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(c), 0) FROM (
+			SELECT COUNT(*) AS c FROM page_anchors pa
+			JOIN physical_copies pc ON pc.id = pa.physical_copy_id
+			WHERE pc.user_id = ? AND pa.source = 'ocr'
+			GROUP BY pa.physical_copy_id)`, userID).Scan(&mapped); err != nil {
+		return err
+	}
+	snap.BookPagesMapped = int(mapped.Int64)
+
 	for _, def := range lazy {
 		if !def.TimePredicate(snap) {
 			continue
@@ -1627,6 +1693,69 @@ func (s *Store) Season(ctx context.Context, userID string, year int) (models.Sea
 			   AND SUM(e.status = 'played') = COUNT(*)
 			   AND MAX(e.finished_at) >= ? AND MAX(e.finished_at) < ?
 		)`, userID, start, end).Scan(&season.FranchisesCleared)
+	if err != nil {
+		return season, err
+	}
+
+	return season, nil
+}
+
+// ReadingSeason derives the books arena's per-calendar-year rollup, the
+// mirror of Season: books finished in the year, pages read and hours
+// listened (from the reader and player's own instrumented sessions), authors
+// fully cleared in the year, and backlog rescues — books finished after a
+// year or more of ownership. Like Season it is derived on demand, no table.
+func (s *Store) ReadingSeason(ctx context.Context, userID string, year int) (models.ReadingSeason, error) {
+	var season models.ReadingSeason
+	season.Year = year
+	start := fmt.Sprintf("%04d-01-01", year)
+	end := fmt.Sprintf("%04d-01-01", year+1)
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+		       COALESCE(SUM(CASE WHEN e.created_at <= date(e.finished_at, '-1 year') THEN 1 ELSE 0 END), 0)
+		FROM library_entries e
+		WHERE e.user_id = ? AND e.media_type = 'book' AND e.status = 'played'
+		  AND e.finished_at IS NOT NULL
+		  AND e.finished_at >= ? AND e.finished_at < ?`,
+		userID, start, end).Scan(&season.BooksFinished, &season.Rescues)
+	if err != nil {
+		return season, err
+	}
+
+	// Pages and hours come straight from the instrumented sessions, the
+	// same source the reading pace is measured from: characters the reader
+	// actually advanced, and seconds the narrator actually ran. A year's
+	// listening shows up here even when nothing got finished — the card
+	// reports the year as it was spent, not only where it landed.
+	var readChars, listenSeconds float64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN mode = 'read' THEN chars_advanced ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN mode = 'listen' THEN seconds ELSE 0 END), 0)
+		FROM reading_sessions
+		WHERE user_id = ? AND date(started_at) >= ? AND date(started_at) < ?`,
+		userID, start, end).Scan(&readChars, &listenSeconds)
+	if err != nil {
+		return season, err
+	}
+	season.PagesRead = int(math.Round(readChars / charsPerPage))
+	season.HoursListened = round1(listenSeconds / 3600)
+
+	// An author is cleared the year the last of their owned books was
+	// finished. Owned means at least two non-wishlist, non-ignored books —
+	// the same bar the games side holds franchises to.
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT je.value
+			FROM library_entries e
+			JOIN books b ON b.id = e.book_id, json_each(b.authors_json) je
+			WHERE e.user_id = ? AND e.media_type = 'book'
+			  AND e.status NOT IN ('wishlist','ignored') AND je.value <> ''
+			GROUP BY je.value
+			HAVING COUNT(*) >= 2
+			   AND SUM(e.status = 'played') = COUNT(*)
+			   AND MAX(e.finished_at) >= ? AND MAX(e.finished_at) < ?
+		)`, userID, start, end).Scan(&season.AuthorsCleared)
 	if err != nil {
 		return season, err
 	}

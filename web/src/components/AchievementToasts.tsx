@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { BookCover } from "@/components/BookCover";
 import { GameCover } from "@/components/GameCover";
 import { achievementIcon } from "@/components/achievementIcons";
 import { Gi } from "@/components/ui/Gi";
 import { UNLOCK_EVENT } from "@/hooks/useAchievements";
-import type { AchievementStatus } from "@/lib/types";
+import { isBookEntry, type AchievementStatus } from "@/lib/types";
 
 interface Toast extends AchievementStatus {
   key: number;
@@ -52,6 +53,10 @@ export function AchievementToasts() {
 }
 
 function ToastCard({ toast }: { toast: Toast }) {
+  const entry = toast.entry;
+  const href = entry ? (isBookEntry(entry) ? `/books/${entry.id}` : `/game/${entry.id}`) : null;
+  const label = entry ? (isBookEntry(entry) ? entry.book.title : entry.game.name) : "";
+
   return (
     <div className="f-panel animate-fade-rise pointer-events-auto flex w-full max-w-sm items-center gap-3 p-3">
       <div className="f-chip flex size-12 shrink-0 items-center justify-center text-hl-bright">
@@ -65,13 +70,17 @@ function ToastCard({ toast }: { toast: Toast }) {
         <p className="mt-0.5 truncate text-sm font-semibold text-ink-100">{toast.title}</p>
         <p className="truncate text-xs text-ink-400">{toast.description}</p>
       </div>
-      {toast.entry && (
+      {entry && href && (
         <Link
-          to={`/game/${toast.entry.id}`}
+          to={href}
           className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
-          aria-label={toast.entry.game.name}
+          aria-label={label}
         >
-          <GameCover game={toast.entry.game} sizes="40px" />
+          {isBookEntry(entry) ? (
+            <BookCover book={entry.book} sizes="40px" />
+          ) : (
+            <GameCover game={entry.game} sizes="40px" />
+          )}
         </Link>
       )}
     </div>

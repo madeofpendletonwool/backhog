@@ -548,6 +548,9 @@ export type AchievementTier = "bronze" | "silver" | "gold" | "legendary";
 
 export const ACHIEVEMENT_TIERS: AchievementTier[] = ["bronze", "silver", "gold", "legendary"];
 
+/** Which arena an achievement belongs to; "any" is arena-agnostic (eggs). */
+export type AchievementDomain = "game" | "book" | "any";
+
 /** One achievement from the code-defined catalogue. */
 export interface Achievement {
   id: string;
@@ -556,6 +559,8 @@ export interface Achievement {
   /** Code key the client maps to an icon glyph. */
   icon: string;
   tier: AchievementTier;
+  /** The arena the achievement belongs to. */
+  domain: AchievementDomain;
   /** Hidden achievements are served masked while locked: ??? / teasing copy. */
   hidden: boolean;
   /** Eggs unlock only by playing with the app — predicates never fire for them. */
@@ -565,11 +570,8 @@ export interface Achievement {
 /** An achievement plus the user's unlock state: no date and no game = locked. */
 export interface AchievementStatus extends Achievement {
   unlocked_at?: string;
-  /**
-   * The game that triggered the unlock, when there is one. Game-scoped by
-   * contract: every unlock predicate reasons about games.
-   */
-  entry?: GameEntry;
+  /** The entry that triggered the unlock, when there is one. */
+  entry?: Entry;
 }
 
 /** The per-calendar-year "Backlog Challenge" rollup. */
@@ -579,6 +581,18 @@ export interface Season {
   hours_played: number;
   franchises_cleared: number;
   /** Games finished after a year or more of ownership. */
+  rescues: number;
+}
+
+/** The books arena's per-year rollup: the "YYYY Reading Challenge" card. */
+export interface ReadingSeason {
+  year: number;
+  books_finished: number;
+  pages_read: number;
+  hours_listened: number;
+  /** Authors whose owned books were all finished, the year the last one closed. */
+  authors_cleared: number;
+  /** Books finished after a year or more of ownership. */
   rescues: number;
 }
 

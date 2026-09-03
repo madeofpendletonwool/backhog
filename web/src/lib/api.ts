@@ -36,6 +36,7 @@ import type {
   ReadingDebt,
   ReadingInsights,
   ReadingPicks,
+  ReadingSeason,
   RuleSet,
   SearchResult,
   Season,
@@ -171,6 +172,10 @@ export const api = {
   /** The "YYYY Backlog Challenge" rollup; defaults to the current year. */
   season: (year?: number) =>
     request<Season>(`/achievements/season${year != null ? `?year=${year}` : ""}`),
+
+  /** The "YYYY Reading Challenge" rollup; defaults to the current year. */
+  readingSeason: (year?: number) =>
+    request<ReadingSeason>(`/achievements/reading-season${year != null ? `?year=${year}` : ""}`),
 
   /**
    * Fire an easter egg. Only egg ids are accepted (everything else 400s);

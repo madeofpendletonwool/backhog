@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
 import { BookCover } from "@/components/BookCover";
+import { ReadingSeasonCard } from "@/components/ReadingSeasonCard";
 import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useReadingInsights } from "@/hooks/useBooks";
@@ -51,6 +52,7 @@ export function ReadingDashboardPage() {
       ) : (
         <div className="space-y-4">
           <Diagnosis insights={insights!} />
+          <ReadingSeasonCard />
           <PaceCard pace={insights!.pace} />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {insights!.superlatives.map((superlative) => (

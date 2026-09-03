@@ -133,13 +133,13 @@ needs a different feel, that's a saturation or lightness-cap change in
 `build-assets.py`, not a value typed into `themes.css`.
 
 **5. Nothing loads from a third party.**
-Fonts, sprites, frames and scenes are all under `/assets/`, shipped in the
-nginx image. No Google Fonts link, no icon CDN. The page scanner's OCR
+Fonts, sprites, frames and scenes are all under `/assets/`, shipped in
+the nginx image. No Google Fonts link, no icon CDN. The page scanner's OCR
 runtime is the same rule applied to something that fights it: Tesseract.js
 defaults to jsDelivr for both its WASM core and its English model, so
 `web/scripts/vendor-ocr.mjs` copies them out of `node_modules` into
 `/assets/ocr/` at build time and `lib/ocr.ts` spells out every path. It costs
-about 14 MB of image and means a phone can scan a page on a LAN with no
+about 15 MB of image and means a phone can scan a page on a LAN with no
 internet, and no page load tells anyone else which book is being read.
 
 **6. Every animation must survive `prefers-reduced-motion`.**

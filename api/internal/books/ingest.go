@@ -372,6 +372,11 @@ func resolveWithinRoot(root, rel string) (string, error) {
 
 // writeFileAtomic writes via a temp file in the same directory so readers
 // never observe a half-written canonical text.
+//
+// The file is chmod'd world-readable before the rename: the alignment
+// worker shares the data volume read-only but runs as its own uid, and
+// os.CreateTemp's 0600 would lock it out of every canonical text — the
+// volume itself is the security boundary, not the file mode.
 func writeFileAtomic(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".epubtext-*")
 	if err != nil {
@@ -382,6 +387,11 @@ func writeFileAtomic(path string, data []byte) error {
 		tmp.Close()
 		os.Remove(tmpName)
 		return fmt.Errorf("books: write text: %w", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("books: chmod text: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)

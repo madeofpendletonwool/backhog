@@ -1,8 +1,10 @@
 # 🐗 Backhog
 
-A self-hosted game backlog manager. Add games, pull metadata automatically from
-IGDB, sort them into lists, and drag your play queue into the order you'll
-actually get to them.
+A self-hosted game backlog manager and books library. Add games, pull
+metadata automatically from IGDB, sort them into lists, and drag your play
+queue into the order you'll actually get to them. Or add books from Open
+Library and read, listen, and track them on the same spine — see
+[Books](#books).
 
 - **Library** — cover grid or dense table, filter by status, platform, genre,
   paged as it grows; your filters and sort are remembered between visits
@@ -40,6 +42,11 @@ actually get to them.
   "Backlog Challenge" card tracking completions, hours, franchises cleared,
   and rescues of long-owned games
 - **Steam import** — bulk-import an owned library, matched to IGDB by appid
+- **Books** — the same backlog spine carrying books instead of games, plus
+  position translation between paper, audio and EPUB: read in the browser,
+  listen at speed, stop in the car and resume on the right sentence, scan a
+  paper page with your phone to pin *your printing* into the map (see
+  [Books](#books) and [docs/BOOKS.md](docs/BOOKS.md))
 - **Multi-user** — real accounts, fully isolated libraries, shared metadata cache
 
 Go API · SQLite · React + Vite + Tailwind · Docker Compose.
@@ -85,6 +92,84 @@ details** must be Public.
 Steam appids are matched to IGDB through IGDB's `external_games` table, which is
 an exact join. Name matching would mangle cases like *Prey* (2006 vs 2017).
 
+---
+
+## Books
+
+The second arena: the same statuses, queue, lists and achievements,
+carrying books — plus the thing a book tracker can't do. **Position
+translation**: one book consumed as paper, audio and EPUB is one book
+at three coordinates, and Backhog converts between them. Read the EPUB
+in the browser reader; listen to the audiobook; stop in the car and
+the reader opens on the right sentence. Scan a paper page with your
+phone and Backhog pins that page of *your printing* into the same map —
+no external page-number database, and the map gets better every time
+you use it. How it works is [docs/BOOKS.md](docs/BOOKS.md).
+
+### Your files, your NAS — there is no upload
+
+Backhog never uploads or copies media. Your library lives on the NAS
+and is bind-mounted into the container **read-only**; Backhog
+inventories it and points at it. Uncomment and edit the mounts in
+`docker-compose.yml` (shown for the `api` service; the `align` worker
+wants the same two lines):
+
+```yaml
+volumes:
+  - /mnt/nas/audiobooks:/media/audiobooks:ro
+  - /mnt/nas/ebooks:/media/ebooks:ro
+```
+
+…then list the container-side paths in `.env`:
+
+```env
+MEDIA_DIR=/media/audiobooks:/media/ebooks
+```
+
+Scan from the Books library page and Backhog walks the roots, grouping
+audiobook directories into ordered candidates and proposing matches
+from the files' own tags. A temporarily unmounted NAS flags files as
+missing; it never destroys the associations you made. Nothing under
+those mounts is ever written to.
+
+### Formats and DRM
+
+Supported: **epub** for text, **mp3 / m4a / m4b** for audio. Anything
+else — Audible `.aax` / `.aaxc`, DRM-wrapped epubs — is skipped and
+*shown* as unsupported with a reason, not silently ignored. DRM is out
+of scope by decision: this is a tool for the DRM-free crowd (Libro.fm
+downloads, Libby rips, indie EPUBs).
+
+### Metadata
+
+Books come from [Open Library](https://openlibrary.org) — no API key,
+no OAuth, nothing to configure. Just search, or paste an ISBN.
+
+### Alignment (optional)
+
+The reading↔listening handoff needs the audiobook transcribed
+(Whisper) and force-aligned to the EPUB. That runs in a separate
+**optional** worker container:
+
+1. Generate a shared secret: `openssl rand -hex 32`
+2. Put it in `.env` as `ALIGN_WORKER_TOKEN=…`
+3. `docker compose --profile align up --build`
+
+Know what you're opting into. The worker image bakes in ffmpeg,
+whisper.cpp and the speech model itself (with the default `base.en`
+model: 148 MB; `tiny.en` 75 MB, `small.en` 488 MB, `medium.en` 1.5 GB —
+switch with `WHISPER_MODEL`, a rebuild not a restart), so a plain
+`docker compose up` never builds or pulls any of it. And alignment is
+**real CPU time: roughly 30–90 minutes for an 11-hour book** on a
+decent desktop CPU with `base.en` (`small.en` is noticeably more
+accurate and about three times slower). It's a one-time per-book
+background cost; jobs are resumable and a killed worker's job is
+picked back up.
+
+Everything else works without the worker — reading, listening (as its
+own timeline), tracking, page scanning, achievements, the Reading
+Season. Alignment only unlocks the audio↔text handoff.
+
 ### Serving over HTTPS
 
 If you put Backhog behind an HTTPS reverse proxy, set `COOKIE_SECURE=true` in
@@ -101,6 +186,12 @@ nothing.
 | `IGDB_CLIENT_ID` | — | Twitch app client ID; enables game search |
 | `IGDB_CLIENT_SECRET` | — | Twitch app secret |
 | `STEAM_API_KEY` | — | Steam Web API key; enables bulk library import |
+| `MEDIA_DIR` | — | Books: read-only library roots, colon-separated (container-side paths of the `:ro` mounts) |
+| `ALIGN_WORKER_TOKEN` | — | Shared secret for the optional alignment worker; enables the `/internal` worker API |
+| `WHISPER_MODEL` | `base.en` | Alignment worker: which Whisper model to bake in (a build arg, not a restart) |
+| `WHISPER_THREADS` | all cores | Alignment worker: CPU threads for transcription |
+| `ALIGN_MIN_COVERAGE` | `0.80` | Alignment: fraction of the book anchors must span to publish as `ready` |
+| `ALIGN_MIN_CONFIDENCE` | `0.60` | Alignment: mean anchor confidence required to publish as `ready` |
 | `PORT` | `8080` | Host port for the web UI |
 | `COOKIE_SECURE` | `false` | Mark the session cookie `Secure` (HTTPS only) |
 | `DATABASE_PATH` | `/data/backhog.db` | SQLite file |
@@ -181,18 +272,22 @@ Yes AI helped me make this program. If you don't like it don't use it. I made th
 ```
 api/
   cmd/backhog/          entrypoint, healthcheck probe
+  booktext/             the pinned text normalizer every offset depends on
   internal/
     config/             env parsing
     db/                 sqlite open + embedded goose migrations
     store/              data access — one file per aggregate
-    metadata/           IGDB client, cover cache, accent sampling
+    metadata/           IGDB client, Open Library client, cover cache
+    media/              NAS inventory: scan, match, attach candidates
+    books/              canonical text, position translation, passage matching
     achievements/       code-defined achievement catalogue + predicates
     auth/               argon2id, session cookie middleware
     http/               router and handlers
+align/                   optional alignment worker (whisper.cpp + ffmpeg)
 web/
   src/
-    lib/                typed API client, formatters
+    lib/                typed API client, formatters, OCR runtime
     hooks/              TanStack Query wrappers
     components/         cards, queue rows, dialogs, rule builder
-    pages/              library, queue, lists, detail, settings
+    pages/              library, queue, lists, detail, settings, books
 ```

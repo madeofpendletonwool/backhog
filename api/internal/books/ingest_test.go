@@ -251,6 +251,38 @@ func TestEnsureForMediaFile(t *testing.T) {
 	assertContiguous(t, chapters2, refreshed.CharCount)
 }
 
+// The alignment worker shares the data volume read-only but runs as its
+// own uid, so the canonical text files must come out world-readable —
+// os.CreateTemp's 0600 locked the worker out of every text it needed.
+func TestCanonicalTextFilesWorldReadable(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+
+	file := insertEpubFile(t, st, root, "ncx.epub", fixtureNCX(t))
+	et, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	for _, name := range []string{
+		ing.TextPath(et.ID),
+		ing.IndexPath(et.ID),
+		ing.DisplayPath(et.ID),
+	} {
+		info, err := os.Stat(name)
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if info.Mode().Perm() != 0o644 {
+			t.Errorf("%s mode = %v, want 0644", filepath.Base(name), info.Mode().Perm())
+		}
+	}
+}
+
 func TestEnsureForMediaFileVersionStable(t *testing.T) {
 	st := newTestStore(t)
 	root := filepath.Join(t.TempDir(), "books")

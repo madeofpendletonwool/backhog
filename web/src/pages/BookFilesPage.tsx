@@ -40,6 +40,19 @@ export function BookFilesPage() {
     return () => clearInterval(timer);
   }, [scan.data?.running, scan, queue]);
 
+  // The matcher fills suggestions in at the provider's pace, in the
+  // background. While any candidate sits unmatched, keep peeking so
+  // matches surface without a manual reload — and stop once they're all
+  // decided or the review queue empties out.
+  const hasUnmatched = (queue.data?.candidates ?? []).some(
+    (c) => (c.suggestions ?? []).length === 0,
+  );
+  useEffect(() => {
+    if (!hasUnmatched) return;
+    const timer = setInterval(() => queue.refetch(), 10_000);
+    return () => clearInterval(timer);
+  }, [hasUnmatched, queue]);
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["media"] });
     queryClient.invalidateQueries({ queryKey: ["library"] });

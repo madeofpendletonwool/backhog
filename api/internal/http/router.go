@@ -89,6 +89,14 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 	}
 }
 
+// Close releases the server's background workers (the media matcher's
+// enrichment worker). Safe to call more than once.
+func (s *Server) Close() {
+	if s.matcher != nil {
+		s.matcher.Close()
+	}
+}
+
 // Routes builds the API router. Everything is mounted under /api so nginx can
 // proxy a single prefix and serve the SPA from the same origin.
 func (s *Server) Routes() http.Handler {

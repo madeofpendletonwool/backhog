@@ -163,6 +163,7 @@ func run() error {
 
 	select {
 	case err := <-errc:
+		server.Close()
 		return err
 	case <-ctx.Done():
 		slog.Info("shutting down")
@@ -170,7 +171,9 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return httpServer.Shutdown(shutdownCtx)
+	shutdownErr := httpServer.Shutdown(shutdownCtx)
+	server.Close()
+	return shutdownErr
 }
 
 // purgeSessions clears expired sessions periodically so the table does not grow

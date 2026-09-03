@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -424,14 +425,16 @@ func TestCandidatesMarshalEmptySuggestions(t *testing.T) {
 }
 
 // countingProvider counts searches so a test can prove the matcher's
-// memoization keeps repeat candidates requests off the provider.
+// memoization keeps repeat candidates requests off the provider. The count
+// is atomic: the request's inline searches and the background worker's
+// both touch it.
 type countingProvider struct {
 	fakeProvider
-	searches int
+	searches atomic.Int32
 }
 
 func (c *countingProvider) Search(_ context.Context, _ string, _ int) ([]metadata.Book, error) {
-	c.searches++
+	c.searches.Add(1)
 	return nil, nil
 }
 
@@ -451,13 +454,119 @@ func TestCandidatesMemoizeProviderSearches(t *testing.T) {
 	}
 	provider := &countingProvider{}
 	m := NewMatcher(st, provider)
+	defer m.Close()
 
 	for range 2 {
 		if _, err := m.Candidates(ctx, userID); err != nil {
 			t.Fatalf("candidates: %v", err)
 		}
 	}
-	if provider.searches != 1 {
-		t.Errorf("provider searched %d times across 2 candidates runs, want 1", provider.searches)
+	if got := provider.searches.Load(); got != 1 {
+		t.Errorf("provider searched %d times across 2 candidates runs, want 1", got)
 	}
+}
+
+// TestCandidatesGroupMultiDiscRip: a physical audiobook spanned across
+// "Disc 1".."Disc n" directories is one book, so it must arrive as one
+// candidate in disc order — not one candidate per platter.
+func TestCandidatesGroupMultiDiscRip(t *testing.T) {
+	files := []models.MediaFile{
+		plainAudio("2005 - Dreams From My Father/Disc 1/01 Track.mp3"),
+		plainAudio("2005 - Dreams From My Father/Disc 1/02 Track.mp3"),
+		plainAudio("2005 - Dreams From My Father/Disc 10/01 Track.mp3"),
+		plainAudio("2005 - Dreams From My Father/Disc 2/01 Track.mp3"),
+	}
+	cs := matchCandidates(t, nil, nil, files)
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates for one multi-disc book, want 1: %v", len(cs), keysOf(cs))
+	}
+	c := cs[0]
+	if c.DirPath != "2005 - Dreams From My Father" {
+		t.Errorf("dir_path = %q, want the disc folders folded into the book directory", c.DirPath)
+	}
+	want := []string{
+		"2005 - Dreams From My Father/Disc 1/01 Track.mp3",
+		"2005 - Dreams From My Father/Disc 1/02 Track.mp3",
+		"2005 - Dreams From My Father/Disc 2/01 Track.mp3",
+		"2005 - Dreams From My Father/Disc 10/01 Track.mp3",
+	}
+	if got := pathsOf(c); !slicesEqual(got, want) {
+		t.Errorf("track order = %v, want %v", got, want)
+	}
+}
+
+// TestTitleScoreIgnoresStopwords: with "the" counted as a token, any two
+// "The X" titles overlap, and a shared author made every Discworld book
+// propose The Colour of Magic. The stopword filter must zero that noise
+// while real near-matches keep scoring.
+func TestTitleScoreIgnoresStopwords(t *testing.T) {
+	if s := titleScore("The Truth", "The Colour of Magic"); s != 0 {
+		t.Errorf("the-only overlap scored %.2f, want 0", s)
+	}
+	if s := titleScore("A Hat Full of Sky", "The Wee Free Men"); s != 0 {
+		t.Errorf("stopword-only overlap scored %.2f, want 0", s)
+	}
+	if s := titleScore("Travels with Charley", "Travels with Charley in Search of America"); s < 0.3 {
+		t.Errorf("real near-match scored %.2f, want >= 0.3", s)
+	}
+	if s := titleScore("The Truth", "The Truth"); s != 1 {
+		t.Errorf("identical titles scored %.2f, want 1", s)
+	}
+}
+
+// TestCandidatesEnqueueBackgroundSearches: one candidates request answers
+// inline for at most a few uncached queries and queues the rest; the
+// background worker must fill those in without any request waiting on it.
+// Every query ends up searched exactly once — inline or by the worker,
+// never both.
+func TestCandidatesEnqueueBackgroundSearches(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	userID := testUser(t, st)
+	var files []models.MediaFile
+	for _, q := range []string{"Alpha One", "Bravo One", "Charlie One", "Delta One", "Echo One"} {
+		files = append(files, taggedAudio(fmt.Sprintf("%s/%s.mp3", q, q), q, "Author", q, 1))
+	}
+	if err := st.InsertMediaFiles(ctx, files); err != nil {
+		t.Fatalf("insert files: %v", err)
+	}
+	provider := &countingProvider{}
+	m := NewMatcher(st, provider)
+	defer m.Close()
+
+	if _, err := m.Candidates(ctx, userID); err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+
+	// All five queries end up cached — the four the request could afford
+	// inline, plus the queued fifth via the worker.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		cached := 0
+		for _, q := range []string{"Alpha One", "Bravo One", "Charlie One", "Delta One", "Echo One"} {
+			if _, ok := m.lookupSearch(q + " Author"); ok {
+				cached++
+			}
+		}
+		if cached == 5 {
+			if got := provider.searches.Load(); got != 5 {
+				t.Errorf("provider searched %d times for 5 queries, want exactly 5", got)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("background worker never enriched every queued query; searches=%d", provider.searches.Load())
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

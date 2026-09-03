@@ -81,13 +81,18 @@ type Matcher struct {
 	store *store.Store
 	books metadata.BookProvider
 
-	// searchCache memoizes provider searches by query. A candidates request
-	// can only afford a handful of provider calls within its budget, so a
-	// large library is enriched across visits; without the cache every
-	// visit would restart from zero and re-spend the whole budget — and
-	// Open Library's rate limit — on the same queries.
+	// searchCache memoizes provider searches by query, so repeat candidates
+	// requests never re-spend Open Library's rate limit on the same work.
 	searchMu    sync.Mutex
 	searchCache map[string]cachedSearch
+	// pending tracks queries queued or in flight so the background worker
+	// never duplicates itself.
+	pending map[string]bool
+
+	// enqueue feeds the background enrichment worker; quit stops it.
+	enqueue chan string
+	quit    chan struct{}
+	quitOne sync.Once
 }
 
 // cachedSearch is one memoized provider result. Individual book records
@@ -108,17 +113,66 @@ const (
 	emptySearchCacheTTL = 1 * time.Hour
 )
 
+const (
+	// inlineSearchBudget is how many uncached queries one candidates
+	// request will answer inline. A just-scanned handful of files gets
+	// its matches immediately; a full-NAS run stays fast and lets the
+	// background worker fill the rest in.
+	inlineSearchBudget = 4
+	// inlineSearchTimeout bounds the inline portion so even a slow
+	// provider cannot stall the page.
+	inlineSearchTimeout = 8 * time.Second
+	// backgroundSearchTimeout bounds one background lookup: the shared
+	// rate limiter's wait plus the fetch.
+	backgroundSearchTimeout = 45 * time.Second
+	// enqueueCapacity bounds the work queue; overflow is dropped and
+	// re-requested by a later candidates call.
+	enqueueCapacity = 1024
+)
+
 func NewMatcher(st *store.Store, books metadata.BookProvider) *Matcher {
-	return &Matcher{store: st, books: books, searchCache: map[string]cachedSearch{}}
+	m := &Matcher{
+		store: st, books: books,
+		searchCache: map[string]cachedSearch{},
+		pending:     map[string]bool{},
+		enqueue:     make(chan string, enqueueCapacity),
+		quit:        make(chan struct{}),
+	}
+	if books != nil {
+		go m.worker()
+	}
+	return m
 }
 
-// searchBudget bounds the Open Library portion of one candidates request so
-// the endpoint answers even when the provider is slow, and the per-candidate
-// searches share a small worker pool to stay polite.
-const (
-	searchBudget = 15 * time.Second
-	searchWorker = 4
-)
+// Close stops the background enrichment worker. The queued work is simply
+// dropped; a restarted process re-derives it from the next candidates call.
+func (m *Matcher) Close() {
+	m.quitOne.Do(func() { close(m.quit) })
+}
+
+// worker drains the enrichment queue serially — the provider's rate limiter
+// serializes the requests anyway, and one worker makes the pacing obvious.
+func (m *Matcher) worker() {
+	for {
+		select {
+		case <-m.quit:
+			return
+		case query := <-m.enqueue:
+			m.searchInBackground(query)
+		}
+	}
+}
+
+// searchInBackground answers one queued query, off any request's clock.
+func (m *Matcher) searchInBackground(query string) {
+	defer m.clearPending(query)
+	if _, ok := m.lookupSearch(query); ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), backgroundSearchTimeout)
+	defer cancel()
+	m.fetchAndCache(ctx, query)
+}
 
 // Candidates runs the auto-match pass for one user: unattached, present
 // files grouped into audiobook directories and single EPUBs, each with a
@@ -155,31 +209,36 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 	}
 
 	// Open Library only for the candidates the user's own library cannot
-	// confidently explain — the first run against a real NAS has hundreds
-	// of candidates and the provider deserves politeness.
+	// confidently explain. Cached searches apply instantly; a few uncached
+	// ones are answered inline so a freshly scanned book matches on the
+	// spot; anything beyond that is queued for the background worker and
+	// appears on a later refresh — the request itself never waits on the
+	// provider's rate limit.
 	if m.books != nil {
-		searchCtx, cancel := context.WithTimeout(ctx, searchBudget)
+		inlineCtx, cancel := context.WithTimeout(ctx, inlineSearchTimeout)
 		defer cancel()
-		sem := make(chan struct{}, searchWorker)
-		var wg sync.WaitGroup
+		inline := inlineSearchBudget
 		for i := range groups {
-			if topClearsLibrary(groups[i]) {
+			g := &groups[i]
+			if topClearsLibrary(*g) {
 				continue
 			}
-			wg.Add(1)
-			go func(g *group) {
-				defer wg.Done()
-				select {
-				case sem <- struct{}{}:
-					defer func() { <-sem }()
-				case <-searchCtx.Done():
-					return
-				}
-				m.enrichFromProvider(searchCtx, g)
-				scoreAgainst(g, owned, ownedIDs, entryIDs)
-			}(&groups[i])
+			query := g.searchQuery()
+			if query == "" {
+				continue
+			}
+			if cached, ok := m.lookupSearch(query); ok {
+				g.providerBooks = append(g.providerBooks, cached...)
+			} else if inline > 0 {
+				inline--
+				fetched := m.fetchAndCache(inlineCtx, query)
+				g.providerBooks = append(g.providerBooks, fetched...)
+			} else {
+				m.enqueueSearch(query)
+				continue
+			}
+			scoreAgainst(g, owned, ownedIDs, entryIDs)
 		}
-		wg.Wait()
 	}
 
 	sortGroups(groups)
@@ -197,28 +256,20 @@ func topClearsLibrary(g group) bool {
 	return false
 }
 
-// enrichFromProvider searches Open Library for the group's best query and
-// caches what comes back. Failures degrade to library-only suggestions.
-func (m *Matcher) enrichFromProvider(ctx context.Context, g *group) {
-	query := g.searchQuery()
-	if query == "" {
-		return
-	}
-	if cached, ok := m.lookupSearch(query); ok {
-		g.providerBooks = append(g.providerBooks, cached...)
-		return
-	}
+// fetchAndCache runs one provider search and memoizes it. Failures degrade
+// to whatever suggestions already exist; only a run that finished inside its
+// budget is cached, so a partial fetch is never mistaken for a complete one.
+func (m *Matcher) fetchAndCache(ctx context.Context, query string) []models.Book {
 	results, err := m.books.Search(ctx, query, 8)
 	if err != nil {
-		// The shared budget expiring mid-run is the steady state of a
-		// large first library, not a malfunction worth a warn per
-		// candidate; anything else still gets noticed.
+		// The rate limiter turning a request away is the steady state of
+		// a busy matcher, not a malfunction worth a warn per query.
 		if ctx.Err() != nil {
-			slog.DebugContext(ctx, "media match search out of budget", "query", query, "error", err)
+			slog.DebugContext(ctx, "media match search out of time", "query", query, "error", err)
 		} else {
 			slog.WarnContext(ctx, "media match search failed", "query", query, "error", err)
 		}
-		return
+		return nil
 	}
 	var fetched []models.Book
 	for _, b := range results {
@@ -230,12 +281,37 @@ func (m *Matcher) enrichFromProvider(ctx context.Context, g *group) {
 			fetched = append(fetched, book)
 		}
 	}
-	// Only memoize a run that finished inside its budget: a partial fetch
-	// cached as complete would starve those candidates of suggestions.
 	if ctx.Err() == nil {
 		m.saveSearch(query, fetched)
 	}
-	g.providerBooks = append(g.providerBooks, fetched...)
+	return fetched
+}
+
+// enqueueSearch asks the background worker to look the query up. Queries
+// already queued or in flight are skipped; a dropped query (worker gone or
+// queue full) simply gets re-requested by a later candidates call.
+func (m *Matcher) enqueueSearch(query string) {
+	m.searchMu.Lock()
+	if m.pending[query] {
+		m.searchMu.Unlock()
+		return
+	}
+	m.pending[query] = true
+	m.searchMu.Unlock()
+	select {
+	case m.enqueue <- query:
+	case <-m.quit:
+		m.clearPending(query)
+	default:
+		m.clearPending(query)
+	}
+}
+
+// clearPending marks a query as no longer in flight.
+func (m *Matcher) clearPending(query string) {
+	m.searchMu.Lock()
+	delete(m.pending, query)
+	m.searchMu.Unlock()
 }
 
 // lookupSearch returns a memoized provider search, if one is fresh enough.
@@ -288,6 +364,28 @@ type signal struct {
 	source string // SourceSignalTags | SourceSignalDir | SourceSignalFile
 }
 
+// discDirPattern matches the per-platter directory names rippers produce:
+// "Disc 1", "CD 2", "disk 03", "Part 1".
+var discDirPattern = regexp.MustCompile(`(?i)^(disc|disk|cd|part|volume)[\s._-]*\d{1,3}$`)
+
+// groupDir canonicalises the directory a group is keyed on: trailing
+// disc/volume folders ("Book/CD 3", "Book/Disc 2/Part 1") fold up into the
+// book's own directory, because one rip of one audiobook is one candidate
+// no matter how many platters it spans.
+func groupDir(dir string) string {
+	for {
+		base := path.Base(dir)
+		if !discDirPattern.MatchString(base) {
+			return dir
+		}
+		parent := path.Dir(dir)
+		if parent == dir {
+			return dir
+		}
+		dir = parent
+	}
+}
+
 // groupCandidates splits unattached files into candidates: audio files
 // sharing a directory become one ordered audiobook; every EPUB stands
 // alone. Ignored files drop out before grouping, so a fully-ignored
@@ -302,7 +400,7 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool) []group {
 			continue
 		}
 		if f.Kind == models.MediaFileAudio {
-			k := key{f.Root, path.Dir(f.Path)}
+			k := key{f.Root, groupDir(path.Dir(f.Path))}
 			audioDirs[k] = append(audioDirs[k], f)
 		} else {
 			epubs = append(epubs, f)
@@ -349,8 +447,10 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool) []group {
 }
 
 // orderTracks sorts an audio group's files into listening order: tag track
-// numbers when every file carries one, otherwise natural sort on the base
-// filename (so part 10 lands after part 9, not after part 1).
+// numbers when every file carries one — with the natural path order as
+// tiebreaker, because a merged multi-disc rip restarts at track 1 on every
+// disc — otherwise natural sort on the full path, so disc 1 lands before
+// disc 10 before disc 2.
 func orderTracks(files []models.MediaFile) {
 	tracks := make([]int, len(files))
 	allTagged := len(files) > 0
@@ -364,7 +464,7 @@ func orderTracks(files []models.MediaFile) {
 		if allTagged && tracks[i] != tracks[j] {
 			return tracks[i] < tracks[j]
 		}
-		return naturalLess(path.Base(files[i].Path), path.Base(files[j].Path))
+		return naturalLess(files[i].Path, files[j].Path)
 	})
 }
 
@@ -621,10 +721,23 @@ func normalizeMatch(s string) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
-// tokens splits a normalized string into a set.
+// scoringStopwords are tokens that make any two English titles look alike.
+// With "the" counted, "The Truth" and "The Colour of Magic" share a token,
+// and one shared author later every Discworld book proposes every other.
+// Scoring ignores them; matching on them is noise, not evidence.
+var scoringStopwords = map[string]struct{}{
+	"the": {}, "a": {}, "an": {}, "of": {}, "and": {}, "or": {},
+	"in": {}, "on": {}, "to": {}, "for": {}, "with": {}, "from": {},
+	"at": {}, "by": {},
+}
+
+// tokens splits a normalized string into a set, minus stopwords.
 func tokens(s string) map[string]struct{} {
 	set := map[string]struct{}{}
 	for _, t := range strings.Fields(s) {
+		if _, stop := scoringStopwords[t]; stop {
+			continue
+		}
 		set[t] = struct{}{}
 	}
 	return set

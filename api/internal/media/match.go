@@ -536,12 +536,100 @@ var (
 	leadingYearPattern = regexp.MustCompile(`^\s*\d{4}\s*[-–—.]\s*`)
 	sepPattern         = regexp.MustCompile(`[\s._]+`)
 	titleAuthorSplit   = regexp.MustCompile(`\s+[-–—]\s+`)
+	// doubleDashSplit matches the pirate-archive convention where fields
+	// separate on double dashes: "Title -- Author -- Publisher -- hash".
+	doubleDashSplit = regexp.MustCompile(`\s+--\s+`)
+	// byAuthorSplit matches "Title by Author" when exactly one "by"
+	// separates two name-shaped halves.
+	byAuthorSplit = regexp.MustCompile(`\s+by\s+`)
 	// seriesMarkerPattern matches the middle segment of the "Author -
 	// Series NN - Title" convention: anything ending in a small number
 	// ("Talisman 01", "Discworld 20").
 	seriesMarkerPattern = regexp.MustCompile(`^.+\s+\d{1,3}$`)
 	yearOnlyPattern     = regexp.MustCompile(`^\d{4}$`)
+	// seriesNumberPattern matches a standalone series marker segment:
+	// "Harry Potter 4", "Discworld 38" — series name + ordinal, no title.
+	seriesNumberPattern = regexp.MustCompile(`^(.+?)\s+#?\d{1,3}$`)
+	// collectionWords mark a marker segment as a collection/volume bucket
+	// rather than a series name.
+	collectionWords    = regexp.MustCompile(`(?i)\b(collections?|novellas?|omnibus|antholog\w*|works|tales|stories|selected)\b`)
+	junkAuthorDirNames = map[string]bool{
+		"old": true, "new": true, "misc": true, "various": true, "other": true,
+		"unsorted": true, "unknown": true, "incoming": true, "books": true,
+		"ebooks": true, "downloads": true, "tmp": true,
+	}
 )
+
+// seriesNumberedLeaf reports whether a leaf directory carries the "(#NN)"
+// ordinal prefix collectors use — the level above such a leaf is a series
+// name, not an author.
+var seriesNumberedLeafPattern = regexp.MustCompile(`^\s*[\(\[]#\s*\d{1,3}[\)\]]`)
+
+func seriesNumberedLeaf(dir string) bool {
+	return seriesNumberedLeafPattern.MatchString(dir)
+}
+
+// dirAuthorFromParts walks up from a leaf's parent looking for a plausible
+// author name: a junk bucket ("old", "misc") or a series folder
+// ("Discworld" above "(#38) I Shall Wear Midnight") is never one.
+func dirAuthorFromParts(parts []string) string {
+	for i := len(parts) - 2; i >= 0; i-- {
+		candidate := cleanAuthor(parts[i])
+		if candidate == "" || junkAuthorDirNames[strings.ToLower(candidate)] {
+			continue
+		}
+		// A "(#N)"-marked leaf means the level above is a series name,
+		// not a person — keep climbing.
+		if i == len(parts)-2 && seriesNumberedLeaf(parts[len(parts)-1]) {
+			continue
+		}
+		return candidate
+	}
+	return ""
+}
+
+// normalizeName folds a name for comparison: lowercase letters and digits,
+// spaces collapsed, punctuation dropped — so "J.K Rowling" and "J. K.
+// Rowling" agree.
+func normalizeName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '.' || r == ',' || r == '-' || r == '\'' || r == '_':
+			b.WriteByte(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// looksLikePerson reports whether s plausibly names a human author: a few
+// short capitalized-or-initial words, not a file fragment or a bucket name.
+func looksLikePerson(s string) bool {
+	fields := strings.Fields(s)
+	if len(fields) == 0 || len(fields) > 4 {
+		return false
+	}
+	if junkAuthorDirNames[strings.ToLower(s)] {
+		return false
+	}
+	for _, w := range fields {
+		if !hasLetter(w) {
+			return false
+		}
+		// Words of more than two letters read as names or surnames;
+		// lone initials and "J.K" clusters are the exceptions.
+		if len(w) > 2 {
+			return true
+		}
+	}
+	// All initials ("J K Rowling" would pass via Rowling; "J K" alone is
+	// thin but plausible as the left side of "J K - Rowling").
+	return len(fields) >= 2
+}
 
 // extractSignal pulls (title, author) from a group, in priority order.
 // Embedded tags win when present — rippers are usually careful with them;
@@ -564,9 +652,7 @@ func extractSignal(g *group) signal {
 		if len(parts) > 0 {
 			dirTitle, dirNameAuthor := splitTitleAuthor(cleanTitle(parts[len(parts)-1]))
 			s.title = dirTitle
-			if len(parts) >= 2 {
-				s.author = cleanAuthor(parts[len(parts)-2])
-			}
+			s.author = dirAuthorFromParts(parts)
 			if s.author == "" {
 				s.author = dirNameAuthor
 			}
@@ -582,11 +668,23 @@ func extractSignal(g *group) signal {
 	// single-file layout, so a lone directory level is the author and the
 	// filename is the title — unless the filename echoes the directory,
 	// in which case the directory is the title nested one level deeper.
+	// dirAuthorFromParts walks up from the leaf's parent looking for a
+	// plausible author name: a junk bucket ("old", "misc") or a series
+	// folder ("Discworld" above "(#38) I Shall Wear Midnight") is never one.
+	dirAuthor := dirAuthorFromParts(parts)
+
 	if len(parts) >= 2 {
 		dirTitle, dirNameAuthor := splitTitleAuthor(cleanTitle(parts[len(parts)-1]))
-		dirAuthor := firstNonEmpty(cleanAuthor(parts[len(parts)-2]), dirNameAuthor)
+		dirAuthor = firstNonEmpty(dirAuthor, dirNameAuthor)
 		if fileTitle == "" || titleScore(fileTitle, dirTitle) >= 0.9 {
 			return signal{title: dirTitle, author: dirAuthor, weight: 0.9, source: SourceSignalDir}
+		}
+		// A "Title by Author" filename inside the author's own directory
+		// only echoes the directory — the filename is the title, not the
+		// directory.
+		if titleScore(fileTitle, dirTitle) == 0 && fileAuthor != "" &&
+			normalizeName(fileAuthor) == normalizeName(dirTitle) {
+			return signal{title: fileTitle, author: fileAuthor, weight: 0.8, source: SourceSignalFile}
 		}
 		return signal{title: fileTitle, author: firstNonEmpty(dirAuthor, fileAuthor),
 			weight: 0.8, source: SourceSignalFile}
@@ -597,8 +695,13 @@ func extractSignal(g *group) signal {
 			// /Book Title/Book.m4b — the directory names the book.
 			return signal{title: only, weight: 0.8, source: SourceSignalDir}
 		}
-		// /Author/Book.m4b — the directory names the author.
-		return signal{title: fileTitle, author: firstNonEmpty(only, fileAuthor),
+		// /Author/Book.m4b — the directory names the author, unless it is
+		// a junk bucket ("old/The Iliad.epub"), which names nothing.
+		dirName := only
+		if junkAuthorDirNames[strings.ToLower(dirName)] {
+			dirName = ""
+		}
+		return signal{title: fileTitle, author: firstNonEmpty(dirName, fileAuthor),
 			weight: 0.8, source: SourceSignalFile}
 	}
 	weight := 0.65
@@ -679,17 +782,54 @@ func cleanAuthor(s string) string {
 //   - "Author - YYYY - Title" — the year-in-the-middle ebook convention.
 //   - "Author - Series NN - Title" — "Stephen King - Talisman 01 - The
 //     Talisman", where the middle segment is a series marker, not title.
+//   - "Author - Collections - YYYY - Title" — four segments.
+//   - "Title -- Author -- Publisher -- hash -- Source" — the archive
+//     double-dash dump.
+//   - "Title by Author" — exactly one "by" between two name-shaped halves.
+//   - "Series NN - Title" with no author ("Harry Potter 4 - Harry Potter
+//     and The Goblet of Fire") — the ordinal left is a marker, not a title.
 //
 // Anything else stays one lump — a wrong guess here pollutes every query
 // and match downstream, so certainty is worth more than coverage.
 func splitTitleAuthor(s string) (title, author string) {
+	// The archive convention wins first: "--" separates fields there, and
+	// a " - " inside any field must not fool the single-dash rules.
+	if locs := doubleDashSplit.FindAllStringIndex(s, -1); len(locs) >= 1 {
+		parts := doubleDashSplit.Split(s, -1)
+		title = strings.TrimSpace(parts[0])
+		if len(parts) >= 2 {
+			if a := strings.TrimSpace(parts[1]); looksLikePerson(a) {
+				author = a
+			}
+		}
+		return title, author
+	}
+
+	if locs := byAuthorSplit.FindAllStringIndex(s, -1); len(locs) == 1 {
+		left := strings.TrimSpace(s[:locs[0][0]])
+		right := strings.TrimSpace(s[locs[0][1]:])
+		if left != "" && looksLikePerson(right) {
+			return left, right
+		}
+	}
+
 	parts := titleAuthorSplit.Split(s, -1)
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
 	switch len(parts) {
 	case 2:
-		left := strings.TrimSpace(parts[0])
-		right := strings.TrimSpace(parts[1])
+		left, right := parts[0], parts[1]
 		if left == "" || right == "" {
 			return s, ""
+		}
+		// "Series NN - Title": the left segment is a bare ordinal marker,
+		// not the title. Author unknown; caller may fill it from dirs.
+		if looksLikePerson(right) {
+			return left, right
+		}
+		if seriesNumberPattern.MatchString(left) && hasLetter(right) {
+			return right, ""
 		}
 		for _, word := range strings.Fields(right) {
 			if len(word) >= 3 && hasLetter(word) {
@@ -698,15 +838,25 @@ func splitTitleAuthor(s string) (title, author string) {
 		}
 		return s, ""
 	case 3:
-		left := strings.TrimSpace(parts[0])
-		middle := strings.TrimSpace(parts[1])
-		right := strings.TrimSpace(parts[2])
+		left, middle, right := parts[0], parts[1], parts[2]
 		if left == "" || middle == "" || right == "" {
 			return s, ""
+		}
+		// "Series NN - Title - Author" — the archive truncation style.
+		if seriesNumberPattern.MatchString(left) && looksLikePerson(right) {
+			return middle, right
 		}
 		if yearOnlyPattern.MatchString(middle) || seriesMarkerPattern.MatchString(middle) {
 			if hasLetter(left) && hasLetter(right) {
 				return right, left
+			}
+		}
+		return s, ""
+	case 4:
+		// "Author - Collections - YYYY - Title".
+		if collectionWords.MatchString(parts[1]) && yearOnlyPattern.MatchString(parts[2]) {
+			if hasLetter(parts[0]) && hasLetter(parts[3]) {
+				return parts[3], parts[0]
 			}
 		}
 		return s, ""
@@ -779,6 +929,28 @@ func tokens(s string) map[string]struct{} {
 	return set
 }
 
+// tokenOverlap counts agreeing tokens between two sets. A token on one
+// side that is a prefix of a longer token on the other counts too:
+// archive rips truncate long filenames mid-word ("...The Gobl.epub").
+func tokenOverlap(ta, tb map[string]struct{}) int {
+	inter := 0
+	for t := range ta {
+		if _, ok := tb[t]; ok {
+			inter++
+			continue
+		}
+		if len(t) >= 4 {
+			for u := range tb {
+				if len(u) > len(t) && strings.HasPrefix(u, t) {
+					inter++
+					break
+				}
+			}
+		}
+	}
+	return inter
+}
+
 // titleScore rates how well two titles agree, 0..1.
 func titleScore(a, b string) float64 {
 	na, nb := normalizeMatch(a), normalizeMatch(b)
@@ -794,12 +966,7 @@ func titleScore(a, b string) float64 {
 		// distinguish it by — same as no title at all.
 		return 0
 	}
-	inter := 0
-	for t := range ta {
-		if _, ok := tb[t]; ok {
-			inter++
-		}
-	}
+	inter := tokenOverlap(ta, tb)
 	if inter == 0 {
 		return 0
 	}
@@ -825,12 +992,7 @@ func authorScore(a, b string) float64 {
 		return 1
 	}
 	ta, tb := tokens(na), tokens(nb)
-	inter := 0
-	for t := range ta {
-		if _, ok := tb[t]; ok {
-			inter++
-		}
-	}
+	inter := tokenOverlap(ta, tb)
 	if inter == 0 {
 		return 0
 	}
@@ -847,6 +1009,16 @@ func scoreBook(sig signal, b models.Book) float64 {
 		return 0
 	}
 	conf := sig.weight * ts
+	// An omnibus title that lists its contents ("The Dark Tower (Gunslinger
+	// / Waste Lands / ...)") contains the real book's tokens without being
+	// it. Unless the candidate names every token of the long title, demote
+	// the omnibus so the actual book outranks it.
+	if strings.Contains(b.Title, "/") {
+		lt := tokens(normalizeMatch(b.Title))
+		if float64(tokenOverlap(tokens(normalizeMatch(sig.title)), lt)) < float64(len(lt)) {
+			conf *= 0.45
+		}
+	}
 	var as float64
 	known := false
 	if sig.author != "" && len(b.Authors) > 0 {

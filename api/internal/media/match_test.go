@@ -619,3 +619,119 @@ func TestKingFilesDoNotMatchKingArthur(t *testing.T) {
 		}
 	}
 }
+
+// TestSignalFromArchiveConventions: the real-world filename shapes that
+// used to defeat the splitter — series-number-left dirs, truncated names,
+// double-dash archive dumps, "by Author" names, junk bucket dirs, and the
+// (#NN) series marker — all resolve to the intended (title, author).
+func TestSignalFromArchiveConventions(t *testing.T) {
+	cases := []struct {
+		path       string
+		wantTitle  string
+		wantAuthor string
+	}{
+		{
+			// The filename is truncated mid-word ("The Gobl"); the
+			// directory carries the full title, so the directory wins.
+			"J.K Rowling/Harry Potter 4 - Harry Potter and The Goblet of Fire (123)/Harry Potter 4 - Harry Potter and The Gobl - Rowling, J.K.epub",
+			"Harry Potter and The Goblet of Fire", "J K Rowling",
+		},
+		{
+			"Matt Dinniman/Dungeon Crawler Carl by Matt Dinniman.epub",
+			"Dungeon Crawler Carl", "Matt Dinniman",
+		},
+		{
+			"old/The Iliad.epub",
+			"The Iliad", "",
+		},
+		{
+			"old/The Odyssey.epub",
+			"The Odyssey", "",
+		},
+		{
+			"Stephen King/Stephen King - Collections - 1982 - Different Seasons.epub",
+			"Different Seasons", "Stephen King",
+		},
+		{
+			"Stephen King/Stephen King - Collections - 1999 - Hearts In Atlantis.epub",
+			"Hearts In Atlantis", "Stephen King",
+		},
+	}
+	for _, tc := range cases {
+		cs := matchCandidates(t, nil, nil, []models.MediaFile{epubFile(tc.path)})
+		if len(cs) != 1 {
+			t.Fatalf("%s: got %d candidates, want 1", tc.path, len(cs))
+		}
+		if cs[0].TitleGuess != tc.wantTitle || cs[0].AuthorGuess != tc.wantAuthor {
+			t.Errorf("%s: signal = (%q, %q), want (%q, %q)",
+				tc.path, cs[0].TitleGuess, cs[0].AuthorGuess, tc.wantTitle, tc.wantAuthor)
+		}
+	}
+}
+
+// TestDoubleDashArchiveName: the Anna's-Archive-style "Title -- Author --
+// Publisher -- hash -- Source" name splits on double dashes; single-dash
+// rules must not misfire on the fields inside.
+func TestDoubleDashArchiveName(t *testing.T) {
+	path := "Cory Doctorow/Enshittification_ Why Everything Suddenly Got Worse and What -- Cory Doctorow -- Farrar, Straus and Giroux -- db86e58710172cd47a5ccd4f446d8c5d -- Anna's Archive.epub"
+	cs := matchCandidates(t, nil, nil, []models.MediaFile{epubFile(path)})
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates, want 1", len(cs))
+	}
+	if got := cs[0].TitleGuess; got != "Enshittification Why Everything Suddenly Got Worse and What" {
+		t.Errorf("title = %q", got)
+	}
+	if got := cs[0].AuthorGuess; got != "Cory Doctorow" {
+		t.Errorf("author = %q", got)
+	}
+}
+
+// TestSeriesNumberedDirAuthorWalksUp: "(#38) I Shall Wear Midnight" sits
+// under a "Discworld" series folder; the author is one level above that,
+// and the ordinal marker is not part of the title.
+func TestSeriesNumberedDirAuthorWalksUp(t *testing.T) {
+	files := []models.MediaFile{
+		plainAudio("Terry Pratchett/Discworld/(#38) I Shall Wear Midnight/01.mp3"),
+		plainAudio("Terry Pratchett/Discworld/(#38) I Shall Wear Midnight/02.mp3"),
+	}
+	cs := matchCandidates(t, nil, nil, files)
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates, want 1", len(cs))
+	}
+	if got := cs[0].TitleGuess; got != "I Shall Wear Midnight" {
+		t.Errorf("title = %q", got)
+	}
+	if got := cs[0].AuthorGuess; got != "Terry Pratchett" {
+		t.Errorf("author = %q, want the author above the series folder", got)
+	}
+}
+
+// TestAnthologyDemotedAgainstRealBook: a slash-listed omnibus ("The Dark
+// Tower (Gunslinger / ... / Waste Lands / ...)") may contain the real
+// book's tokens without being it; the omnibus must lose to any title that
+// actually names the candidate, and never clear the confidence bar alone.
+func TestAnthologyDemotedAgainstRealBook(t *testing.T) {
+	sig := signal{title: "The Waste Lands", author: "Stephen King", weight: 0.8, source: SourceSignalFile}
+	omnibus := models.Book{
+		ID: "OLOMN", Authors: []string{"Stephen King"},
+		Title: "The Dark Tower (Gunslinger / Drawing of the Three / Waste Lands / Wizard and Glass)",
+	}
+	real := models.Book{ID: "OLREAL", Title: "The Waste Lands", Authors: []string{"Stephen King"}}
+
+	omnibusScore := scoreBook(sig, omnibus)
+	realScore := scoreBook(sig, real)
+	if omnibusScore >= HighConfidence {
+		t.Errorf("omnibus scored %.2f >= the %.2f bar", omnibusScore, HighConfidence)
+	}
+	if omnibusScore >= realScore {
+		t.Errorf("omnibus %.2f outranked the real book %.2f", omnibusScore, realScore)
+	}
+}
+
+// TestTruncatedTokenMatches: a filename cut off mid-word by the ripper's
+// length limit still matches the full title ("The Gobl" → "Goblet").
+func TestTruncatedTokenMatches(t *testing.T) {
+	if s := titleScore("Harry Potter and The Gobl", "Harry Potter and the Goblet of Fire"); s < 0.5 {
+		t.Errorf("truncated title scored %.2f, want a real match", s)
+	}
+}

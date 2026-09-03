@@ -155,8 +155,60 @@ CDN, present on every machine already.
 
 ---
 
-## Game content
+## Books arena engines
+
+### Tesseract.js (the page scanner's OCR)
+**Jerome Wu & the naptha team** · <https://github.com/naptha/tesseract.js> · **Apache-2.0**
+
+The page scanner's recognition runs entirely in the browser. Three
+npm-pinned pieces are vendored at build time by
+`web/scripts/vendor-ocr.mjs` into `web/public/assets/ocr/` (generated,
+not committed — ~15 MB):
+
+| Piece | By | Licence |
+|---|---|---|
+| `tesseract.js` (worker + API) | Jerome Wu & the naptha team | Apache-2.0 |
+| `tesseract.js-core` (the Tesseract 5 WASM engine — itself originally Hewlett-Packard, now maintained by Google) | the tesseract.js project | Apache-2.0 |
+| `@tesseract.js-data/eng` (the integer-quantised "best" English model, `4.0.0_best_int`) | the tesseract.js-data project | Apache-2.0 |
+
+All three LSTM engine builds ship (plain, SIMD, relaxed-SIMD) because
+the browser picks at runtime; only one is ever downloaded. Vendoring
+exists to keep design invariant 5 (nothing loads from a third party):
+Tesseract.js defaults to jsDelivr for both its WASM core and its
+language data, which would tell a CDN which book is being read.
+
+### whisper.cpp (the alignment worker's transcriber)
+**Georgi Gerganov & contributors (ggml-org)** ·
+<https://github.com/ggml-org/whisper.cpp> · **MIT**
+
+Compiled into the **optional** alignment worker image (`align/`,
+behind the `align` compose profile, pinned to a release tag in
+`align/Dockerfile`). Nothing of it ships in the API or web images.
+
+### Whisper speech models
+**OpenAI** · <https://github.com/openai/whisper> · **MIT**
+
+The ggml-converted model weights (`base.en` by default) baked into the
+alignment worker image at build time, fetched from
+`ggerganov/whisper.cpp` on Hugging Face. Switching models is a rebuild,
+not a restart — sizes and the accuracy/speed trade are documented in
+`align/Dockerfile`.
+
+---
+
+## Game and book content
 
 Cover art and metadata come from [IGDB](https://www.igdb.com/); Steam
 library import uses the [Steam Web API](https://steamcommunity.com/dev).
-Backhog is an independent tool and is not affiliated with either.
+Book metadata and covers come from [Open
+Library](https://openlibrary.org) — an initiative of the Internet
+Archive, which asserts no new copyright over the database
+([licensing](https://openlibrary.org/developers/licensing)). Backhog is
+an independent tool and is not affiliated with any of them.
+
+Open Library's [API guidelines](https://openlibrary.org/developers/api)
+are the terms of use Backhog follows: requests identify themselves with
+a descriptive `User-Agent`, responses are cached in the shared
+`books`/`book_editions` tables the same way IGDB data is, the client
+rate-limits itself below the identified-request ceiling, and nothing
+bulk-harvests — every request is one user looking up one book.

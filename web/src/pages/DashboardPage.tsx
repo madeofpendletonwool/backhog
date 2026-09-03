@@ -79,7 +79,7 @@ const verdictClass = {
   amber: "border-amber-400/30 bg-amber-400/10 text-amber-300",
   cyan: "border-cyan-400/30 bg-cyan-400/10 text-cyan-300",
   emerald: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
-  ink: "border-white/10 bg-white/[0.05] text-ink-300",
+  ink: "border-edge-strong bg-fill-hover text-ink-300",
 };
 
 function Diagnosis({ insights }: { insights: Insights }) {
@@ -121,7 +121,7 @@ function Diagnosis({ insights }: { insights: Insights }) {
         )}
       </p>
 
-      <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 border-t border-white/[0.06] pt-4">
+      <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 border-t border-edge pt-4">
         <Figure label="Games owned" value={String(headline.games_owned)} />
         <Figure label="Unplayed" value={String(headline.unplayed_games)} />
         <Figure label="Hours owed" value={formatHours(headline.hours_remaining)} />
@@ -222,7 +222,7 @@ function GameStat({ superlative }: { superlative: Superlative }) {
     <div className="mt-3 flex gap-4" style={accentStyle(payload.game)}>
       <Link
         to={`/game/${payload.entry_id}`}
-        className="w-16 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 hover:ring-white/20 focus-visible:focus-ring sm:w-20"
+        className="w-16 shrink-0 overflow-hidden rounded-lg ring-1 ring-art transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 hover:ring-art-hover focus-visible:focus-ring sm:w-20"
         aria-label={payload.game.name}
       >
         <GameCover game={payload.game} sizes="96px" />
@@ -230,7 +230,7 @@ function GameStat({ superlative }: { superlative: Superlative }) {
       <div className="min-w-0 self-center">
         <Link
           to={`/game/${payload.entry_id}`}
-          className="line-clamp-2 text-[15px] font-semibold leading-snug text-ink-100 hover:text-white focus-visible:focus-ring"
+          className="line-clamp-2 text-[15px] font-semibold leading-snug text-ink-100 hover:text-ink-max focus-visible:focus-ring"
         >
           {payload.game.name}
         </Link>

@@ -47,7 +47,7 @@ export function ListMembership({ entry }: { entry: Entry }) {
             return (
               <label
                 key={list.id}
-                className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-white/[0.05]"
+                className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-fill-hover"
               >
                 <input
                   type="checkbox"
@@ -95,7 +95,7 @@ export function ProjectMembership({ entry }: { entry: Entry }) {
           return (
             <label
               key={project.id}
-              className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-white/[0.05]"
+              className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-fill-hover"
             >
               <input
                 type="checkbox"

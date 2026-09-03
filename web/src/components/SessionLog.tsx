@@ -188,7 +188,7 @@ export function SessionLog({ entry }: { entry: GameEntry }) {
           {sessions.map((session) => (
             <li
               key={session.id}
-              className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-white/[0.04]"
+              className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-fill-hover"
             >
               <Gi name="clock" className="size-3.5 shrink-0 text-ink-600" />
               <span className="shrink-0 tabular-nums text-ink-200">

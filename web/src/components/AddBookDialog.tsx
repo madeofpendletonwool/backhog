@@ -63,7 +63,7 @@ export function AddBookDialog({ open, onClose }: { open: boolean; onClose: () =>
             <div
               role="tablist"
               aria-label="How to add a book"
-              className="flex items-center gap-1 border-b border-white/[0.06] px-3 py-2"
+              className="flex items-center gap-1 border-b border-edge px-3 py-2"
             >
               <ModeTab active={mode === "scan"} onClick={() => setMode("scan")} icon="camera">
                 Scan
@@ -115,7 +115,7 @@ function ModeTab({
       onClick={onClick}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors focus-visible:focus-ring",
-        active ? "bg-white/[0.09] text-ink-100" : "text-ink-400 hover:bg-white/[0.05] hover:text-ink-200",
+        active ? "bg-fill-active text-ink-100" : "text-ink-400 hover:bg-fill-hover hover:text-ink-200",
       )}
     >
       <Gi name={icon} className="size-3.5" />
@@ -256,7 +256,7 @@ function ScanPanel({
 
   return (
     <div className="p-4">
-      <div className="relative overflow-hidden rounded-xl bg-ink-900 ring-1 ring-white/[0.07]">
+      <div className="relative overflow-hidden rounded-xl bg-ink-900 ring-1 ring-edge">
         <video
           ref={videoRef}
           muted
@@ -403,7 +403,7 @@ function SearchPanel({ onResolved }: { onResolved: (book: Book) => void }) {
 
   return (
     <>
-      <div className="flex items-center gap-3 border-b border-white/[0.06] px-4">
+      <div className="flex items-center gap-3 border-b border-edge px-4">
         <Gi name="search" className="size-4 shrink-0 text-ink-500" />
         <input
           autoFocus
@@ -436,7 +436,7 @@ function SearchPanel({ onResolved }: { onResolved: (book: Book) => void }) {
                   type="button"
                   onClick={() => onResolved(result.book)}
                   style={accentStyle(result.book)}
-                  className="flex w-full items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-white/[0.05] focus-visible:focus-ring"
+                  className="flex w-full items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-fill-hover focus-visible:focus-ring"
                 >
                   <BookCover book={result.book} className="w-10 shrink-0 rounded-lg" />
                   <div className="min-w-0 flex-1">
@@ -524,7 +524,7 @@ function ConfirmStep({
 
       <div className="flex gap-4" style={accentStyle(work)}>
         <div className="w-24 shrink-0">
-          <BookCover book={work} className="ring-1 ring-white/10" />
+          <BookCover book={work} className="ring-1 ring-edge-strong" />
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-semibold leading-tight text-ink-100">{work.title}</h2>

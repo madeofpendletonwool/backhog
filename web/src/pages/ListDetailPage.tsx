@@ -52,7 +52,7 @@ function SortableEntryCard({ entry }: { entry: Entry }) {
         {...attributes}
         {...listeners}
         aria-label={`Reorder ${entryTitle(entry)}`}
-        className="absolute right-1.5 top-1.5 cursor-grab touch-none rounded-lg bg-ink-950/75 p-1 text-ink-300 opacity-0 backdrop-blur-sm transition-opacity hover:text-white focus-visible:opacity-100 focus-visible:focus-ring active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+        className="absolute right-1.5 top-1.5 cursor-grab touch-none rounded-lg bg-scrim/75 p-1 text-ink-300 opacity-0 backdrop-blur-sm transition-opacity hover:text-scrim-ink focus-visible:opacity-100 focus-visible:focus-ring active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <Gi name="grab" className="size-4" />
       </button>
@@ -247,7 +247,7 @@ export function ListDetailPage() {
           </label>
 
           {list.kind === "smart" && draftRules && (
-            <div className="rounded-xl border border-white/[0.06] bg-ink-900/50 p-3">
+            <div className="rounded-xl border border-edge bg-ink-900/50 p-3">
               <SmartListBuilder value={draftRules} onChange={setDraftRules} />
             </div>
           )}

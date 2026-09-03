@@ -35,16 +35,16 @@ export function BookCard({ entry }: { entry: BookEntry }) {
       >
         <div
           className={cn(
-            "relative overflow-hidden rounded-xl ring-1 ring-white/[0.08]",
+            "relative overflow-hidden rounded-xl ring-1 ring-art",
             "transition-transform duration-300 ease-[var(--ease-spring)]",
-            "group-hover:-translate-y-1 group-hover:ring-white/20",
+            "group-hover:-translate-y-1 group-hover:ring-art-hover",
           )}
         >
           <BookCover book={book} sizes="(max-width: 640px) 45vw, 200px" />
 
           {/* Bottom scrim carrying the title, always legible over any jacket. */}
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-950 via-ink-950/85 to-transparent px-3 pb-2.5 pt-8">
-            <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-white">
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-scrim via-scrim/85 to-transparent px-3 pb-2.5 pt-8">
+            <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-scrim-ink">
               {book.title}
             </p>
             <div className="mt-1 flex items-center gap-2 text-[11px] text-ink-400">
@@ -54,7 +54,7 @@ export function BookCard({ entry }: { entry: BookEntry }) {
           </div>
 
           {entry.user_rating != null && (
-            <div className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-lg bg-ink-950/80 px-1.5 py-1 text-[11px] font-semibold text-amber-300 backdrop-blur-sm">
+            <div className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-lg bg-scrim/80 px-1.5 py-1 text-[11px] font-semibold text-amber-300 backdrop-blur-sm">
               <Gi name="star" className="size-3" />
               {entry.user_rating}
             </div>

@@ -13,7 +13,7 @@ export function BookTable({ entries }: { entries: BookEntry[] }) {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[52rem] text-sm">
           <thead>
-            <tr className="border-b border-white/[0.06] text-left text-xs font-medium text-ink-400">
+            <tr className="border-b border-edge text-left text-xs font-medium text-ink-400">
               <th className="px-4 py-3 font-medium">Book</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Author</th>
@@ -26,7 +26,7 @@ export function BookTable({ entries }: { entries: BookEntry[] }) {
             {entries.map((entry) => (
               <tr
                 key={entry.id}
-                className="border-b border-white/[0.04] transition-colors last:border-0 hover:bg-white/[0.03]"
+                className="border-b border-edge-soft transition-colors last:border-0 hover:bg-fill-hover"
               >
                 <td className="px-4 py-2.5">
                   <Link

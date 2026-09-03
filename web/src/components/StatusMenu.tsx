@@ -70,7 +70,7 @@ export function StatusMenu({
         role="group"
         aria-label={`Status for ${title}`}
         className={cn(
-          "gap-0.5 bg-ink-900/95 p-1 ring-1 ring-white/10 backdrop-blur-md",
+          "gap-0.5 bg-ink-900/95 p-1 ring-1 ring-edge-strong backdrop-blur-md",
           size === "md" ? "grid grid-cols-3 sm:flex sm:items-center" : "flex items-center",
           update.isPending && "opacity-60",
         )}
@@ -100,7 +100,7 @@ export function StatusMenu({
                 size === "sm" ? "h-7" : "h-8 px-3",
                 isActive
                   ? activeStyles[status]
-                  : "text-ink-400 hover:bg-white/[0.08] hover:text-ink-100",
+                  : "text-ink-400 hover:bg-fill-active hover:text-ink-100",
                 "focus-visible:focus-ring disabled:cursor-not-allowed",
               )}
             >
@@ -158,7 +158,7 @@ function PlatformPrompt({
             type="button"
             disabled={pending}
             onClick={() => onPick(platform.id)}
-            className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-200 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:focus-ring disabled:cursor-not-allowed"
+            className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-200 transition-colors hover:bg-fill-hover hover:text-ink-100 focus-visible:focus-ring disabled:cursor-not-allowed"
           >
             {platform.name}
           </button>
@@ -169,7 +169,7 @@ function PlatformPrompt({
           type="button"
           disabled={pending}
           onClick={close}
-          className="rounded-lg px-3 py-1.5 text-sm text-ink-500 transition-colors hover:bg-white/[0.05] hover:text-ink-200 focus-visible:focus-ring disabled:cursor-not-allowed"
+          className="rounded-lg px-3 py-1.5 text-sm text-ink-500 transition-colors hover:bg-fill-hover hover:text-ink-200 focus-visible:focus-ring disabled:cursor-not-allowed"
         >
           Skip for now
         </button>

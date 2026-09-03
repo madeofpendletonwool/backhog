@@ -3,18 +3,27 @@
 How the interface is built, and what you have to preserve when you add to
 it.
 
-Backhog ships **two theme families**, and a component belongs to neither.
-It names a surface — `.panel`, `.f-field`, `.f-btn-gold`, `font-display` —
-and whichever family is active supplies the recipe:
+Backhog ships **three theme families**, and a component belongs to none of
+them. It names a surface — `.panel`, `.f-field`, `.f-btn-gold`,
+`font-display` — and whichever family is active supplies the recipe:
 
 - **Midnight** (`flat`) — the original dark theme. Rounded surfaces,
   hairline borders, one violet accent, system type. The neutral one, and
-  the default; Backhog is picking up books, and a shelf of them should not
-  have to live inside an arcade cabinet.
+  the default.
 - **Arcade** (`pixel`) — real pixel art. Nine-sliced console-plastic
   frames, an arcade sprite sheet, four parallax backdrops.
+- **Library** (`library`) — the reading room. A serif display voice,
+  print-flat surfaces with real cast shadows, and the live item marked in
+  the margin rather than filled in. Two themes share it: **Paper**, the
+  app's only light ground, and **Hearth**, warm umber lit by a fire.
 
-Both are assembled with Tailwind v4's CSS-first config and a handful of
+**The theme follows the arena.** Games and books each keep their own, so an
+arcade cabinet for the backlog and a reading room for the shelf is one
+setting rather than a compromise. A "use the same theme in both arenas"
+switch collapses that back to one choice, and is on by default. See
+[Per-arena theming](#per-arena-theming).
+
+All three are assembled with Tailwind v4's CSS-first config and a handful of
 React components. There is no separate build step for the app itself; only
 the arcade family's *assets* have one, and it only needs to run again when
 the art changes.
@@ -27,9 +36,10 @@ the art changes.
 
 > The room is themeable. What is in it is not.
 
-Whichever family is on, the covers, the prose, the numbers, the status
-colours and the per-game accent look identical. Only the chrome around
-them changes.
+Whichever family is on, the covers, the prose, the numbers and the per-game
+accent look identical. Only the chrome around them changes. Status colour
+keeps its *hue* for the same reason — see invariant 3, which had to grow a
+caveat when the app gained a light ground.
 
 Backhog is a library you scan quickly and read closely: a wall of cover art
 punctuated by short, dense text (titles, hours, ratings). The chrome around
@@ -41,7 +51,7 @@ Two consequences worth internalising:
 - **Text colour is solved, not chosen.** `--c-600` through `--c-100` are
   derived from a WCAG contrast target against each theme's own panel fill
   (`scripts/build-assets.py`), which is why `text-ink-400` is equally
-  readable in all six themes. Picking a hex by eye for one of these is how
+  readable in every theme, on a cream ground as much as a black one. Picking a hex by eye for one of these is how
   the arcade theme ended up shipping body text at 1.7:1. Surfaces
   (`--c-950`..`--c-700`, `--c-line`) are the other half of the ladder and
   *are* fixed lightnesses, because the frame sprites are recoloured from
@@ -66,6 +76,10 @@ Two consequences worth internalising:
 |---|---|---|
 | `web/src/index.css` | Shared tokens (`@theme inline`), body/base styles, `focus-ring` and `skeleton` utilities | yes |
 | `web/src/themes/flat.css` | The Midnight palette **and** the whole flat family recipe | yes |
+| `web/src/themes/library.css` | The Paper and Hearth palettes **and** the library family recipe | yes |
+| `web/src/lib/themes.ts` | The theme catalogue and the storage-key helpers — data only, no React | yes |
+| `web/src/lib/arena.ts` | `ARENA_ROUTES` and `arenaForLocation()` — data only, no React | yes |
+| `web/src/hooks/useArena.tsx` | Which arena the app is in; must sit inside the router | yes |
 | `web/src/pixel/pixel.css` | Arcade frame classes, sprite/vector-icon sizing, the scene | yes |
 | `web/src/pixel/themes.css` | Per-theme chrome ramp + frame URLs | **generated** |
 | `web/src/pixel/fonts.css` | `@font-face` for Silkscreen | **generated** |
@@ -74,8 +88,13 @@ Two consequences worth internalising:
 | `web/src/components/ui/Sprite.tsx` | Renders an arcade sprite cell by name | yes |
 | `web/src/components/Scene.tsx` | Mounts the backdrop layers, parallax, rescaling | yes |
 | `web/src/hooks/useTheme.tsx` | Theme + family context, `data-theme`/`data-family` on `<html>`, localStorage | yes |
-| `web/index.html` | Pre-paint script that stamps the saved theme (mirrors `THEMES`) | yes |
+| `web/index.html` | Carries the `<!--@boot-theme-->` marker; the script itself is **generated** | yes |
+| `web/vite.config.ts` | `bootTheme()`, which builds that script from `lib/arena.ts` + `lib/themes.ts` | yes |
 | `web/public/assets/` | Shipped PNGs (frames, sprites, scenes, fonts) | **generated** |
+
+`lib/themes.ts` and `lib/arena.ts` must stay **dependency-free**: the Vite
+config imports both at build time to generate the pre-paint script, so a
+React import in either of them breaks the build.
 
 **index.css vs pixel.css.** index.css says what a token or a base style
 *is* — colour ramps, typography scale, focus rings. pixel.css says what a
@@ -115,7 +134,18 @@ radius clips them off, a stray shadow floats the frame off the plastic
 behind it. The shared reset at the top of `pixel.css` lists every class
 that adopts a frame — add yours there too.
 
-**3. Coin gold, danger red, and the per-game accent are theme-independent.**
+**3. Meaning-bearing colour keeps its hue in every theme. It cannot keep
+its lightness.**
+Status cyan/green/red and the achievement tiers say what something *is*, so
+the hue is a constant. The lightness is not free to be: these were written
+as `bg-cyan-500/15 text-cyan-300`, the standard dark-mode badge recipe, and
+on Paper's cream ground the 300 shade lands around 1.5:1. So the hue is
+handed to the `tone-chip` / `tone-ink` utilities as `--tone` and the ink is
+mixed toward `--c-100`, the theme's own strongest ink — which lightens the
+hue on a dark ground and darkens it on a light one, from one expression.
+Add a new meaning-bearing colour the same way; never hard-code a shade.
+
+**3b. Coin gold, danger red, and the per-game accent are theme-independent.**
 `button-gold.png`, `button-danger.png` and their pressed states live at
 `web/public/assets/ui/` (not per-theme) and are recoloured once, from fixed
 constants in `scripts/build-assets.py` (`GOLD`, `RED`). `--accent` is set
@@ -124,13 +154,21 @@ survives inside every framed surface as a glow or a progress fill, but it
 never appears on a frame itself. A backdrop restating the accent would be
 exactly the mistake grimoire's corpus-accent invariant exists to prevent.
 
-**4. Themes change hue, never the lightness ladder.**
+**4. Themes change hue, and may invert the ladder — never the contrast
+between two steps.**
 `CHROME_L` in `scripts/build-assets.py` is fixed (`--c-950` through
 `--c-100`). A theme borrows its scene's hue and saturation and applies them
 to those exact lightness steps, so the contrast between any two steps is
 identical in every theme. Never hand-write a theme colour — if a new scene
 needs a different feel, that's a saturation or lightness-cap change in
 `build-assets.py`, not a value typed into `themes.css`.
+
+A *light* family inverts the ladder's direction: on Paper `--c-950` is the
+brightest surface and `--c-100` the darkest ink. The **roles are unchanged**
+— 950 is still the page, 800 is still the plate text is solved against, 100
+is still the strongest ink — which is why no component knows which way round
+it is. `solve_lightness()` picks the direction from the background's own
+luminance and bisects toward black instead of white.
 
 **5. Nothing loads from a third party.**
 Fonts, sprites, frames and scenes are all under `/assets/`, shipped in
@@ -160,7 +198,49 @@ the ladder in invariant 4 keeps it that way. The scene veil
 (`.scene-veil` in pixel.css) exists to guarantee a floor over *any*
 backdrop, including the brightest layer of the arcade theme's neon sky. If
 you lighten the veil, re-check body text over every theme, not just the
-default.
+default — and over both grounds, since Paper is light and everything else is
+dark. `--c-600` is the one step deliberately under the AA floor (3.5:1); it
+is for decorative text only and measures the same in every theme.
+
+---
+
+## Per-arena theming
+
+Backhog is two arenas, and one global theme forced a compromise neither
+wanted. So each arena keeps its own slot:
+
+| Key | Value |
+|---|---|
+| `backhog:theme:games` | `"pixel:arcade"` — family and theme, one string |
+| `backhog:theme:books` | `"library:hearth"` |
+| `backhog:theme:linked` | `"1"` (default) or `"0"` |
+| `backhog:theme:{arena}:{family}` | the theme to return to when that family is re-picked |
+
+Packing the family into the slot is deliberate: the pre-paint script can
+stamp both `data-` attributes by splitting on a colon, without carrying its
+own copy of the id → family map. That map used to be hand-mirrored in
+`index.html` with a "keep the two in step" comment; it is not any more.
+
+**Which arena a URL belongs to is decided once**, by `arenaForLocation()`
+over the `ARENA_ROUTES` table in `lib/arena.ts` — books by path, then
+`?media=book`, then games by path, then `null` for a shared page, which
+inherits the arena you came from. The nav set and the theme both follow that
+one answer, so `/queue` is the arcade and `/queue?media=book` is the reading
+room without either being special-cased.
+
+Adding a route that belongs to an arena means adding a row to
+`ARENA_ROUTES`. Nothing else — the boot script is regenerated from it.
+
+`linked` is on by default and, while on, writes both slots together, so
+every read can just take the current arena's slot and be right either way.
+Anyone upgrading is migrated onto it with their existing theme in both
+arenas, and sees no change until they turn it off.
+
+**Crossing arenas re-skins the shell.** `body` eases its background and
+colour over 200ms; the frames themselves are nine-slice sprites and cannot
+be interpolated, so nothing tries. The audio player stays mounted across the
+crossing and re-skins with everything else — it is chrome, and chrome
+follows the room.
 
 ---
 
@@ -218,8 +298,13 @@ Worked example — a framed panel:
    table in [Invariants #1](#invariants). If it should vary by theme, add
    the recolour to `build_frames()`/`themed_frames()` in
    `scripts/build-assets.py` instead of hand-picking a colour.
-3. **Check it in both families**, not just the default (Midnight):
-   Settings → Theme → Arcade, and Arcade → Backdrop → "Bare console".
+3. **Check it in all three families**, not just the default (Midnight):
+   Settings → Theme → Arcade (and Backdrop → "Bare console"), then Library →
+   Hearth *and* Paper. Paper is the one that catches light-on-dark
+   assumptions — a hairline written as `border-white/[0.06]` disappears
+   there. Reach for `border-edge`, `bg-fill-hover`, `bg-fill-active`,
+   `ring-art` and `text-ink-max` instead; they are the tokens those idioms
+   became, and they flip with the ground.
 
 ### Typography
 
@@ -227,12 +312,21 @@ Two voices:
 
 | Token | Font | For |
 |---|---|---|
-| `--font-display` | Silkscreen (arcade) / system UI (Midnight) | Wordmark, nav labels, section labels, button text, stat numbers |
+| `--font-display` | Silkscreen (arcade) / system UI (Midnight) / serif (library) | Wordmark, nav labels, section labels, button text, stat numbers |
 | (default) | system UI stack | Everything else — game titles, descriptions, dense table text |
 
 Silkscreen for **labels and numbers only**, never for long-form text —
 game descriptions and notes stay in the system font so they read at real
 resolution, the same reason grimoire kept its prose in a real serif.
+
+The library family's serif is `--f-serif`, defined in `index.css` rather
+than in the family, because the EPUB reader's own "Serif" setting is the
+same stack: a book's body text and the chrome around it should not be two
+different serifs. It is all system faces, so it fetches nothing
+(invariant 5). The family also puts bare `h1`/`h2`/`h3` in it — page titles
+are plain elements rather than a component, and leaving the biggest word on
+the page in a sans while the nav and buttons are serif reads as a mistake
+rather than a contrast.
 
 ---
 

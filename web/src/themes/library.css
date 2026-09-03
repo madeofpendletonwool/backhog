@@ -1,0 +1,381 @@
+/* The library family — Backhog's book-native chrome.
+
+   Midnight is neutral and the arcade is about games; neither is *about*
+   reading. This one is. It is the same vocabulary again — .panel, .f-field,
+   .f-btn-gold, .chip, .f-bar — wearing a third recipe:
+
+   - a real serif for the display voice, because the app around a book should
+     not be shouting in a 5px bitmap;
+   - print-flat surfaces: opaque paper, a small radius, one hairline rule, and
+     a real cast shadow rather than a glow;
+   - the selected row marked in the margin, the way you would mark a page,
+     instead of being filled in like a button.
+
+   Two themes share it. Hearth is the dark one — a room lit by a fire, warm
+   umber where Midnight is blue-black. Paper is the light one.
+
+   Specificity note, same as flat.css: these rules sit in the same @layer as
+   pixel.css and win on specificity alone (html[data-family] .x beats .x), so
+   import order does not matter, and ordinary Tailwind utilities still override
+   them at the call site. */
+
+/* ---------- Hearth: read by the fire ----------
+   Surfaces are the shared lightness ladder (SURFACE_L in
+   scripts/build-assets.py) at hue 26°, saturation 0.24 — the same ceiling the
+   generated themes use. The text steps are *solved*, not chosen: each one hits
+   its WCAG target against --c-800 (600:3.5, 500:4.8, 400:6.5, 300:8.5,
+   200:11.0, 100:14.5), so text is exactly as readable here as in every other
+   theme. See invariant 4 in docs/DESIGN.md before touching a value. */
+
+html[data-theme="hearth"] {
+  --c-950: #0b0907;
+  --c-900: #130f0b;
+  --c-850: #17120e;
+  --c-800: #1b1510;
+  --c-750: #1f1813;
+  --c-700: #231c16;
+  --c-600: #856851;
+  --c-500: #9f7d62;
+  --c-400: #b19681;
+  --c-300: #c4ae9e;
+  --c-200: #d6c8bc;
+  --c-100: #ece5df;
+  --c-line: #2e241c;
+  --scene-sky: #0b0907;
+
+  /* Warm light falls on warm surfaces, so the hairlines are firelight rather
+     than the pure white alpha a cool theme would use. */
+  --edge-soft: rgba(255, 233, 205, 0.045);
+  --edge: rgba(255, 233, 205, 0.07);
+  --edge-strong: rgba(255, 233, 205, 0.14);
+  --fill-hover: rgba(255, 233, 205, 0.05);
+  --fill-active: rgba(255, 233, 205, 0.09);
+  --ring-art: rgba(255, 233, 205, 0.09);
+  --ring-art-hover: rgba(255, 233, 205, 0.22);
+  --outline: rgba(255, 233, 205, 0.22);
+  --outline-strong: rgba(255, 233, 205, 0.42);
+  --shimmer: rgba(255, 233, 205, 0.06);
+  --c-max: #fffaf4;
+  --scrim-ink: #fffaf4;
+
+  --shadow-panel: 0 18px 36px -22px rgba(0, 0, 0, 0.85);
+}
+
+/* ---------- Paper: warm daylight ----------
+   The one light theme in the app, and the reason the ink ladder had to learn
+   to run the other way (solve_lightness in scripts/build-assets.py bisects
+   toward black rather than white once the ground is light).
+
+   The ladder's *roles* are unchanged — 950 is still the page, 800 is still
+   the plate text is solved against, 100 is still the strongest ink. Only the
+   direction of lightness flips. That is what makes this a palette rather
+   than a rewrite: no component knows which way round it is. */
+
+html[data-theme="paper"] {
+  color-scheme: light;
+
+  --c-950: #f4efe4;
+  --c-900: #fdfaf3;
+  --c-850: #f6f1e6;
+  --c-800: #f0ebdf;
+  --c-750: #e8e1d2;
+  --c-700: #dcd4c2;
+  /* Solved against --c-800 at hue 30°, saturation 0.12 — the same WCAG
+     targets every other theme uses, so `text-ink-400` is as readable here as
+     it is in the arcade. */
+  --c-600: #887a6b;
+  --c-500: #716458;
+  --c-400: #5b5148;
+  --c-300: #484039;
+  --c-200: #352f2a;
+  --c-100: #1e1a17;
+  --c-max: #14100c;
+  --c-line: #e3dbc9;
+  --scene-sky: #f4efe4;
+
+  /* How far the status/tier inks are pulled toward --c-100 (near-black
+     here). Those hues were chosen to sit on near-black; on cream they
+     land around 1.5:1 untouched. Every dark theme leaves this at 0. */
+  --tone-darken: 62%;
+
+  /* Oxblood: a printer's red. Dark enough to be read as text on the panel
+     (7.8:1) and to carry cream ink as a button fill (7.7:1). */
+  --hl-pale: #a03a44;
+  --hl-bright: #8c2f39;
+  --hl-mid: #7d2a33;
+  --hl-dim: #6f242c;
+  --hl-ink: #fdf8f2;
+  --selection-bg: var(--color-hl-mid);
+  --selection-fg: #fdf8f2;
+
+  /* Ink alphas, not light ones — the whole point of the ground being light. */
+  --edge-soft: rgba(58, 44, 26, 0.06);
+  --edge: rgba(58, 44, 26, 0.1);
+  --edge-strong: rgba(58, 44, 26, 0.18);
+  --fill-hover: rgba(58, 44, 26, 0.05);
+  --fill-active: rgba(58, 44, 26, 0.1);
+  --ring-art: rgba(58, 44, 26, 0.14);
+  --ring-art-hover: rgba(58, 44, 26, 0.3);
+  --outline: rgba(58, 44, 26, 0.28);
+  --outline-strong: rgba(58, 44, 26, 0.5);
+  /* A white sweep is invisible on cream, so the skeleton darkens instead. */
+  --shimmer: rgba(58, 44, 26, 0.06);
+
+  /* The scrim stays dark. It is not a surface — it is the thing that makes a
+     title legible over a cover, and cover art is full colour in every theme.
+     Inverting it with the rest of the palette is how a light theme ends up
+     printing white titles onto a white gradient. */
+  --scrim: #17120d;
+  --scrim-ink: #fff8ef;
+
+  /* Light grounds cast real shadows; glows only read on black. */
+  --shadow-panel:
+    0 1px 2px rgba(60, 45, 25, 0.05),
+    0 10px 24px -14px rgba(60, 45, 25, 0.22);
+}
+
+/* ---------- The family's own tokens ---------- */
+
+html[data-family="library"] {
+  /* Print corners: barely rounded. A book is cut, not moulded. */
+  --r-xl: 0.25rem;
+  --r-2xl: 0.375rem;
+  --f-display: var(--f-serif);
+
+  --bar-h: 0.5rem;
+}
+
+/* The highlight ramp is per-theme here, not per-family, because the two
+   themes sit on opposite grounds and --hl-bright has to be *readable* — it
+   is the focus ring, the live nav item, and the primary button's fill. On
+   Hearth that means a light ember; on Paper it means a dark oxblood. Which
+   is also why the ink that sits on the primary button is its own token
+   rather than a literal: it flips with the accent. */
+
+html[data-theme="hearth"] {
+  /* Ember, from the fire the theme is named for. 9:1 on the panel fill. */
+  --hl-pale: #ffd9a8;
+  --hl-bright: #f0a868;
+  --hl-mid: #c9722f;
+  --hl-dim: #8a4a1c;
+  --hl-ink: #1a1005;
+  --selection-bg: var(--color-hl-mid);
+  --selection-fg: #1a1005;
+}
+
+@layer components {
+  /* ---------- Undo the nine-slice ----------
+     Listed in one place, mirroring the resets in pixel.css and flat.css. */
+
+  html[data-family="library"]
+    :is(
+      .frame,
+      .panel,
+      .f-panel,
+      .f-panel-active,
+      .f-field,
+      .f-btn-gold,
+      .f-btn-danger,
+      .f-btn-soft,
+      .chip,
+      .f-chip,
+      .f-chip-active,
+      .f-bar
+    ) {
+    /* The longhand, not `border-image: none`: the shorthand minifies to an
+       empty declaration that browsers drop, which would leave the arcade's
+       sprite painting straight through everything below. */
+    border-image-source: none;
+    border-style: solid;
+    border-width: 0;
+    image-rendering: auto;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  /* ---------- Headings ----------
+     Page titles are plain elements rather than a component, so they take the
+     body sans in every family. That is fine when the display voice is only
+     used for placards, but here the nav, the wordmark and the buttons are all
+     serif — leaving the one biggest word on the page in a sans reads as a
+     mistake rather than a contrast. Sits in the components layer, so any
+     font-* utility at the call site still wins. */
+  html[data-family="library"] :is(h1, h2, h3) {
+    font-family: var(--f-serif);
+    letter-spacing: -0.01em;
+  }
+
+  /* ---------- Surfaces ----------
+     Opaque, and deliberately so. Midnight's panels are frosted glass over an
+     aurora; paper is not translucent, and a backdrop-filter here would let the
+     fire glow show through the page you are reading. */
+
+  html[data-family="library"] :is(.panel, .f-panel) {
+    border-width: 1px;
+    border-color: var(--edge);
+    border-radius: var(--r-2xl);
+    background-color: var(--c-900);
+    box-shadow: var(--shadow-panel);
+  }
+
+  /* The selected row, marked in the margin rather than filled in — an ember
+     rule down the left edge, which is the one gesture in this family that
+     nothing else does. */
+  html[data-family="library"] .f-panel-active {
+    border-radius: var(--r-xl);
+    background-color: var(--fill-active);
+    box-shadow: inset 2px 0 0 0 var(--color-hl-mid);
+  }
+
+  /* ---------- Fields ---------- */
+
+  html[data-family="library"] .f-field {
+    border-width: 1px;
+    border-color: var(--edge-strong);
+    border-radius: var(--r-xl);
+    background-color: var(--c-850);
+    color: var(--c-100);
+  }
+  html[data-family="library"] :is(.f-field:focus, .f-field:focus-within, .f-field.is-focus) {
+    border-color: var(--color-hl-mid);
+  }
+  html[data-family="library"] .f-field::placeholder {
+    color: var(--c-500);
+  }
+
+  /* ---------- Buttons ----------
+     The frame names are the arcade's (gold = primary, soft = secondary)
+     because they name the *role*, not the sprite. Here primary is a lit
+     ember with dark ink on it — 9.4:1, and it reads as the warmest thing
+     on the page, which is what a primary action should be. */
+
+  html[data-family="library"] .f-btn-gold {
+    border-radius: var(--r-xl);
+    background-color: var(--color-hl-bright);
+    color: var(--hl-ink);
+    font-weight: 600;
+  }
+  html[data-family="library"] .f-btn-gold:hover:not(:disabled) {
+    background-color: var(--color-hl-pale);
+  }
+  html[data-family="library"] .f-btn-gold:disabled {
+    background-color: var(--c-700);
+    color: var(--c-500);
+  }
+
+  html[data-family="library"] .f-btn-soft {
+    border-radius: var(--r-xl);
+    border-width: 1px;
+    border-color: var(--edge-strong);
+    background-color: var(--c-800);
+    color: var(--c-100);
+  }
+  html[data-family="library"] .f-btn-soft:hover:not(:disabled) {
+    background-color: var(--c-750);
+  }
+
+  html[data-family="library"] .f-btn-danger {
+    border-radius: var(--r-xl);
+    background-color: #a33236;
+    color: #ffffff;
+  }
+  html[data-family="library"] .f-btn-danger:hover:not(:disabled) {
+    background-color: #b93b3f;
+  }
+
+  /* ---------- Chips ----------
+     Cut square, not pill-shaped: these are marginalia, not buttons. */
+
+  html[data-family="library"] :is(.chip, .f-chip) {
+    border-radius: var(--r-xl);
+    border-width: 1px;
+    border-color: var(--edge);
+    background-color: var(--fill-hover);
+    color: var(--c-300);
+  }
+  html[data-family="library"]
+    :is(.chip:hover, .f-chip:hover, .chip.is-active, .f-chip.is-active, .f-chip-active) {
+    border-color: var(--edge-strong);
+    background-color: var(--fill-active);
+    color: var(--c-100);
+  }
+
+  /* ---------- Progress ----------
+     The track's height is the family's, not the caller's, so one
+     <ProgressBar> can be chunky plastic in the arcade and a thin rule here
+     without either page knowing which theme it is in. */
+
+  html[data-family="library"] .f-bar {
+    height: var(--bar-h);
+    border-radius: 2px;
+    background-color: var(--fill-active);
+  }
+  html[data-family="library"] .f-bar > * {
+    border-radius: 2px;
+  }
+
+  /* ---------- The room ----------
+     No parallax and no art: Scene.tsx renders a single .scene-room child for
+     this family. Hearth's is a fire somewhere below and to the left, breathing
+     the way the arcade's marquee hums. */
+
+  html[data-family="library"] .scene {
+    background: var(--c-950);
+  }
+
+  .scene-room {
+    position: absolute;
+    inset: 0;
+  }
+
+  /* Daylight through a window, off to one side. Barely there: on a light
+     ground anything stronger stops being atmosphere and starts being a
+     stain. */
+  html[data-theme="paper"] .scene-room {
+    background:
+      radial-gradient(60rem 40rem at 82% -8%, rgba(255, 238, 205, 0.55), transparent 70%),
+      radial-gradient(48rem 36rem at 6% 104%, rgba(196, 176, 142, 0.16), transparent 72%);
+  }
+
+  /* Antialiased subpixel smoothing thins type on a light ground — it is a
+     dark-mode correction, and applying it here makes the serif look washy. */
+  html[data-theme="paper"] body {
+    -webkit-font-smoothing: auto;
+  }
+
+  html[data-theme="hearth"] .scene-room {
+    background:
+      radial-gradient(
+        70rem 42rem at 18% 112%,
+        rgba(232, 138, 60, 0.16),
+        transparent 68%
+      ),
+      radial-gradient(48rem 34rem at 88% 104%, rgba(201, 114, 47, 0.07), transparent 72%);
+    animation: hearth-breathe 9s ease-in-out infinite;
+  }
+
+  /* A fire does not pulse evenly, so neither does this. */
+  @keyframes hearth-breathe {
+    0%,
+    100% {
+      opacity: 0.88;
+    }
+    34% {
+      opacity: 1;
+    }
+    52% {
+      opacity: 0.8;
+    }
+    71% {
+      opacity: 0.96;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html[data-theme="hearth"] .scene-room {
+      animation: none;
+    }
+  }
+}

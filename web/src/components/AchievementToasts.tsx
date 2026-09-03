@@ -73,7 +73,7 @@ function ToastCard({ toast }: { toast: Toast }) {
       {entry && href && (
         <Link
           to={href}
-          className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
+          className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-art transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
           aria-label={label}
         >
           {isBookEntry(entry) ? (

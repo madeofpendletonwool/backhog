@@ -81,6 +81,19 @@ func mangleOCR(s string, seed int64) string {
 	return strings.Join(words, " ")
 }
 
+// dropWords removes a run of whole words the way a camera scan loses a
+// line to a gutter shadow, a thumb, or a crease. Unlike mangleOCR the
+// word count changes, so every shingle behind the gap votes for a start
+// a whole line away from the true one — the shape that once split a
+// single location into several "occurrences".
+func dropWords(s string, at, run int) string {
+	w := strings.Fields(s)
+	if at < 0 || at+run > len(w) {
+		return s
+	}
+	return strings.Join(append(append([]string{}, w[:at]...), w[at+run:]...), " ")
+}
+
 func testMatcher(text string, loads *int) *Matcher {
 	return New(func(_ context.Context, _ string) (string, error) {
 		if loads != nil {
@@ -146,6 +159,63 @@ func TestFindNoisyOCRPassage(t *testing.T) {
 	}
 	if len(res.Alternatives) != 0 {
 		t.Errorf("noisy unique passage reported %d alternatives", len(res.Alternatives))
+	}
+}
+
+// A scan that loses whole lines still resolves to one place. Each gap
+// shifts the shingles behind it onto a start a line away, which survives
+// candidate clustering and verifies almost as well as the true start —
+// the two windows are the same paragraph read at an offset. Overlapping
+// windows are one location, so none of them may be offered to the reader
+// as another occurrence of the passage.
+func TestFindDroppedLinesReportOneLocation(t *testing.T) {
+	text, _ := synthNovel(120)
+	m := testMatcher(text, nil)
+	window, at := midWindow(text, 120)
+
+	// Gaps are cut back to front so each position indexes the original.
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"one dropped line", dropWords(window, 60, 10)},
+		{"two dropped lines", dropWords(dropWords(window, 90, 10), 40, 10)},
+		{"three dropped lines", dropWords(dropWords(dropWords(window, 100, 8), 60, 8), 25, 8)},
+	}
+	for _, tc := range cases {
+		res, err := m.Find(context.Background(), "t1", tc.query)
+		if err != nil {
+			t.Fatalf("%s: find: %v", tc.name, err)
+		}
+		if len(res.Alternatives) != 0 {
+			t.Errorf("%s: reported %d alternatives for a passage that occurs once",
+				tc.name, len(res.Alternatives))
+		}
+		if abs(res.Match.CharOffset-at) > 40 {
+			t.Errorf("%s: char offset = %d, want near %d", tc.name, res.Match.CharOffset, at)
+		}
+	}
+}
+
+// Dropped lines must not cost the reader a genuine recurrence either:
+// the epigraph still recurs when the scan of it lost a line.
+func TestFindDroppedLinesKeepGenuineRepeat(t *testing.T) {
+	text, epigraph := synthNovel(80)
+	m := testMatcher(text, nil)
+	last := strings.LastIndex(text, epigraph)
+
+	res, err := m.Find(context.Background(), "t1", dropWords(epigraph, 20, 6))
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	found := false
+	for _, alt := range res.Alternatives {
+		if abs(alt.CharOffset-last) <= 40 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("alternatives = %v, want the second occurrence near %d", res.Alternatives, last)
 	}
 }
 

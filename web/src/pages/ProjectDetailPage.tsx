@@ -372,8 +372,8 @@ function ChecklistRow({
             ? done === null
               ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-300"
               : "border-emerald-400 bg-emerald-500 text-white"
-            : "border-white/20 text-transparent hover:border-white/40",
-          done === false && "border-white/10",
+            : "border-outline text-transparent hover:border-outline-strong",
+          done === false && "border-edge-strong",
         )}
       >
         <Gi name="check" className="size-3.5" />
@@ -406,7 +406,7 @@ function ChecklistRow({
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${entryTitle(entry)} from this project`}
-        className="shrink-0 rounded-lg p-1.5 text-ink-600 opacity-0 transition-all hover:bg-white/[0.06] hover:text-red-400 focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+        className="shrink-0 rounded-lg p-1.5 text-ink-600 opacity-0 transition-all hover:bg-fill-hover hover:text-red-400 focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <Gi name="x" className="size-4" />
       </button>
@@ -493,7 +493,7 @@ function EditProjectDialog({
         )}
 
         {project.kind === "rule_goal" && (
-          <div className="rounded-xl border border-white/[0.06] bg-ink-900/50 p-3">
+          <div className="rounded-xl border border-edge bg-ink-900/50 p-3">
             <SmartListBuilder value={rules} onChange={setRules} />
           </div>
         )}

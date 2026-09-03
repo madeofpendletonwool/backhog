@@ -20,20 +20,24 @@ const TIER_META: Record<AchievementTier, { label: string; emoji: string }> = {
   legendary: { label: "Legendary", emoji: "💎" },
 };
 
-/** Unlocked icon chips wear their tier; locked ones stay quiet gray. */
-const TIER_CHIP: Record<AchievementTier, string> = {
-  bronze: "bg-tier-bronze/10 text-tier-bronze ring-tier-bronze/30",
-  silver: "bg-tier-silver/10 text-tier-silver ring-tier-silver/30",
-  gold: "bg-tier-gold/10 text-tier-gold ring-tier-gold/30",
-  legendary: "bg-tier-legendary/10 text-tier-legendary ring-tier-legendary/30",
+/* Unlocked icon chips wear their tier; locked ones stay quiet gray.
+
+   The medal tones are pale by design — they were picked to sit against
+   near-black. Used as `text-*` on a light ground they fail badly (#82e6ff
+   legendary is about 1.4:1 on cream), so the tier is handed over as --tone
+   and the ink is mixed toward the theme's own strongest ink. Same treatment
+   as the status badges; see the `tone-chip` utility in index.css. */
+const TIER_TONE: Record<AchievementTier, string> = {
+  bronze: "var(--color-tier-bronze)",
+  silver: "var(--color-tier-silver)",
+  gold: "var(--color-tier-gold)",
+  legendary: "var(--color-tier-legendary)",
 };
 
-const TIER_TEXT: Record<AchievementTier, string> = {
-  bronze: "text-tier-bronze",
-  silver: "text-tier-silver",
-  gold: "text-tier-gold",
-  legendary: "text-tier-legendary",
-};
+/* The medal tones *are* the ink on a dark ground — they were picked that
+   way — so tone and ink are the same value here. Only Paper moves them. */
+const tierStyle = (tier: AchievementTier) =>
+  ({ "--tone": TIER_TONE[tier], "--tone-ink": TIER_TONE[tier] }) as React.CSSProperties;
 
 /**
  * The gallery's domain tabs. "any" achievements (the eggs) are about the app
@@ -130,7 +134,7 @@ export function AchievementsPage() {
               </span>
             </p>
           </div>
-          <div className="flex gap-1 rounded-xl bg-ink-900 p-1 ring-1 ring-white/[0.06]">
+          <div className="flex gap-1 rounded-xl bg-ink-900 p-1 ring-1 ring-edge">
             {DOMAIN_TABS.map(({ key, label }) => (
               <button
                 key={key}
@@ -139,7 +143,7 @@ export function AchievementsPage() {
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:focus-ring",
                   tab === key
-                    ? "bg-white/[0.08] text-ink-100"
+                    ? "bg-fill-active text-ink-100"
                     : "text-ink-500 hover:text-ink-300",
                 )}
                 aria-pressed={tab === key}
@@ -162,7 +166,10 @@ export function AchievementsPage() {
                 <span className="text-base leading-none" aria-hidden>
                   {TIER_META[tier].emoji}
                 </span>
-                <h2 className={cn("text-sm font-semibold uppercase tracking-wider", TIER_TEXT[tier])}>
+                <h2
+                  style={tierStyle(tier)}
+                  className="tone-ink text-sm font-semibold uppercase tracking-wider"
+                >
                   {TIER_META[tier].label}
                 </h2>
                 <span className="text-xs text-ink-500 tabular-nums">
@@ -189,17 +196,17 @@ function AchievementEntryLink({ achievement }: { achievement: AchievementStatus 
 
   if (isBookEntry(entry)) {
     return (
-      <div className="mt-3 flex items-center gap-3 border-t border-white/[0.06] pt-3">
+      <div className="mt-3 flex items-center gap-3 border-t border-edge pt-3">
         <Link
           to={`/books/${entry.id}`}
-          className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
+          className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-art transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
           aria-label={entry.book.title}
         >
           <BookCover book={entry.book} sizes="40px" />
         </Link>
         <Link
           to={`/books/${entry.id}`}
-          className="min-w-0 truncate text-sm font-medium text-ink-200 hover:text-white focus-visible:focus-ring"
+          className="min-w-0 truncate text-sm font-medium text-ink-200 hover:text-ink-max focus-visible:focus-ring"
         >
           {entry.book.title}
         </Link>
@@ -208,17 +215,17 @@ function AchievementEntryLink({ achievement }: { achievement: AchievementStatus 
   }
 
   return (
-    <div className="mt-3 flex items-center gap-3 border-t border-white/[0.06] pt-3">
+    <div className="mt-3 flex items-center gap-3 border-t border-edge pt-3">
       <Link
         to={`/game/${entry.id}`}
-        className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
+        className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-art transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
         aria-label={entry.game.name}
       >
         <GameCover game={entry.game} sizes="40px" />
       </Link>
       <Link
         to={`/game/${entry.id}`}
-        className="min-w-0 truncate text-sm font-medium text-ink-200 hover:text-white focus-visible:focus-ring"
+        className="min-w-0 truncate text-sm font-medium text-ink-200 hover:text-ink-max focus-visible:focus-ring"
       >
         {entry.game.name}
       </Link>
@@ -233,9 +240,11 @@ function AchievementCard({ achievement }: { achievement: AchievementStatus }) {
     <Panel className={`animate-fade-rise p-4 ${unlockedAt ? "" : "opacity-60"}`}>
       <div className="flex items-start justify-between gap-3">
         <div
+          style={unlockedAt ? tierStyle(achievement.tier) : undefined}
           className={cn(
-            "flex size-10 items-center justify-center rounded-xl ring-1",
-            unlockedAt ? TIER_CHIP[achievement.tier] : "bg-ink-850 text-ink-600 ring-white/[0.06]",
+            "flex size-10 items-center justify-center rounded-xl",
+            // tone-chip draws its own inset ring; the locked tile needs one.
+            unlockedAt ? "tone-chip" : "bg-ink-850 text-ink-600 ring-1 ring-inset ring-edge",
           )}
         >
           <Gi name={achievementIcon(achievement.icon)} className="size-5" />

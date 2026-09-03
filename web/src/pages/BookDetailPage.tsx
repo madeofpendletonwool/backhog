@@ -98,11 +98,11 @@ export function BookDetailPage() {
 
           <div className="flex flex-col gap-6 sm:flex-row sm:items-end">
             <div className="w-32 shrink-0 sm:w-40">
-              <BookCover book={book} className="shadow-2xl ring-1 ring-white/10" />
+              <BookCover book={book} className="shadow-2xl ring-1 ring-edge-strong" />
             </div>
 
             <div className="min-w-0 flex-1">
-              <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+              <h1 className="text-3xl font-semibold tracking-tight text-ink-max sm:text-4xl">
                 {book.title}
               </h1>
 
@@ -132,7 +132,7 @@ export function BookDetailPage() {
                   {(book.subjects ?? []).slice(0, 6).map((subject) => (
                     <span
                       key={subject}
-                      className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs text-ink-300"
+                      className="rounded-full bg-fill-active px-2.5 py-1 text-xs text-ink-300"
                     >
                       {subject}
                     </span>
@@ -182,7 +182,7 @@ export function BookDetailPage() {
               }}
               rows={4}
               placeholder="Where you left off, what it reminded you of, who you'd lend it to…"
-              className="w-full resize-y rounded-xl border border-white/[0.07] bg-ink-850 p-3 text-sm text-ink-100 placeholder:text-ink-600 focus:border-brand-500/50 focus-visible:focus-ring"
+              className="w-full resize-y rounded-xl border border-edge bg-ink-850 p-3 text-sm text-ink-100 placeholder:text-ink-600 focus:border-brand-500/50 focus-visible:focus-ring"
             />
           </Panel>
         </div>
@@ -669,7 +669,7 @@ function PillRow({ label, items }: { label: string; items: string[] }) {
       <dt className="shrink-0 text-xs font-medium text-ink-500 sm:w-28">{label}</dt>
       <dd className="flex flex-wrap gap-1.5">
         {items.map((item) => (
-          <span key={item} className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs text-ink-300">
+          <span key={item} className="rounded-full bg-fill-active px-2.5 py-1 text-xs text-ink-300">
             {item}
           </span>
         ))}

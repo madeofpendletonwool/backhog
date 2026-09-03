@@ -104,19 +104,30 @@ def _rgb(hue, lightness, sat):
 
 
 def solve_lightness(hue, sat, bg, target):
-    """The lightest-to-darkest HLS lightness hitting `target` contrast on `bg`.
+    """The ink closest to `bg` that still hits `target` contrast against it.
 
-    Contrast rises monotonically with lightness once we are above the
-    background, so a bisection is exact. If the hue cannot get there even
-    at full lightness (a deeply saturated hue has a luminance ceiling), the
-    saturation is walked down until it can — a slightly paler tint beats an
-    illegible one.
+    Contrast changes monotonically with lightness on either side of the
+    background, so a bisection is exact — but which way it runs depends on
+    which side the ink is on. Against a dark ground the ink is lighter than
+    the background and contrast rises with lightness; against a light one it
+    is darker and contrast rises as lightness falls. `lit` is the extreme the
+    search pushes toward (white or black) and `near` is the end that fails,
+    so the same loop serves both.
+
+    If the hue cannot reach the target even at the extreme (a deeply
+    saturated hue has a luminance ceiling), the saturation is walked down
+    until it can — a slightly paler tint beats an illegible one.
     """
+    # Mid-grey in luminance terms, not in lightness: a light ground is one
+    # that white cannot make enough contrast against.
+    on_light = luminance(bg) > 0.18
+
     while sat >= 0:
-        lo, hi = 0.0, 1.0
-        if contrast(_rgb(hue, hi, sat), bg) < target:
+        near, lit = (1.0, 0.0) if on_light else (0.0, 1.0)
+        if contrast(_rgb(hue, lit, sat), bg) < target:
             sat = round(sat - 0.02, 2)
             continue
+        lo, hi = near, lit
         for _ in range(40):
             mid = (lo + hi) / 2
             if contrast(_rgb(hue, mid, sat), bg) < target:
@@ -124,7 +135,9 @@ def solve_lightness(hue, sat, bg, target):
             else:
                 hi = mid
         return _rgb(hue, hi, sat)
-    return (255, 255, 255)
+    # Unreachable at any saturation: fall back to the extreme we were pushing
+    # toward, which is the most contrast this ground can carry.
+    return (0, 0, 0) if on_light else (255, 255, 255)
 
 # Bare console plastic: a cool, almost-neutral grey for when no backdrop
 # is picked. The themes are the same ladder wearing a scene's colours.

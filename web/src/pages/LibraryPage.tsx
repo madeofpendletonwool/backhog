@@ -116,7 +116,7 @@ export function LibraryPage() {
             <Gi name="sliders" className="size-4" />
           </Button>
 
-          <div className="flex rounded-xl border border-white/[0.07] bg-ink-850 p-0.5">
+          <div className="flex rounded-xl border border-edge bg-ink-850 p-0.5">
             <ViewToggle active={view === "grid"} onClick={() => setView("grid")} label="Grid view">
               <Gi name="layout-grid" className="size-4" />
             </ViewToggle>
@@ -237,8 +237,8 @@ function StatusTab({
       className={cn(
         "rounded-xl px-3.5 py-2 text-sm font-medium transition-colors focus-visible:focus-ring",
         active
-          ? "bg-white/[0.09] text-ink-100"
-          : "text-ink-400 hover:bg-white/[0.05] hover:text-ink-200",
+          ? "bg-fill-active text-ink-100"
+          : "text-ink-400 hover:bg-fill-hover hover:text-ink-200",
       )}
     >
       {children}
@@ -264,7 +264,7 @@ function ViewToggle({
       aria-pressed={active}
       className={cn(
         "rounded-[0.6rem] p-2 transition-colors focus-visible:focus-ring",
-        active ? "bg-white/[0.09] text-ink-100" : "text-ink-500 hover:text-ink-300",
+        active ? "bg-fill-active text-ink-100" : "text-ink-500 hover:text-ink-300",
       )}
     >
       {children}

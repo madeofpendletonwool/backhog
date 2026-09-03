@@ -64,9 +64,11 @@ const (
 	alternativeGap = 0.05
 
 	// maxVerified is how many distinct candidate locations are confirmed
-	// with edit distance. Votes concentrate hard on the true location, so
-	// five is generous.
-	maxVerified = 5
+	// with edit distance. OCR that drops or doubles a line shifts every
+	// shingle after it onto a start a whole line away, so one true
+	// location can occupy several candidate slots; ten leaves room for a
+	// genuine repeat sitting behind them.
+	maxVerified = 10
 
 	// cacheCapacity is how many books' indexes the LRU holds. Each index
 	// costs a few times the text's size; eight books covers a scanning
@@ -224,13 +226,45 @@ func (m *Matcher) Find(ctx context.Context, textID, query string) (Result, error
 		return x.start < y.start
 	})
 
+	// Verified candidates are sorted by ratio, so the best-scoring window
+	// wins even when it is not the best-voted one: where OCR shifted the
+	// votes, the shift that lines the query up best is the true start.
+	//
+	// A runner-up whose window overlaps one already reported is that same
+	// paragraph seen through a different shift, not a second occurrence.
+	// Only a window that clears the ones before it is somewhere else in
+	// the book, which is the only thing worth asking the reader about.
 	out := Result{Match: idx.matchAt(verified[0].start, len(qTokens), verified[0].ratio)}
+	reported := []int{verified[0].start}
 	for _, v := range verified[1:] {
-		if verified[0].ratio-v.ratio <= alternativeGap {
-			out.Alternatives = append(out.Alternatives, idx.matchAt(v.start, len(qTokens), v.ratio))
+		// Sorted by ratio, so the first candidate outside the gap ends it.
+		if verified[0].ratio-v.ratio > alternativeGap {
+			break
 		}
+		if overlapsAny(v.start, reported, len(qTokens)) {
+			continue
+		}
+		reported = append(reported, v.start)
+		out.Alternatives = append(out.Alternatives, idx.matchAt(v.start, len(qTokens), v.ratio))
 	}
 	return out, nil
+}
+
+// overlapsAny reports whether an n-token window at start shares any token
+// with a window already reported. Two occurrences of the same passage sit
+// at least n tokens apart — back to back in the worst case — so anything
+// closer than that is one location, however its votes landed.
+func overlapsAny(start int, reported []int, n int) bool {
+	for _, r := range reported {
+		d := start - r
+		if d < 0 {
+			d = -d
+		}
+		if d < n {
+			return true
+		}
+	}
+	return false
 }
 
 // index is one book's shingle index. Offsets are byte offsets into the

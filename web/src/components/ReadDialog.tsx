@@ -173,7 +173,7 @@ function ReadCard({
   opening: boolean;
 }) {
   return (
-    <div className="flex flex-col rounded-xl border border-white/[0.06] bg-ink-850/50 p-3">
+    <div className="flex flex-col rounded-xl border border-edge bg-ink-850/50 p-3">
       <div className="flex items-baseline gap-1.5">
         <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-300">
           <span className="text-brand-400">{icon}</span>
@@ -190,7 +190,7 @@ function ReadCard({
             style={{ background: "var(--accent)" }}
             aria-hidden="true"
           />
-          <div className="animate-fade-rise flex gap-3 rounded-xl bg-ink-900/80 p-2.5 ring-1 ring-white/[0.06]">
+          <div className="animate-fade-rise flex gap-3 rounded-xl bg-ink-900/80 p-2.5 ring-1 ring-edge">
             <BookCover book={pick.entry.book} className="w-14 shrink-0" sizes="80px" />
             <div className="flex min-w-0 flex-1 flex-col">
               <p className="truncate text-sm font-semibold leading-snug text-ink-100">
@@ -227,7 +227,7 @@ function ReadCard({
           </div>
         </div>
       ) : (
-        <div className="mt-2.5 flex flex-1 items-center justify-center rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-xs text-ink-600">
+        <div className="mt-2.5 flex flex-1 items-center justify-center rounded-xl border border-dashed border-edge-strong px-4 py-6 text-center text-xs text-ink-600">
           Nothing to suggest here.
         </div>
       )}
@@ -237,7 +237,7 @@ function ReadCard({
 
 function ReadCardSkeleton() {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-ink-850/50 p-3">
+    <div className="rounded-xl border border-edge bg-ink-850/50 p-3">
       <div className="skeleton h-3.5 w-24 rounded" />
       <div className="skeleton mt-2.5 h-24 rounded-xl" />
     </div>

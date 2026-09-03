@@ -157,7 +157,7 @@ function ReadingBreakdown({ debt }: { debt: ReadingDebt }) {
     <Panel className="overflow-hidden">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-white/[0.06] text-left text-xs font-medium text-ink-400">
+          <tr className="border-b border-edge text-left text-xs font-medium text-ink-400">
             <th className="px-4 py-3 font-medium">Where it sits</th>
             <th className="hidden px-4 py-3 font-medium sm:table-cell">What counts</th>
             <th className="px-4 py-3 text-right font-medium">Amount</th>
@@ -165,7 +165,7 @@ function ReadingBreakdown({ debt }: { debt: ReadingDebt }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.label} className="border-b border-white/[0.04] last:border-0">
+            <tr key={row.label} className="border-b border-edge-soft last:border-0">
               <td className="px-4 py-2.5 font-medium text-ink-200">{row.label}</td>
               <td className="hidden px-4 py-2.5 text-xs text-ink-500 sm:table-cell">{row.hint}</td>
               <td className="px-4 py-2.5 text-right tabular-nums text-ink-300">{row.value}</td>
@@ -200,7 +200,7 @@ function ReadingPacePanel({ debt }: { debt: ReadingDebt }) {
         </p>
       )}
 
-      <div className="mt-1 divide-y divide-white/[0.04]">
+      <div className="mt-1 divide-y divide-edge-soft">
         {scenarios.map((scenario) => (
           <ScenarioRow key={scenario.hours_per_week} scenario={scenario} label="If you read" />
         ))}
@@ -248,7 +248,7 @@ function BreakdownTable({ debt }: { debt: DebtReport }) {
     <Panel className="overflow-hidden">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-white/[0.06] text-left text-xs font-medium text-ink-400">
+          <tr className="border-b border-edge text-left text-xs font-medium text-ink-400">
             <th className="px-4 py-3 font-medium">Where it sits</th>
             <th className="hidden px-4 py-3 font-medium sm:table-cell">What counts</th>
             <th className="px-4 py-3 text-right font-medium">Hours</th>
@@ -256,7 +256,7 @@ function BreakdownTable({ debt }: { debt: DebtReport }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.label} className="border-b border-white/[0.04] last:border-0">
+            <tr key={row.label} className="border-b border-edge-soft last:border-0">
               <td className="px-4 py-2.5 font-medium text-ink-200">{row.label}</td>
               <td className="hidden px-4 py-2.5 text-xs text-ink-500 sm:table-cell">{row.hint}</td>
               <td className="px-4 py-2.5 text-right tabular-nums text-ink-300">
@@ -293,7 +293,7 @@ function PacePanel({ debt }: { debt: DebtReport }) {
         </p>
       )}
 
-      <div className="mt-1 divide-y divide-white/[0.04]">
+      <div className="mt-1 divide-y divide-edge-soft">
         {scenarios.map((scenario) => (
           <ScenarioRow key={scenario.hours_per_week} scenario={scenario} label="If you play" />
         ))}

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { useTheme } from "@/hooks/useTheme";
+import { useTheme, type ThemeFamily } from "@/hooks/useTheme";
 
 /**
  * The room the app sits in — whichever room the theme picked.
@@ -12,10 +12,22 @@ import { useTheme } from "@/hooks/useTheme";
  * back and appended in reverse so 0 paints on top — stacking them the
  * other way buries the scene under its own sky.
  *
- * Midnight has no backdrop art. It gets a single soft aurora instead, so
- * flat black never reads as dead space, and none of the parallax
- * machinery below ever runs.
+ * The other families have no backdrop art. They get a single decorative
+ * child instead, so a flat ground never reads as dead space, and none of the
+ * parallax machinery below ever runs.
  */
+
+/**
+ * The one child a family without backdrop art renders, or null for the family
+ * that has some. A map rather than `family === "flat" ? … : …`: with a ternary,
+ * every family added later silently falls into the parallax branch and starts
+ * requesting scene PNGs that were never drawn for it.
+ */
+const SCENE_CHILD: Record<ThemeFamily, string | null> = {
+  flat: "scene-aurora",
+  library: "scene-room",
+  pixel: null,
+};
 
 /** How far the nearest layer travels, corner to corner, in px. */
 const DRIFT = 52;
@@ -32,10 +44,11 @@ export function Scene() {
     const root = rootRef.current;
     if (!root) return;
 
-    if (family === "flat") {
-      const aurora = document.createElement("div");
-      aurora.className = "scene-aurora";
-      root.replaceChildren(aurora);
+    const child = SCENE_CHILD[family];
+    if (child) {
+      const el = document.createElement("div");
+      el.className = child;
+      root.replaceChildren(el);
       root.style.removeProperty("--scene-scale");
       return;
     }

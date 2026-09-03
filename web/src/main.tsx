@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
 import { Scene } from "./components/Scene";
+import { ArenaProvider } from "./hooks/useArena";
 import { AuthProvider } from "./hooks/useAuth";
 import { ThemeProvider } from "./hooks/useTheme";
 import { ApiError } from "./lib/api";
@@ -25,14 +26,19 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <BrowserRouter>
-          <AuthProvider>
-            <Scene />
-            <App />
-          </AuthProvider>
-        </BrowserRouter>
-      </ThemeProvider>
+      {/* The theme follows the arena, and the arena follows the URL, so both
+          providers have to sit inside the router. Nothing above ThemeProvider
+          consumes the theme, so it loses nothing by moving down here. */}
+      <BrowserRouter>
+        <ArenaProvider>
+          <ThemeProvider>
+            <AuthProvider>
+              <Scene />
+              <App />
+            </AuthProvider>
+          </ThemeProvider>
+        </ArenaProvider>
+      </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
 );

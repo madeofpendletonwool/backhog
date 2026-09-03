@@ -106,7 +106,7 @@ function ProjectCard({ project }: { project: Project }) {
   return (
     <Link
       to={`/projects/${project.id}`}
-      className="panel group flex flex-col p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.14] focus-visible:focus-ring"
+      className="panel group flex flex-col p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-edge-strong focus-visible:focus-ring"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -120,7 +120,7 @@ function ProjectCard({ project }: { project: Project }) {
             </p>
           )}
         </div>
-        <span className="shrink-0 rounded-lg bg-white/[0.06] px-2 py-1 text-[11px] font-medium text-ink-400">
+        <span className="shrink-0 rounded-lg bg-fill-hover px-2 py-1 text-[11px] font-medium text-ink-400">
           {PROJECT_KIND_LABELS[project.kind]}
         </span>
       </div>

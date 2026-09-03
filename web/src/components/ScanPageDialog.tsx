@@ -243,7 +243,7 @@ function ModeTab({
       onClick={() => onPick(mode)}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors focus-visible:focus-ring",
-        active ? "bg-white/10 text-ink-100" : "text-ink-400 hover:text-ink-200",
+        active ? "bg-fill-active text-ink-100" : "text-ink-400 hover:text-ink-200",
       )}
     >
       <Gi name={icon} className="size-3.5" />
@@ -338,7 +338,7 @@ function CameraCapture({
 function PhotoPicker({ onPick }: { onPick: (source: Blob) => void }) {
   return (
     <div className="mt-4">
-      <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-white/15 px-4 py-10 text-center transition-colors hover:border-white/30">
+      <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-edge-strong px-4 py-10 text-center transition-colors hover:border-outline-strong">
         <Gi name="camera" className="size-6 text-ink-500" />
         <span className="text-sm text-ink-200">Choose a photo of a page</span>
         <span className="text-xs text-ink-500">A phone photo or a scan, straight on and in focus.</span>
@@ -377,7 +377,7 @@ function TypeAPassage({
         rows={4}
         autoFocus
         placeholder="Type it exactly as printed — a couple of lines is plenty."
-        className="mt-1.5 w-full resize-y rounded-xl border border-white/[0.07] bg-ink-850 p-3 text-sm text-ink-100 placeholder:text-ink-600 focus:border-brand-500/50 focus-visible:focus-ring"
+        className="mt-1.5 w-full resize-y rounded-xl border border-edge bg-ink-850 p-3 text-sm text-ink-100 placeholder:text-ink-600 focus:border-brand-500/50 focus-visible:focus-ring"
       />
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-xs text-ink-500">
@@ -451,7 +451,7 @@ function MatchReview({
         Found this in the book
       </p>
       {/* The one thing that makes the whole feature usable. */}
-      <blockquote className="mt-2 rounded-xl border border-white/[0.07] bg-ink-850 p-3 text-sm leading-relaxed">
+      <blockquote className="mt-2 rounded-xl border border-edge bg-ink-850 p-3 text-sm leading-relaxed">
         <span className="text-ink-600">…{result.context.before}</span>
         <mark className="bg-brand-500/25 text-ink-100">{result.context.passage}</mark>
         <span className="text-ink-600">{result.context.after}…</span>

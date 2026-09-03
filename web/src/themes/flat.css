@@ -59,10 +59,12 @@ html[data-family="flat"] {
   --selection-bg: var(--color-brand-600);
   --selection-fg: #ffffff;
 
-  /* The two hairlines every surface is drawn with. */
-  --edge: rgba(255, 255, 255, 0.06);
-  --edge-strong: rgba(255, 255, 255, 0.12);
-  /* A slimmer bar than the arcade's chunky 16px track. */
+  /* --edge, --edge-strong, --fill-* and the cover-art rings come from :root
+     in index.css: they are the same white alphas Midnight was always drawn
+     with, and every theme on a dark ground wants them. Only a light family
+     redefines them.
+
+     A slimmer bar than the arcade's chunky 16px track. */
   --bar-h: 0.375rem;
 }
 

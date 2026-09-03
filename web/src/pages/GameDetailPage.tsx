@@ -91,11 +91,11 @@ export function GameDetailPage() {
 
           <div className="flex flex-col gap-6 sm:flex-row sm:items-end">
             <div className="w-36 shrink-0 sm:w-44">
-              <GameCover game={game} className="shadow-2xl ring-1 ring-white/10" />
+              <GameCover game={game} className="shadow-2xl ring-1 ring-edge-strong" />
             </div>
 
             <div className="min-w-0 flex-1">
-              <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+              <h1 className="text-3xl font-semibold tracking-tight text-ink-max sm:text-4xl">
                 {game.name}
               </h1>
 
@@ -143,7 +143,7 @@ export function GameDetailPage() {
                   {game.genres.map((genre) => (
                     <span
                       key={genre.id}
-                      className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs text-ink-300"
+                      className="rounded-full bg-fill-active px-2.5 py-1 text-xs text-ink-300"
                     >
                       {genre.name}
                     </span>
@@ -168,7 +168,7 @@ export function GameDetailPage() {
               <h2 className="mb-2.5 text-sm font-semibold text-ink-200">About</h2>
               {game.summary && <p className="text-sm leading-relaxed text-ink-400">{game.summary}</p>}
               {extras?.storyline && extras.storyline !== game.summary && (
-                <p className="mt-3 border-t border-white/[0.06] pt-3 text-sm leading-relaxed text-ink-400">
+                <p className="mt-3 border-t border-edge pt-3 text-sm leading-relaxed text-ink-400">
                   {extras.storyline}
                 </p>
               )}
@@ -187,7 +187,7 @@ export function GameDetailPage() {
                     href={screenshotUrl(id)}
                     target="_blank"
                     rel="noreferrer"
-                    className="group overflow-hidden rounded-lg ring-1 ring-white/[0.07] focus-visible:focus-ring"
+                    className="group overflow-hidden rounded-lg ring-1 ring-edge focus-visible:focus-ring"
                   >
                     <img
                       src={screenshotThumbUrl(id)}
@@ -211,7 +211,7 @@ export function GameDetailPage() {
                     href={`https://www.youtube.com/watch?v=${video.video_id}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-white/[0.05] hover:text-ink-100 focus-visible:focus-ring"
+                    className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-fill-hover hover:text-ink-100 focus-visible:focus-ring"
                   >
                     <Gi name="film" className="size-4 shrink-0 text-ink-500" />
                     <span className="min-w-0 flex-1 truncate">{video.name}</span>
@@ -249,7 +249,7 @@ export function GameDetailPage() {
               }}
               rows={4}
               placeholder="Where you left off, why you bounced off it, what to do next…"
-              className="w-full resize-y rounded-xl border border-white/[0.07] bg-ink-850 p-3 text-sm text-ink-100 placeholder:text-ink-600 focus:border-brand-500/50 focus-visible:focus-ring"
+              className="w-full resize-y rounded-xl border border-edge bg-ink-850 p-3 text-sm text-ink-100 placeholder:text-ink-600 focus:border-brand-500/50 focus-visible:focus-ring"
             />
           </Panel>
         </div>
@@ -317,7 +317,7 @@ export function GameDetailPage() {
                     href={site.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-white/[0.05] hover:text-ink-100 focus-visible:focus-ring"
+                    className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-fill-hover hover:text-ink-100 focus-visible:focus-ring"
                   >
                     <span className="min-w-0 flex-1 truncate">{websiteLabel(site.url)}</span>
                     <Gi name="external-link" className="size-3.5 shrink-0 text-ink-600" />
@@ -430,7 +430,7 @@ function PillRow({ label, items }: { label: string; items: string[] }) {
         {items.map((item) => (
           <span
             key={item}
-            className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs text-ink-300"
+            className="rounded-full bg-fill-active px-2.5 py-1 text-xs text-ink-300"
           >
             {item}
           </span>
@@ -457,10 +457,10 @@ function RelatedGames({ title, games }: { title: string; games: RelatedGame[] })
                 src={relatedCoverUrl(related.cover_image_id)}
                 alt=""
                 loading="lazy"
-                className="aspect-[3/4] w-full rounded-lg object-cover ring-1 ring-white/[0.07]"
+                className="aspect-[3/4] w-full rounded-lg object-cover ring-1 ring-edge"
               />
             ) : (
-              <div className="flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-ink-800 ring-1 ring-white/[0.07]">
+              <div className="flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-ink-800 ring-1 ring-edge">
                 <Gi name="gamepad" className="size-6 text-ink-500" />
               </div>
             )}

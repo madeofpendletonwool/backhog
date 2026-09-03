@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { AchievementToasts } from "./AchievementToasts";
 import { AddBookDialog } from "./AddBookDialog";
@@ -12,24 +12,43 @@ import { ReadDialog } from "./ReadDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
 import { Button, Gi } from "./ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
+import { useArena } from "@/hooks/useArena";
 import { useEggUnlock } from "@/hooks/useAchievements";
 import { useBookStats } from "@/hooks/useBooks";
 import { AudioPlayerProvider } from "@/hooks/useAudioPlayer";
-import { useTheme } from "@/hooks/useTheme";
+import { useTheme, type ThemeFamily } from "@/hooks/useTheme";
 import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
-import { usePersistentState } from "@/hooks/usePersistentState";
+import type { Arena } from "@/lib/arena";
 import type { GiName } from "@/lib/gameicons";
 
-/**
- * Backhog has two arenas. They share a database, a queue, lists and projects,
- * and every piece of chrome on this page — what a mode swap changes is the
- * nav set, the route prefix and the verb on the primary button. Games keep the
- * URLs they have always had; books live under /books.
- */
-type Arena = "games" | "books";
-
 type NavItem = { to: string; label: string; icon: GiName; end: boolean };
+
+/* The three places the sidebar has to know which family it is in. Records
+   rather than ternaries: with two branches a third family lands in whichever
+   one happens to be the `else`, and for the kbd hint that is not cosmetic —
+   it decides whether the label is readable on the button under it. */
+
+const wordmarkClass: Record<ThemeFamily, string> = {
+  pixel: "font-display text-[13px] font-bold uppercase tracking-widest",
+  flat: "text-[15px] font-semibold tracking-tight",
+  library: "font-display text-[17px] tracking-tight",
+};
+
+const sublineClass: Record<ThemeFamily, string> = {
+  pixel: "font-display text-[9px] uppercase tracking-wider",
+  flat: "text-[11px]",
+  library: "font-display text-[12px] italic",
+};
+
+/* The shortcut hint sits *on* the primary button, so it has to read against
+   whatever that button is: dark ink on the arcade's gold and the library's
+   ember, light ink on Midnight's violet. */
+const kbdClass: Record<ThemeFamily, string> = {
+  pixel: "rounded-[2px] bg-black/20 text-black/60",
+  flat: "rounded border border-white/20 text-white/70",
+  library: "rounded-xs bg-black/15 text-black/55",
+};
 
 const gameNav: NavItem[] = [
   { to: "/", label: "Dashboard", icon: "gauge", end: true },
@@ -54,23 +73,6 @@ const bookNav: NavItem[] = [
   { to: "/projects", label: "Projects", icon: "target", end: false },
 ];
 
-const arenaHome: Record<Arena, string> = { games: "/", books: "/books" };
-
-/**
- * Which arena a URL belongs to, or null when the page is shared and the
- * answer is "whichever one you came from". Deep links have to win over the
- * remembered mode: a bookmarked /books/{id} must not open wearing the games
- * nav just because the last session ended on a game.
- */
-function arenaForLocation(pathname: string, search: string): Arena | null {
-  if (pathname === "/books" || pathname.startsWith("/books/")) return "books";
-  if (new URLSearchParams(search).get("media") === "book") return "books";
-  if (pathname === "/" || pathname === "/library" || pathname === "/debt") return "games";
-  if (pathname.startsWith("/game/") || pathname.startsWith("/series")) return "games";
-  if (pathname === "/achievements") return "games";
-  return null;
-}
-
 export function Layout() {
   const [addOpen, setAddOpen] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
@@ -78,30 +80,15 @@ export function Layout() {
   const [importOpen, setImportOpen] = useState(false);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const { pathname, search } = useLocation();
   const { data: listData } = useLists();
   const { family } = useTheme();
+  const { arena, switchArena } = useArena();
   const fireEgg = useEggUnlock();
-
-  // The remembered mode, so a reload lands where you left off; the URL
-  // overrides it whenever the URL is unambiguous.
-  const [savedArena, setSavedArena] = usePersistentState<Arena>("backhog:arena", "games");
-  const routeArena = arenaForLocation(pathname, search);
-  const arena: Arena = routeArena ?? savedArena;
-
-  useEffect(() => {
-    if (routeArena && routeArena !== savedArena) setSavedArena(routeArena);
-  }, [routeArena, savedArena, setSavedArena]);
 
   const { data: stats } = useStats();
   const { data: bookStats } = useBookStats(arena === "books");
 
   const navItems = arena === "books" ? bookNav : gameNav;
-
-  const switchArena = (next: Arena) => {
-    setSavedArena(next);
-    navigate(arenaHome[next]);
-  };
 
   /* The hog is the mark in Midnight, the joystick in the arcade — the
      one place a component gets to know which family it is in, because a
@@ -154,24 +141,8 @@ export function Layout() {
         >
           {mark("lg")}
           <div>
-            <p
-              className={cn(
-                "text-ink-100",
-                family === "pixel"
-                  ? "font-display text-[13px] font-bold uppercase tracking-widest"
-                  : "text-[15px] font-semibold tracking-tight",
-              )}
-            >
-              Backhog
-            </p>
-            <p
-              className={cn(
-                "mt-1 text-ink-400",
-                family === "pixel"
-                  ? "font-display text-[9px] uppercase tracking-wider"
-                  : "text-[11px]",
-              )}
-            >
+            <p className={cn("text-ink-100", wordmarkClass[family])}>Backhog</p>
+            <p className={cn("mt-1 text-ink-400", sublineClass[family])}>
               {arena === "books"
                 ? bookStats
                   ? `${bookStats.backlog} left to read`
@@ -188,15 +159,10 @@ export function Layout() {
         <Button variant="primary" className="mb-4 w-full" onClick={() => setAddOpen(true)}>
           <Gi name="plus" className="size-3.5" />
           {arena === "books" ? "Add book" : "Add game"}
-          {/* The shortcut hint sits *on* the primary button, so it has to
-              read against whatever that button is: dark ink on arcade
-              gold, light ink on Midnight's violet. */}
           <kbd
             className={cn(
               "ml-auto px-1.5 py-0.5 font-sans text-[10px] font-normal normal-case tracking-normal",
-              family === "pixel"
-                ? "rounded-[2px] bg-black/20 text-black/60"
-                : "rounded border border-white/20 text-white/70",
+              kbdClass[family],
             )}
           >
             ⌘K
@@ -345,7 +311,7 @@ function ArenaSwitch({
       role="group"
       aria-label="Arena"
       className={cn(
-        "flex shrink-0 rounded-xl border border-white/[0.07] bg-ink-850 p-0.5",
+        "flex shrink-0 rounded-xl border border-edge bg-ink-850 p-0.5",
         className,
       )}
     >
@@ -360,7 +326,7 @@ function ArenaSwitch({
           className={cn(
             "flex items-center justify-center gap-1.5 rounded-[0.6rem] transition-colors focus-visible:focus-ring",
             compact ? "p-2" : "flex-1 px-2 py-1.5 text-xs font-medium",
-            arena === value ? "bg-white/[0.09] text-ink-100" : "text-ink-500 hover:text-ink-300",
+            arena === value ? "bg-fill-active text-ink-100" : "text-ink-500 hover:text-ink-300",
           )}
         >
           <Gi name={icon} className="size-4" />

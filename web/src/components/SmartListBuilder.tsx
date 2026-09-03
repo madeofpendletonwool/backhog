@@ -79,7 +79,7 @@ export function SmartListBuilder({
       </div>
 
       {value.rules.length === 0 && (
-        <p className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-xs text-ink-500">
+        <p className="rounded-xl border border-dashed border-edge-strong px-4 py-6 text-center text-xs text-ink-500">
           No conditions yet — this list would match every game in your library.
         </p>
       )}
@@ -92,7 +92,7 @@ export function SmartListBuilder({
           return (
             <div
               key={index}
-              className="flex flex-wrap items-center gap-2 rounded-xl border border-white/[0.06] bg-ink-850/60 p-2"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-edge bg-ink-850/60 p-2"
             >
               <Select
                 value={rule.field}
@@ -128,7 +128,7 @@ export function SmartListBuilder({
               <button
                 onClick={() => removeRule(index)}
                 aria-label="Remove condition"
-                className="rounded-lg p-1.5 text-ink-600 transition-colors hover:bg-white/[0.06] hover:text-red-400 focus-visible:focus-ring"
+                className="rounded-lg p-1.5 text-ink-600 transition-colors hover:bg-fill-hover hover:text-red-400 focus-visible:focus-ring"
               >
                 <Gi name="x" className="size-4" />
               </button>
@@ -156,7 +156,7 @@ export function SmartListBuilder({
         </Button>
       </div>
 
-      <div className="flex items-center gap-2 border-t border-white/[0.06] pt-3 text-xs text-ink-400">
+      <div className="flex items-center gap-2 border-t border-edge pt-3 text-xs text-ink-400">
         <Gi name="sparkles" className="size-3.5 shrink-0 text-hl-bright" />
         <span>Sort by</span>
         <Select

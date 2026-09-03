@@ -86,7 +86,7 @@ function Section({
           <Link
             key={list.id}
             to={`/lists/${list.id}`}
-            className="panel group p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.14] focus-visible:focus-ring"
+            className="panel group p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-edge-strong focus-visible:focus-ring"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -102,7 +102,7 @@ function Section({
                   </p>
                 )}
               </div>
-              <span className="shrink-0 rounded-lg bg-white/[0.06] px-2 py-1 text-xs font-medium tabular-nums text-ink-300">
+              <span className="shrink-0 rounded-lg bg-fill-hover px-2 py-1 text-xs font-medium tabular-nums text-ink-300">
                 {list.count}
               </span>
             </div>

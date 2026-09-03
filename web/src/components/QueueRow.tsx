@@ -162,7 +162,7 @@ function MoveButton({
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className="rounded-md p-1 text-ink-500 transition-colors hover:bg-white/[0.06] hover:text-ink-200 focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-25"
+      className="rounded-md p-1 text-ink-500 transition-colors hover:bg-fill-hover hover:text-ink-200 focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-25"
     >
       {children}
     </button>

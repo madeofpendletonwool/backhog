@@ -74,7 +74,7 @@ export function AddGameDialog({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <Dialog open={open} onClose={onClose} bare label="Add a game" className="max-w-2xl">
       <div className="panel overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-white/[0.06] px-4">
+        <div className="flex items-center gap-3 border-b border-edge px-4">
           <Gi name="search" className="size-4 shrink-0 text-ink-500" />
           <input
             autoFocus
@@ -121,7 +121,7 @@ export function AddGameDialog({ open, onClose }: { open: boolean; onClose: () =>
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-white/[0.06] px-4 py-2.5 text-[11px] text-ink-500">
+        <div className="flex items-center justify-between border-t border-edge px-4 py-2.5 text-[11px] text-ink-500">
           <span>
             <Kbd>↑</Kbd> <Kbd>↓</Kbd> navigate · <Kbd>↵</Kbd> add · <Kbd>esc</Kbd> close
           </span>
@@ -163,7 +163,7 @@ function ResultRow({
         style={accentStyle(game)}
         className={cn(
           "flex w-full items-center gap-3 rounded-xl p-2 text-left transition-colors",
-          highlighted ? "bg-white/[0.07]" : "hover:bg-white/[0.04]",
+          highlighted ? "bg-fill-active" : "hover:bg-fill-hover",
           owned && "cursor-default",
         )}
       >
@@ -229,7 +229,7 @@ function Message({ title, body }: { title: string; body: string }) {
 
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="rounded border border-white/10 bg-ink-800 px-1.5 py-0.5 font-sans text-[10px] text-ink-400">
+    <kbd className="rounded border border-edge-strong bg-ink-800 px-1.5 py-0.5 font-sans text-[10px] text-ink-400">
       {children}
     </kbd>
   );

@@ -8,6 +8,7 @@ import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useAudioClock, useAudioPlayer } from "@/hooks/useAudioPlayer";
 import { useBook, useBookEntry } from "@/hooks/useBooks";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { useTheme, type Theme } from "@/hooks/useTheme";
 import { ApiError, api, beaconBookPosition, bookAssetUrl } from "@/lib/api";
 import {
   blockIndexAt,
@@ -81,6 +82,8 @@ const WRITE_EVERY_MS = 15_000;
 const ANCHOR_INSET = 8;
 
 type SurfaceName = "dark" | "sepia" | "light";
+/** Plus "auto", which takes whichever surface the app's own theme implies. */
+type SurfacePref = SurfaceName | "auto";
 type FaceName = "serif" | "sans";
 
 interface ReaderPrefs {
@@ -90,15 +93,20 @@ interface ReaderPrefs {
   /** Column width in rem — the measure, which is what margins really set. */
   measure: number;
   face: FaceName;
-  surface: SurfaceName;
+  surface: SurfacePref;
+  /** Bumped when a stored shape needs migrating; absent means version 1. */
+  v?: number;
 }
+
+const PREFS_VERSION = 2;
 
 const DEFAULT_PREFS: ReaderPrefs = {
   fontSize: 19,
   lineHeight: 1.65,
   measure: 36,
   face: "serif",
-  surface: "dark",
+  surface: "auto",
+  v: PREFS_VERSION,
 };
 
 /**
@@ -106,11 +114,17 @@ const DEFAULT_PREFS: ReaderPrefs = {
  *
  * These are the one place in the app that names colours instead of reaching
  * for an ink token, because the column is not a themed panel: it is paper,
- * and it has to stay the same paper in all six themes (the room is
- * themeable, what is in it is not). Every pairing clears invariant 8's
- * contrast floor with room to spare — measured against their own fill,
- * dark is ~14:1, sepia ~11:1 and light ~16:1 — so the floor is kept by the
- * same rule the ink ladder keeps it by, just solved once here.
+ * and it stays the same paper in every theme (the room is themeable, what is
+ * in it is not). Every pairing clears invariant 8's contrast floor with room
+ * to spare — measured against their own fill, dark is ~14:1, sepia ~11:1 and
+ * light ~16:1 — so the floor is kept by the same rule the ink ladder keeps
+ * it by, just solved once here.
+ *
+ * What the *theme* gets to decide is which of them you start on. Reading a
+ * cream column inside a near-black shell was the mismatch that motivated the
+ * light theme in the first place, so "auto" is the default and picks the
+ * paper that matches the room. An explicit choice still wins, and still
+ * follows you between themes.
  */
 const SURFACES: Record<SurfaceName, {
   label: string;
@@ -124,12 +138,45 @@ const SURFACES: Record<SurfaceName, {
   light: { label: "Day", bg: "#fbfbfd", fg: "#15161b", muted: "#5b5f6e", rule: "#e1e2e9" },
 };
 
+/** Which paper a theme implies when the reader is left on "auto". */
+const AUTO_SURFACE: Record<Theme, SurfaceName> = {
+  midnight: "dark",
+  arcade: "dark",
+  dusk: "dark",
+  cavern: "dark",
+  forest: "dark",
+  bare: "dark",
+  hearth: "sepia",
+  paper: "sepia",
+};
+
+function resolveSurface(pref: SurfacePref, theme: Theme): SurfaceName {
+  return pref === "auto" ? AUTO_SURFACE[theme] : pref;
+}
+
+/**
+ * Fold a stored prefs object forward.
+ *
+ * `usePersistentState` writes the whole object on mount and does not merge
+ * with the defaults, so everyone who has opened the reader once already has a
+ * literal `surface: "dark"` on disk — a new "auto" default would never reach
+ * them.
+ *
+ * Only "dark" is safe to move, because in version 1 it was also the default
+ * and the two are indistinguishable on disk. Someone sitting on "sepia" or
+ * "light" can only have got there by choosing it, so that choice is kept.
+ */
+function migratePrefs(prefs: ReaderPrefs): ReaderPrefs {
+  if ((prefs.v ?? 1) >= PREFS_VERSION) return prefs;
+  const surface = prefs.surface === "dark" ? "auto" : prefs.surface;
+  return { ...prefs, surface, v: PREFS_VERSION };
+}
+
 /** Reading faces. Silkscreen is not among them and never will be. */
 const FACES: Record<FaceName, { label: string; stack: string }> = {
   serif: {
     label: "Serif",
-    stack:
-      '"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif',
+    stack: "var(--f-serif)",
   },
   sans: {
     label: "Sans",
@@ -145,7 +192,9 @@ function Reader({ entry }: { entry: BookEntry }) {
   const { data: work } = useBook(entry.book.id);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [prefs, setPrefs] = usePersistentState<ReaderPrefs>("backhog:reader", DEFAULT_PREFS);
+  const [stored, setPrefs] = usePersistentState<ReaderPrefs>("backhog:reader", DEFAULT_PREFS);
+  const prefs = migratePrefs(stored);
+  const { theme } = useTheme();
   const [panel, setPanel] = useState<"none" | "contents" | "type">("none");
 
   // The player's handoff ("Continue reading" there) lands here as
@@ -531,7 +580,7 @@ function Reader({ entry }: { entry: BookEntry }) {
   if (text.isLoading) return <ReaderSkeleton />;
   if (text.error) return <ReaderProblem entry={entry} error={text.error} />;
 
-  const surface = SURFACES[prefs.surface];
+  const surface = SURFACES[resolveSurface(prefs.surface, theme)];
   const toc = readableChapters(chapters);
   const spineOrder = toc.findIndex((c) => c.spine_index === spine);
   const previous = spineOrder > 0 ? toc[spineOrder - 1] : null;
@@ -946,10 +995,13 @@ function TypeControls({
       <Choice
         label="Paper"
         surface={surface}
-        options={(Object.keys(SURFACES) as SurfaceName[]).map((name) => ({
-          value: name,
-          label: SURFACES[name].label,
-        }))}
+        options={[
+          { value: "auto" as const, label: "Auto" },
+          ...(Object.keys(SURFACES) as SurfaceName[]).map((name) => ({
+            value: name,
+            label: SURFACES[name].label,
+          })),
+        ]}
         value={prefs.surface}
         onChange={(value) => set("surface", value)}
       />

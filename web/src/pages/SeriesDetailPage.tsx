@@ -249,7 +249,7 @@ function MemberRow({ member, index, dimmed = false }: { member: SeriesMember; in
         <p className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium text-ink-100">{game.name}</span>
           {member.kind !== "game" && (
-            <span className="rounded-full bg-white/[0.07] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-400">
+            <span className="rounded-full bg-fill-active px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-400">
               {member.kind}
             </span>
           )}
@@ -292,7 +292,7 @@ function MemberRow({ member, index, dimmed = false }: { member: SeriesMember; in
       {owned && member.entry_id ? (
         <Link
           to={`/game/${member.entry_id}`}
-          className={cn(className, "rounded-2xl transition-colors hover:border-white/[0.12] focus-visible:focus-ring")}
+          className={cn(className, "rounded-2xl transition-colors hover:border-edge-strong focus-visible:focus-ring")}
         >
           {content}
         </Link>

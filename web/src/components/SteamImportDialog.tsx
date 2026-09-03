@@ -174,7 +174,7 @@ export function SteamImportDialog({ open, onClose }: { open: boolean; onClose: (
                 </button>
               </div>
 
-              <div className="mt-3 max-h-[45vh] overflow-y-auto rounded-xl border border-white/[0.06]">
+              <div className="mt-3 max-h-[45vh] overflow-y-auto rounded-xl border border-edge">
                 {matches.map((match) => (
                   <MatchRow
                     key={match.app_id}
@@ -248,8 +248,8 @@ function MatchRow({
     <label
       className={
         unmatched || match.in_library
-          ? "flex items-center gap-3 border-b border-white/[0.04] px-3 py-2 text-sm last:border-0 opacity-50"
-          : "flex cursor-pointer items-center gap-3 border-b border-white/[0.04] px-3 py-2 text-sm transition-colors last:border-0 hover:bg-white/[0.04]"
+          ? "flex items-center gap-3 border-b border-edge-soft px-3 py-2 text-sm last:border-0 opacity-50"
+          : "flex cursor-pointer items-center gap-3 border-b border-edge-soft px-3 py-2 text-sm transition-colors last:border-0 hover:bg-fill-hover"
       }
     >
       <input

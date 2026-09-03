@@ -152,7 +152,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
         )}
 
         {kind === "rule_goal" && (
-          <div className="rounded-xl border border-white/[0.06] bg-ink-900/50 p-3">
+          <div className="rounded-xl border border-edge bg-ink-900/50 p-3">
             <SmartListBuilder value={rules} onChange={setRules} />
           </div>
         )}
@@ -198,7 +198,7 @@ function KindOption({
         "rounded-xl border p-3 text-left transition-colors focus-visible:focus-ring",
         active
           ? "border-brand-500/50 bg-brand-500/10"
-          : "border-white/[0.07] bg-ink-850 hover:border-white/[0.14]",
+          : "border-edge bg-ink-850 hover:border-edge-strong",
       )}
     >
       <span className={cn("flex items-center gap-2 text-sm font-medium", active ? "text-brand-300" : "text-ink-200")}>

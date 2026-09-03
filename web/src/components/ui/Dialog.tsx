@@ -72,7 +72,7 @@ export function Dialog({ open, onClose, children, className, bare, label }: Dial
       aria-label={label}
     >
       <div
-        className="fixed inset-0 bg-ink-950/80 backdrop-blur-sm"
+        className="fixed inset-0 bg-scrim/80 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden="true"
       />

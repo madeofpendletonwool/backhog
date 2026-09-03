@@ -4,17 +4,30 @@ import { statusLabel, type MediaType, type Status } from "@/lib/types";
 import { Gi } from "./ui/Gi";
 import type { GiName } from "@/lib/gameicons";
 
-/* Status colour carries meaning — playing is cyan, played is green — and
-   stays constant across every theme, the same way grimoire's corpus accent
-   never re-tints. Only the chrome around it follows the backdrop. */
-const statusStyles: Record<Status, string> = {
-  backlog: "bg-slate-500/15 text-slate-300 ring-slate-400/25",
-  playing: "bg-cyan-500/15 text-cyan-300 ring-cyan-400/30",
-  played: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
-  dropped: "bg-red-500/15 text-red-300 ring-red-400/30",
-  ignored: "bg-zinc-500/15 text-zinc-300 ring-zinc-400/25",
-  wishlist: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
+/* Status colour carries meaning — playing is cyan, played is green — and the
+   hue stays constant across every theme, the same way grimoire's corpus
+   accent never re-tints. Only the chrome around it follows the backdrop.
+
+   The *lightness* cannot: this was a fixed dark-mode recipe — a 15% plate
+   under 300-shade text — until the app grew a light theme, where the 300
+   shade on a pale tint is about 1.5:1. So `tone-chip` gets the hue to wash
+   the plate from and the ink to use on a dark ground, and a light theme
+   pulls that ink toward its own near-black via --tone-darken. Dark themes
+   leave it at 0 and render exactly what they always did. */
+const STATUS_TONE: Record<Status, { tone: string; ink: string }> = {
+  backlog: { tone: "var(--color-slate-500)", ink: "var(--color-slate-300)" },
+  playing: { tone: "var(--color-cyan-500)", ink: "var(--color-cyan-300)" },
+  played: { tone: "var(--color-emerald-500)", ink: "var(--color-emerald-300)" },
+  dropped: { tone: "var(--color-red-500)", ink: "var(--color-red-300)" },
+  ignored: { tone: "var(--color-zinc-500)", ink: "var(--color-zinc-300)" },
+  wishlist: { tone: "var(--color-amber-500)", ink: "var(--color-amber-300)" },
 };
+
+/** The inline custom properties `tone-chip` and `tone-ink` read. */
+export function toneStyle(status: Status) {
+  const { tone, ink } = STATUS_TONE[status];
+  return { "--tone": tone, "--tone-ink": ink } as React.CSSProperties;
+}
 
 export const STATUS_ICONS: Record<Status, GiName> = {
   backlog: "circle-dashed",
@@ -39,9 +52,9 @@ export function StatusBadge({
 }) {
   return (
     <span
+      style={toneStyle(status)}
       className={cn(
-        "inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
-        statusStyles[status],
+        "tone-chip inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium",
         className,
       )}
     >
@@ -50,12 +63,3 @@ export function StatusBadge({
     </span>
   );
 }
-
-export const STATUS_DOT: Record<Status, string> = {
-  backlog: "bg-slate-400",
-  playing: "bg-cyan-400",
-  played: "bg-emerald-400",
-  dropped: "bg-red-400",
-  ignored: "bg-zinc-400",
-  wishlist: "bg-amber-400",
-};

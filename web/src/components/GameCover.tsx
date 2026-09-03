@@ -36,8 +36,8 @@ export function GameCover({
               "linear-gradient(160deg, color-mix(in oklab, var(--accent) 28%, var(--color-ink-800)), var(--color-ink-850))",
           }}
         >
-          <Gi name="gamepad" className="size-7 text-white/35" />
-          <span className="line-clamp-3 text-[11px] font-medium leading-tight text-white/60">
+          <Gi name="gamepad" className="size-7 text-ink-max/35" />
+          <span className="line-clamp-3 text-[11px] font-medium leading-tight text-ink-max/60">
             {game.name}
           </span>
         </div>

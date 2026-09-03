@@ -85,7 +85,7 @@ export function SeriesPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           {series.map((s) => (
             <Link key={s.id} to={`/series/${s.id}`} className="group focus-visible:focus-ring">
-              <Panel className="h-full p-5 transition-colors group-hover:border-white/[0.12]">
+              <Panel className="h-full p-5 transition-colors group-hover:border-edge-strong">
                 <div className="flex items-baseline justify-between gap-3">
                   <h2 className="truncate font-semibold text-ink-100">{s.name}</h2>
                   <span className="shrink-0 text-xs tabular-nums text-ink-500">

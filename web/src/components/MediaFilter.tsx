@@ -50,7 +50,7 @@ export function MediaFilter({
     <div
       role="group"
       aria-label="Show"
-      className={cn("flex rounded-xl border border-white/[0.07] bg-ink-850 p-0.5", className)}
+      className={cn("flex rounded-xl border border-edge bg-ink-850 p-0.5", className)}
     >
       {segments.map((segment) => (
         <button
@@ -61,7 +61,7 @@ export function MediaFilter({
           className={cn(
             "inline-flex items-center gap-1.5 rounded-[0.6rem] px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:focus-ring",
             value === segment.value
-              ? "bg-white/[0.09] text-ink-100"
+              ? "bg-fill-active text-ink-100"
               : "text-ink-500 hover:text-ink-300",
           )}
         >

@@ -90,15 +90,23 @@ type Matcher struct {
 	searchCache map[string]cachedSearch
 }
 
-// cachedSearch is one memoized provider result. Book records are effectively
-// immutable, so a long TTL just means fewer polite requests.
+// cachedSearch is one memoized provider result. Individual book records
+// rarely change once catalogued, but the catalogue itself keeps growing —
+// new releases, late-added covers, metadata fixes — so entries expire
+// rather than living forever.
 type cachedSearch struct {
 	books []models.Book
 	at    time.Time
 }
 
-// searchCacheTTL bounds how long a memoized search is trusted.
-const searchCacheTTL = 24 * time.Hour
+// Cache windows: a query that found its books can be trusted for a day.
+// A query that came back empty is re-asked much sooner, because a newly
+// catalogued book — the release you just got files for — turns yesterday's
+// "no results" into today's match.
+const (
+	searchCacheTTL      = 24 * time.Hour
+	emptySearchCacheTTL = 1 * time.Hour
+)
 
 func NewMatcher(st *store.Store, books metadata.BookProvider) *Matcher {
 	return &Matcher{store: st, books: books, searchCache: map[string]cachedSearch{}}
@@ -235,14 +243,21 @@ func (m *Matcher) lookupSearch(query string) ([]models.Book, bool) {
 	m.searchMu.Lock()
 	defer m.searchMu.Unlock()
 	cached, ok := m.searchCache[query]
-	if !ok || time.Since(cached.at) > searchCacheTTL {
+	if !ok {
+		return nil, false
+	}
+	ttl := searchCacheTTL
+	if len(cached.books) == 0 {
+		ttl = emptySearchCacheTTL
+	}
+	if time.Since(cached.at) > ttl {
 		return nil, false
 	}
 	return cached.books, true
 }
 
-// saveSearch memoizes a provider search, empty results included — a query
-// that found nothing once will find nothing tomorrow.
+// saveSearch memoizes a provider search, empty results included — the
+// catalogue grows, so an empty answer is only trusted for the short window.
 func (m *Matcher) saveSearch(query string, books []models.Book) {
 	m.searchMu.Lock()
 	defer m.searchMu.Unlock()

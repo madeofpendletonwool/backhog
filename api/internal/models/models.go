@@ -648,6 +648,24 @@ func ValidTier(t string) bool {
 	return false
 }
 
+// Achievement domains: which arena an achievement belongs to. 'game' and
+// 'book' scope a definition to one library; 'any' marks achievements that
+// are about the app itself (the eggs) and can unlock from either.
+const (
+	DomainGame = "game"
+	DomainBook = "book"
+	DomainAny  = "any"
+)
+
+// ValidDomain reports whether d is a known achievement domain.
+func ValidDomain(d string) bool {
+	switch d {
+	case DomainGame, DomainBook, DomainAny:
+		return true
+	}
+	return false
+}
+
 // Achievement is one catalogue entry, defined in code (internal/achievements).
 type Achievement struct {
 	ID          string `json:"id"`
@@ -657,6 +675,10 @@ type Achievement struct {
 	Icon string `json:"icon"`
 	// Tier is the achievement's rarity band; one of the Tier constants.
 	Tier string `json:"tier"`
+	// Domain is the arena the achievement belongs to; one of the Domain
+	// constants. Predicates only ever fire against their own domain's
+	// events — a book finish never moves a game ladder, or vice versa.
+	Domain string `json:"domain"`
 	// Hidden keeps an achievement's identity masked while locked — the
 	// reveal lives in the unlock toast and the gallery.
 	Hidden bool `json:"hidden"`
@@ -682,6 +704,21 @@ type Season struct {
 	HoursPlayed       float64 `json:"hours_played"`
 	FranchisesCleared int     `json:"franchises_cleared"`
 	// Rescues counts games finished after sitting owned for a year or more.
+	Rescues int `json:"rescues"`
+}
+
+// ReadingSeason is the books arena's per-calendar-year rollup — the mirror
+// of Season, derived on demand the same way: books finished, pages read,
+// hours listened, authors fully cleared, and rescues of long-owned books.
+type ReadingSeason struct {
+	Year          int     `json:"year"`
+	BooksFinished int     `json:"books_finished"`
+	PagesRead     int     `json:"pages_read"`
+	HoursListened float64 `json:"hours_listened"`
+	// AuthorsCleared counts authors whose owned books were all finished,
+	// the year the last one closed.
+	AuthorsCleared int `json:"authors_cleared"`
+	// Rescues counts books finished after sitting owned for a year or more.
 	Rescues int `json:"rescues"`
 }
 

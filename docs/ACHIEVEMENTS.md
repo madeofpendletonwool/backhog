@@ -8,6 +8,11 @@ the build when the two drift apart.
 
 ## How it works
 
+- **Domains** scope every entry to one arena: the games catalogue, the books
+  catalogue (same spine, same rules, shelf-shaped numbers), or `any` — the
+  eggs, which are about the app itself. A predicate only ever fires against
+  its own domain's events; the store assembles each arena's aggregates
+  separately, so a book finish never moves a game ladder.
 - **Predicates** are pure functions over an event snapshot; the store
   evaluates them inside the mutation that triggered them and replays them
   over existing history on gallery loads (the backfill). Unlocks are
@@ -106,6 +111,22 @@ and unlock text stay in sync.
 | `handheld_historian` | Handheld Historian | gold | false | false | Finish games on 4 generations of handhelds. |
 | `playstation_pilgrim` | PlayStation Pilgrim | legendary | false | false | Finish a game on PS1, PS2, PS3, PS4, and PS5. |
 | `green_across_the_ages` | Green Across the Ages | gold | false | false | Finish games on 4 generations of Xbox. |
+| `first_edition` | First Edition | bronze | false | false | Finish your first book. |
+| `shelf_improvement` | Shelf Improvement | silver | false | false | Finish 5 books. |
+| `well_read` | Well Read | silver | false | false | Finish 10 books. |
+| `library_card` | Library Card | gold | false | false | Finish 25 books. |
+| `branch_library` | Branch Library | gold | false | false | Finish 50 books. |
+| `the_librarian` | The Librarian | legendary | false | false | Finish 100 books. The shelf refills; that's the deal. |
+| `late_fine` | Late Fine | silver | false | false | Finish a book you've owned for 5+ years. |
+| `third_times_the_charm` | Third Time's the Charm | gold | false | false | Finish a book you started and abandoned twice before. |
+| `every_which_way` | Every Which Way | legendary | false | false | Finish one book in all three formats: paper, ebook, and audio. |
+| `tbr_trim` | TBR Trim | silver | false | false | Shrink your unread pile by 10 from its peak. |
+| `shelf_control` | Shelf Control | gold | false | false | Shrink your unread pile by 25 from its peak. |
+| `spark_joy` | Spark Joy | legendary | false | false | Shrink your unread pile by 50 from its peak. |
+| `breaking_even` | Breaking Even | gold | true | false | Finish more books in a year than you buy. |
+| `doorstop` | Doorstop | silver | false | false | Finish a book over 600 pages long. |
+| `honest_dnf` | The Honest DNF | bronze | false | false | Drop a book you've left 'reading' for two years. Honesty counts. |
+| `cartographer` | Cartographer | silver | false | false | Map 25 pages of a physical copy by scanning them. |
 | `night_owl` | Do You Even Sleep? | bronze | true | true | Log a play session between 3 and 5 in the morning. |
 | `hog_watcher` | Hog Watcher | bronze | true | true | Click the Backhog logo 10 times in a row. |
 | `konami` | Old Habits | silver | true | true | Enter the Konami code on the achievements page. |

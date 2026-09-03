@@ -115,3 +115,31 @@ func (s *Server) handleSeason(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, season)
 }
+
+// handleReadingSeason derives the books arena's per-year rollup — the
+// "YYYY Reading Challenge" card. Defaults to the current year, like the
+// games one.
+func (s *Server) handleReadingSeason(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+
+	year := time.Now().Year()
+	if raw := r.URL.Query().Get("year"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1900 || parsed > 9999 {
+			fail(w, errorf(http.StatusBadRequest, "year must be a four-digit year"))
+			return
+		}
+		year = parsed
+	}
+
+	season, err := s.store.ReadingSeason(r.Context(), userID, year)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, season)
+}

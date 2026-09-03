@@ -1,13 +1,15 @@
 import { Link } from "react-router-dom";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { BookCover } from "@/components/BookCover";
 import { GameCover } from "@/components/GameCover";
 import { achievementIcon } from "@/components/achievementIcons";
 import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useAchievements, useEggUnlock } from "@/hooks/useAchievements";
 import { formatDate } from "@/lib/format";
-import { ACHIEVEMENT_TIERS, type AchievementStatus, type AchievementTier } from "@/lib/types";
+import { isBookEntry } from "@/lib/types";
+import { ACHIEVEMENT_TIERS, type AchievementDomain, type AchievementStatus, type AchievementTier } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 /** The medal each tier section is headlined with. */
@@ -34,10 +36,24 @@ const TIER_TEXT: Record<AchievementTier, string> = {
 };
 
 /**
+ * The gallery's domain tabs. "any" achievements (the eggs) are about the app
+ * itself, so they answer every tab.
+ */
+const DOMAIN_TABS: { key: AchievementDomain | "all"; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "game", label: "Games" },
+  { key: "book", label: "Books" },
+];
+
+function inDomain(a: AchievementStatus, tab: AchievementDomain | "all"): boolean {
+  return tab === "all" || a.domain === "any" || a.domain === tab;
+}
+
+/**
  * The trophy wall: every achievement in the catalogue with its unlock state,
- * grouped by tier. Locked cards show what's still owed; unlocked ones carry
- * the date and the game that tipped them over. Hidden achievements arrive
- * masked from the API and reveal on unlock.
+ * grouped by arena and tier. Locked cards show what's still owed; unlocked
+ * ones carry the date and the entry that tipped them over. Hidden
+ * achievements arrive masked from the API and reveal on unlock.
  */
 /** The Konami code, as key events read it. */
 const KONAMI = ["arrowup", "arrowup", "arrowdown", "arrowdown",
@@ -46,6 +62,7 @@ const KONAMI = ["arrowup", "arrowup", "arrowdown", "arrowdown",
 export function AchievementsPage() {
   const { data, isLoading } = useAchievements();
   const fireEgg = useEggUnlock();
+  const [tab, setTab] = useState<AchievementDomain | "all">("all");
 
   // Old habits: typing the Konami code anywhere on the gallery hatches
   // the Old Habits egg. Progress resets on any wrong key — as it should.
@@ -83,10 +100,11 @@ export function AchievementsPage() {
     );
   }
 
-  const achievements = data?.achievements ?? [];
+  const all = data?.achievements ?? [];
+  const achievements = all.filter((a) => inDomain(a, tab));
   const unlocked = achievements.filter((a) => a.unlocked_at).length;
 
-  if (achievements.length === 0) {
+  if (all.length === 0) {
     return (
       <EmptyState
         icon={<Gi name="trophy" className="size-7" />}
@@ -102,13 +120,35 @@ export function AchievementsPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Achievements</h1>
-        <p className="mt-1 text-sm text-ink-400">
-          Progress through the backlog, not hours in it.{" "}
-          <span className="font-medium text-ink-200 tabular-nums">
-            {unlocked} of {achievements.length} earned
-          </span>
-        </p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Achievements</h1>
+            <p className="mt-1 text-sm text-ink-400">
+              Progress through the pile, not hours in it.{" "}
+              <span className="font-medium text-ink-200 tabular-nums">
+                {unlocked} of {achievements.length} earned
+              </span>
+            </p>
+          </div>
+          <div className="flex gap-1 rounded-xl bg-ink-900 p-1 ring-1 ring-white/[0.06]">
+            {DOMAIN_TABS.map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:focus-ring",
+                  tab === key
+                    ? "bg-white/[0.08] text-ink-100"
+                    : "text-ink-500 hover:text-ink-300",
+                )}
+                aria-pressed={tab === key}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </header>
 
       <div className="space-y-8">
@@ -142,6 +182,50 @@ export function AchievementsPage() {
   );
 }
 
+/** The triggering entry, linked and covered, whichever arena it came from. */
+function AchievementEntryLink({ achievement }: { achievement: AchievementStatus }) {
+  const entry = achievement.entry;
+  if (!entry) return null;
+
+  if (isBookEntry(entry)) {
+    return (
+      <div className="mt-3 flex items-center gap-3 border-t border-white/[0.06] pt-3">
+        <Link
+          to={`/books/${entry.id}`}
+          className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
+          aria-label={entry.book.title}
+        >
+          <BookCover book={entry.book} sizes="40px" />
+        </Link>
+        <Link
+          to={`/books/${entry.id}`}
+          className="min-w-0 truncate text-sm font-medium text-ink-200 hover:text-white focus-visible:focus-ring"
+        >
+          {entry.book.title}
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 flex items-center gap-3 border-t border-white/[0.06] pt-3">
+      <Link
+        to={`/game/${entry.id}`}
+        className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
+        aria-label={entry.game.name}
+      >
+        <GameCover game={entry.game} sizes="40px" />
+      </Link>
+      <Link
+        to={`/game/${entry.id}`}
+        className="min-w-0 truncate text-sm font-medium text-ink-200 hover:text-white focus-visible:focus-ring"
+      >
+        {entry.game.name}
+      </Link>
+    </div>
+  );
+}
+
 function AchievementCard({ achievement }: { achievement: AchievementStatus }) {
   const unlockedAt = achievement.unlocked_at;
 
@@ -168,23 +252,7 @@ function AchievementCard({ achievement }: { achievement: AchievementStatus }) {
       </p>
       <p className="mt-1 text-sm leading-relaxed text-ink-400">{achievement.description}</p>
 
-      {unlockedAt && achievement.entry && (
-        <div className="mt-3 flex items-center gap-3 border-t border-white/[0.06] pt-3">
-          <Link
-            to={`/game/${achievement.entry.id}`}
-            className="w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/[0.08] transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 focus-visible:focus-ring"
-            aria-label={achievement.entry.game.name}
-          >
-            <GameCover game={achievement.entry.game} sizes="40px" />
-          </Link>
-          <Link
-            to={`/game/${achievement.entry.id}`}
-            className="min-w-0 truncate text-sm font-medium text-ink-200 hover:text-white focus-visible:focus-ring"
-          >
-            {achievement.entry.game.name}
-          </Link>
-        </div>
-      )}
+      {unlockedAt && <AchievementEntryLink achievement={achievement} />}
     </Panel>
   );
 }

@@ -1568,6 +1568,7 @@ func TestCatalogueHiddenSet(t *testing.T) {
 		"closing_the_loop": true, "the_big_n": true, "fossil_record": true,
 		"phoenix": true, "buyers_remorse": true, "know_when_to_fold": true,
 		"cut_your_losses": true,
+		"breaking_even":   true,
 		"night_owl":       true, "hog_watcher": true, "konami": true, "queue_shuffler": true,
 	}
 	hidden := 0

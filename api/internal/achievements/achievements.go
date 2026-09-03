@@ -3,6 +3,13 @@
 // to gamify making progress through the backlog — finishing, rescuing, and
 // clearing — never playing games themselves. No points for hours logged.
 //
+// The catalogue spans both arenas: game definitions and book definitions live
+// side by side, each tagged with its domain, and a definition only ever
+// evaluates against its own domain's events. Both domains hang off the same
+// spine — library_entries and the status history — so a book finish feeds the
+// same shape of predicate a game finish does, with the aggregates assembled
+// per domain by the store.
+//
 // Predicates are pure functions over an Event snapshot so they can be tested
 // without a database; the store assembles the snapshot inside its transaction
 // and inserts unlocks idempotently.
@@ -133,13 +140,50 @@ const (
 	handheldHistorianGenerations = 4
 	pilgrimConsoles              = 5
 	xboxGenerations              = 4
+	// The book ladder: finishes at the same large round numbers the games
+	// ladder uses.
+	firstEditionCount  = 1
+	shelfImprovement   = 5
+	wellReadCount      = 10
+	libraryCardCount   = 25
+	branchLibraryCount = 50
+	theLibrarianCount  = 100
+	// lateFineWindow is how long a book must have been owned at finish —
+	// the single rung the books arena asks of the ownership-age ladder.
+	lateFineWindow = 5 * 365 * 24 * time.Hour
+	// thirdTimeCharmAbandons is how many earlier start-and-abandon cycles a
+	// book needs before finally finishing it counts as charming.
+	thirdTimeCharmAbandons = 2
+	// everyWhichWayFormats is the full set of formats one book must be
+	// finished in: paper, ebook, and audio.
+	everyWhichWayFormats = 3
+	// The unread-pile ladder: how far the unread count must sit below its
+	// all-time peak. Mirror of the games dent ladder.
+	tbrTrimReduction  = 10
+	shelfControlDrop  = 25
+	sparkJoyReduction = 50
+	// doorstopPages is the length a finished book must clear.
+	doorstopPages = 600
+	// honestDNFWindow is how long a book must have sat 'reading' before
+	// dropping it counts as honest instead of overdue.
+	honestDNFWindow = 2 * 365 * 24 * time.Hour
+	// cartographerPages is how many pages of one physical copy a user must
+	// map by scanning before the map counts as drawn.
+	cartographerPages = 25
 )
 
 // Entry is the snapshot of the triggering library entry, plus the user-level
 // aggregates the predicates need, all read inside the store's transaction.
+// Every aggregate is scoped to the snapshot's own domain — PlayedCount counts
+// games on a game snapshot and books on a book one — so a definition reads
+// the same fields whichever arena fired the event.
 type Entry struct {
-	ID        string
-	Status    string // status as of the event
+	ID     string
+	Status string // status as of the event
+	// MediaType is the domain this snapshot belongs to: models.MediaGame or
+	// models.MediaBook. It is what routes the event to the matching half
+	// of the catalogue.
+	MediaType string
 	CreatedAt time.Time
 	// At is the moment the predicate evaluates against: the finish or drop
 	// timestamp when there is one, otherwise now.
@@ -147,8 +191,20 @@ type Entry struct {
 	LoggedMinutes      int    // total logged playtime at evaluation time
 	TimeToBeatMain     *int64 // seconds, nil when unknown
 	TimeToBeatComplete *int64 // seconds, nil when unknown
-	// PlayedCount is how many games the user has finished including this one.
+	// PlayedCount is how many entries the user has finished including this
+	// one — games for a game snapshot, books for a book one.
 	PlayedCount int
+	// StartedAt is when the entry most recently entered 'playing'; nil when
+	// never started. The books arena's honest-DNF predicate measures the
+	// "in progress" stretch against it.
+	StartedAt *time.Time
+	// PageCount is the book's effective length in printed pages — derived
+	// from the canonical text when one is attached, otherwise the
+	// printing's own count. 0 when unknown. Book-domain only.
+	PageCount int
+	// FormatCount is how many of paper, ebook, and audio the user holds the
+	// finished work in. Book-domain only.
+	FormatCount int
 	// IsOldestOwned reports whether this entry is the oldest game the user
 	// owns and still means to finish (wishlist and ignored excluded, so an
 	// endless game doesn't block the achievement forever).
@@ -316,26 +372,52 @@ func (e Event) resumed() bool {
 	return e.Kind == EventResumed
 }
 
+// book reports whether the event's snapshot belongs to the books arena.
+// Book predicates guard on it: the two arenas share field names for their
+// aggregates, and the store routes by domain anyway, so a game snapshot —
+// or an unscoped test fixture — can never tip a shelf ladder.
+func (e Event) book() bool {
+	return e.Entry.MediaType == models.MediaBook
+}
+
 // TimeSnapshot carries the wall-clock aggregates behind a lazy predicate:
 // achievements like "30 days without adding a game" have no mutation event
-// to hook, so they evaluate against these on gallery loads.
+// to hook, so they evaluate against these on gallery loads. Each field is
+// scoped to its own domain — the games arena measures acquisition recency,
+// the books arena measures how much of a physical page map exists.
 type TimeSnapshot struct {
 	Now time.Time
 	// LastAcquiredAt is MAX(library_entries.created_at) over non-wishlist
-	// entries — when the user last actually added a game to their library
-	// rather than its wishlist. Zero time when they own nothing, in which
-	// case time predicates should not fire.
+	// game entries — when the user last actually added a game to their
+	// library rather than its wishlist. Zero time when they own nothing, in
+	// which case time predicates should not fire.
 	LastAcquiredAt time.Time
+	// BookPagesMapped is the largest number of pages the user has mapped by
+	// scanning a single physical copy. Zero when no copy carries a scanned
+	// page yet.
+	BookPagesMapped int
 }
 
-// Definition couples a catalogue entry with its unlock predicate.
+// Definition couples a catalogue entry with its unlock predicate. The
+// domain lives on the embedded Achievement — one value serves both the
+// API payload and the routing rule below.
 type Definition struct {
 	Achievement models.Achievement
-	Predicate   func(Event) bool
+	// Predicate is the event-hooked unlock test; nil for achievements
+	// that only unlock through a lazy time predicate or an egg endpoint.
+	Predicate func(Event) bool
 	// TimePredicate is the lazy, mutation-free counterpart: evaluated on
 	// gallery loads against wall-clock aggregates. Nil for achievements
 	// that unlock off events.
 	TimePredicate func(TimeSnapshot) bool
+}
+
+// MatchesDomain reports whether the definition applies to an event from the
+// given media type. Arena-agnostic definitions (the eggs) match anything;
+// the rest only ever see their own arena, which is what keeps a book finish
+// from moving a game ladder and vice versa.
+func (d Definition) MatchesDomain(mediaType string) bool {
+	return d.Achievement.Domain == models.DomainAny || d.Achievement.Domain == mediaType
 }
 
 // HasTimePredicates reports whether any catalogue entry has a lazy time
@@ -355,6 +437,7 @@ func HasTimePredicates() bool {
 var Catalogue = []Definition{
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "first_blood",
 			Title:       "First Blood",
 			Description: "Finish your first backlog game.",
@@ -367,6 +450,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "cleanup_crew",
 			Title:       "Cleanup Crew",
 			Description: "Finish 5 backlog games.",
@@ -379,6 +463,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "spring_cleaning",
 			Title:       "Spring Cleaning",
 			Description: "Finish 10 backlog games.",
@@ -391,6 +476,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "deep_clean",
 			Title:       "Deep Clean",
 			Description: "Finish 25 backlog games.",
@@ -403,6 +489,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "hazmat_suit",
 			Title:       "Hazmat Suit",
 			Description: "Finish 50 backlog games.",
@@ -415,6 +502,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "the_purge",
 			Title:       "The Purge",
 			Description: "Finish 100 backlog games.",
@@ -427,6 +515,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "one_down",
 			Title:       "One Down",
 			Description: "Finish a game while 10+ sit unplayed.",
@@ -439,8 +528,9 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
-			ID:    "next_up",
-			Title: "Next!",
+			Domain: models.DomainGame,
+			ID:     "next_up",
+			Title:  "Next!",
 			Description: "Finish the game sitting at the top of your queue " +
 				"(marked finished straight from the queue).",
 			Icon: "chevrons-up",
@@ -452,6 +542,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "making_a_dent",
 			Title:       "Making a Dent",
 			Description: "Shrink your unplayed backlog by 10 from its peak.",
@@ -464,6 +555,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "dentist_appointment",
 			Title:       "Dentist Appointment",
 			Description: "Shrink your unplayed backlog by 25 from its peak.",
@@ -476,6 +568,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "mass_extinction",
 			Title:       "Mass Extinction",
 			Description: "Shrink your unplayed backlog by 50 from its peak.",
@@ -488,6 +581,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "empty_the_closet",
 			Title:       "Empty the Closet",
 			Description: "Reach zero unplayed games after hoarding 10+.",
@@ -503,6 +597,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "backlog_negative",
 			Title:       "Backlog Negative",
 			Description: "Finish more games in a year than you add.",
@@ -516,6 +611,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "hat_trick",
 			Title:       "Hat Trick",
 			Description: "Finish 3 games in one calendar month.",
@@ -528,6 +624,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "cleanup_month",
 			Title:       "Cleanup Month",
 			Description: "Finish 5 games in one calendar month.",
@@ -540,6 +637,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "backlog_machine",
 			Title:       "Backlog Machine",
 			Description: "Finish at least one game in 3 consecutive months.",
@@ -552,6 +650,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "perfect_season",
 			Title:       "Perfect Season",
 			Description: "Finish at least one game every month of a calendar year.",
@@ -565,6 +664,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "season_opener",
 			Title:       "Season Opener",
 			Description: "Finish a backlog game in January.",
@@ -577,6 +677,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "strong_finish",
 			Title:       "Strong Finish",
 			Description: "Finish a backlog game in December.",
@@ -589,6 +690,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "summer_cleanup",
 			Title:       "Summer Cleanup",
 			Description: "Finish 5 games in a single summer (June–August).",
@@ -602,6 +704,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "restraint",
 			Title:       "Restraint",
 			Description: "Go 30 days without adding a single game.",
@@ -614,6 +717,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "discipline",
 			Title:       "Discipline",
 			Description: "Go 90 days without adding a single game.",
@@ -626,6 +730,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "dusty_relic",
 			Title:       "Dusty Relic",
 			Description: "Finish a game you've owned for 3+ years (owned = since you added it to Backhog).",
@@ -638,6 +743,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "archaeologist",
 			Title:       "Archaeologist",
 			Description: "Finish a game you owned for 5+ years.",
@@ -650,6 +756,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "lost_civilization",
 			Title:       "Lost Civilization",
 			Description: "Finish a game you've owned for 7+ years.",
@@ -662,6 +769,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "ancient_artifact",
 			Title:       "Ancient Artifact",
 			Description: "Finish a game you've owned for 10+ years.",
@@ -674,6 +782,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "time_capsule",
 			Title:       "Time Capsule",
 			Description: "Finish a game released 10+ years before you finished it.",
@@ -687,6 +796,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "old_hardware",
 			Title:       "Old Hardware, New Victory",
 			Description: "Finish a game originally released before 2000.",
@@ -700,6 +810,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "speedrun",
 			Title:       "Speedrun",
 			Description: "Finish a game with under 5 hours logged.",
@@ -712,6 +823,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "instant_gratification",
 			Title:       "Instant Gratification",
 			Description: "Finish a game within 30 days of adding it.",
@@ -724,6 +836,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "no_shelf_time",
 			Title:       "No Shelf Time",
 			Description: "Finish a game within 7 days of adding it.",
@@ -736,6 +849,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "long_haul",
 			Title:       "Long Haul",
 			Description: "Finish a game that takes 50+ hours to beat.",
@@ -749,6 +863,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "ultra_marathon",
 			Title:       "Ultra Marathon",
 			Description: "Finish a game that takes 100+ hours to beat.",
@@ -762,6 +877,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "the_commitment",
 			Title:       "The Commitment",
 			Description: "Finish 3 games that take 50+ hours to beat.",
@@ -774,6 +890,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "completionist",
 			Title:       "Completionist",
 			Description: "Finish a game having logged its full completion time.",
@@ -787,6 +904,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "abandonment_issues",
 			Title:       "Abandonment Issues",
 			Description: "Drop a game you've owned for a year or more. Honesty counts.",
@@ -799,6 +917,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "know_when_to_fold",
 			Title:       "Know When to Fold 'Em",
 			Description: "Drop a game after 5+ hours of honest effort.",
@@ -812,6 +931,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "cut_your_losses",
 			Title:       "Cut Your Losses",
 			Description: "Drop a game with less than 10% of its main story logged.",
@@ -826,6 +946,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "buyers_remorse",
 			Title:       "Buyer's Remorse",
 			Description: "Drop a game within 7 days of adding it.",
@@ -839,6 +960,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "wasnt_you_it_was_me",
 			Title:       "It Wasn't You, It Was Me",
 			Description: "Drop 5 games. It's not them, it's you.",
@@ -851,6 +973,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "the_reaper",
 			Title:       "The Reaper",
 			Description: "Drop 10 games.",
@@ -863,6 +986,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "resurrection",
 			Title:       "Resurrection",
 			Description: "Bring a dropped game back into the rotation.",
@@ -875,6 +999,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "second_chance",
 			Title:       "Second Chance",
 			Description: "Resume a game 6+ months after dropping it.",
@@ -887,6 +1012,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "never_give_up",
 			Title:       "Never Give Up",
 			Description: "Finish a game you previously dropped.",
@@ -899,6 +1025,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "against_all_odds",
 			Title:       "Against All Odds",
 			Description: "Resume a game after a year away and finish it.",
@@ -911,6 +1038,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "phoenix",
 			Title:       "Phoenix",
 			Description: "Return to a game 2+ years after dropping it and finish it.",
@@ -924,6 +1052,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "the_ancient_one",
 			Title:       "The Ancient One",
 			Description: "Finish the oldest game you own.",
@@ -936,6 +1065,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "fossil_record",
 			Title:       "The Fossil Record",
 			Description: "Finish one of the 3 oldest games you own.",
@@ -950,6 +1080,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "trilogy",
 			Title:       "Trilogy",
 			Description: "Finish 3 games from the same series.",
@@ -964,6 +1095,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "back_to_back",
 			Title:       "Back to Back",
 			Description: "Finish two games of the same series in a row, with nothing finished between them.",
@@ -976,6 +1108,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "saga",
 			Title:       "Saga",
 			Description: "Finish a game from a series you own 5+ entries of.",
@@ -990,6 +1123,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "franchise_mode",
 			Title:       "Franchise Mode",
 			Description: "Finish 5 games from the same series.",
@@ -1004,6 +1138,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "marathon_series",
 			Title:       "Marathon Series",
 			Description: "Finish 3 games of one series within a calendar year.",
@@ -1018,6 +1153,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "closing_the_loop",
 			Title:       "Closing the Loop",
 			Description: "Finish the last unplayed game in a series you own — dropped entries don't count against you.",
@@ -1033,6 +1169,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "full_set",
 			Title:       "The Full Set",
 			Description: "Finish every game in a series you own (2+ entries, all played).",
@@ -1047,6 +1184,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "sampler",
 			Title:       "Sampler",
 			Description: "Finish games from 5 different genres in one calendar year.",
@@ -1059,6 +1197,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "world_tour",
 			Title:       "World Tour",
 			Description: "Finish games on 5 different platforms.",
@@ -1071,6 +1210,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "retroactive",
 			Title:       "Retroactive",
 			Description: "Finish a game on a platform with no logged session in the last 5 years.",
@@ -1083,6 +1223,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "generation_gap",
 			Title:       "Generation Gap",
 			Description: "Finish games on 5 different console generations.",
@@ -1095,6 +1236,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "nintendo_time_machine",
 			Title:       "Nintendo Time Machine",
 			Description: "Finish games on 5 different Nintendo consoles.",
@@ -1107,6 +1249,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "the_big_n",
 			Title:       "The Big N",
 			Description: "Finish a game on NES, SNES, N64, GameCube, Wii, Wii U, and Switch.",
@@ -1120,6 +1263,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "game_boy_generation",
 			Title:       "Game Boy Generation",
 			Description: "Finish a game on Game Boy, Game Boy Color, and Game Boy Advance.",
@@ -1132,6 +1276,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "handheld_historian",
 			Title:       "Handheld Historian",
 			Description: "Finish games on 4 generations of handhelds.",
@@ -1144,6 +1289,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "playstation_pilgrim",
 			Title:       "PlayStation Pilgrim",
 			Description: "Finish a game on PS1, PS2, PS3, PS4, and PS5.",
@@ -1156,6 +1302,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "green_across_the_ages",
 			Title:       "Green Across the Ages",
 			Description: "Finish games on 4 generations of Xbox.",
@@ -1166,6 +1313,221 @@ var Catalogue = []Definition{
 			return e.finished() && e.Entry.XboxGenerations >= xboxGenerations
 		},
 	},
+	// The books arena: the same principle as the games catalogue — progress
+	// through the pile, never hours in it — spoken in the same dry voice,
+	// about the shelf instead of the backlog. Every aggregate a book
+	// predicate reads is book-scoped by the store, so a finish here never
+	// moves a game ladder and a game finish never moves these.
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "first_edition",
+			Title:       "First Edition",
+			Description: "Finish your first book.",
+			Icon:        "book-pile",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.PlayedCount >= firstEditionCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "shelf_improvement",
+			Title:       "Shelf Improvement",
+			Description: "Finish 5 books.",
+			Icon:        "bookshelf",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.PlayedCount >= shelfImprovement
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "well_read",
+			Title:       "Well Read",
+			Description: "Finish 10 books.",
+			Icon:        "layers",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.PlayedCount >= wellReadCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "library_card",
+			Title:       "Library Card",
+			Description: "Finish 25 books.",
+			Icon:        "scroll-unfurled",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.PlayedCount >= libraryCardCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "branch_library",
+			Title:       "Branch Library",
+			Description: "Finish 50 books.",
+			Icon:        "building",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.PlayedCount >= branchLibraryCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "the_librarian",
+			Title:       "The Librarian",
+			Description: "Finish 100 books. The shelf refills; that's the deal.",
+			Icon:        "imperial-crown",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.PlayedCount >= theLibrarianCount
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "late_fine",
+			Title:       "Late Fine",
+			Description: "Finish a book you've owned for 5+ years.",
+			Icon:        "time-trap",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && ownedFor(e.Entry) >= lateFineWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "third_times_the_charm",
+			Title:       "Third Time's the Charm",
+			Description: "Finish a book you started and abandoned twice before.",
+			Icon:        "cycle",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && len(e.Entry.DropHistory) >= thirdTimeCharmAbandons
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "every_which_way",
+			Title:       "Every Which Way",
+			Description: "Finish one book in all three formats: paper, ebook, and audio.",
+			Icon:        "headphones",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.FormatCount >= everyWhichWayFormats
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "tbr_trim",
+			Title:       "TBR Trim",
+			Description: "Shrink your unread pile by 10 from its peak.",
+			Icon:        "chevrons-down",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && (e.finished() || e.dropped()) && unplayedReduction(e.Entry) >= tbrTrimReduction
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "shelf_control",
+			Title:       "Shelf Control",
+			Description: "Shrink your unread pile by 25 from its peak.",
+			Icon:        "sliders",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && (e.finished() || e.dropped()) && unplayedReduction(e.Entry) >= shelfControlDrop
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "spark_joy",
+			Title:       "Spark Joy",
+			Description: "Shrink your unread pile by 50 from its peak.",
+			Icon:        "sparkles",
+			Tier:        models.TierLegendary,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && (e.finished() || e.dropped()) && unplayedReduction(e.Entry) >= sparkJoyReduction
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "breaking_even",
+			Title:       "Breaking Even",
+			Description: "Finish more books in a year than you buy.",
+			Icon:        "minus",
+			Tier:        models.TierGold,
+			Hidden:      true,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.YearFinishes > e.Entry.YearAdditions
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "doorstop",
+			Title:       "Doorstop",
+			Description: "Finish a book over 600 pages long.",
+			Icon:        "mountain",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.finished() && e.Entry.PageCount > doorstopPages
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "honest_dnf",
+			Title:       "The Honest DNF",
+			Description: "Drop a book you've left 'reading' for two years. Honesty counts.",
+			Icon:        "door-open",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.dropped() && e.Entry.StartedAt != nil &&
+				e.Entry.At.Sub(*e.Entry.StartedAt) >= honestDNFWindow
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "cartographer",
+			Title:       "Cartographer",
+			Description: "Map 25 pages of a physical copy by scanning them.",
+			Icon:        "camera",
+			Tier:        models.TierSilver,
+		},
+		TimePredicate: func(ts TimeSnapshot) bool {
+			return ts.BookPagesMapped >= cartographerPages
+		},
+	},
 	// The easter eggs: unlockable only by playing with the app itself, never
 	// by a predicate. Egg implies Hidden — the locked card shows ??? and a
 	// tease, and the reveal rides the normal unlock toast. The client fires
@@ -1173,6 +1535,7 @@ var Catalogue = []Definition{
 	// endpoint only accepts ids from this club.
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainGame,
 			ID:          "night_owl",
 			Title:       "Do You Even Sleep?",
 			Description: "Log a play session between 3 and 5 in the morning.",
@@ -1184,6 +1547,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainAny,
 			ID:          "hog_watcher",
 			Title:       "Hog Watcher",
 			Description: "Click the Backhog logo 10 times in a row.",
@@ -1195,6 +1559,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainAny,
 			ID:          "konami",
 			Title:       "Old Habits",
 			Description: "Enter the Konami code on the achievements page.",
@@ -1206,6 +1571,7 @@ var Catalogue = []Definition{
 	},
 	{
 		Achievement: models.Achievement{
+			Domain:      models.DomainAny,
 			ID:          "queue_shuffler",
 			Title:       "Chaos Gremlin",
 			Description: "Re-queue the same game 5 times in one sitting.",
@@ -1303,6 +1669,7 @@ var maskedHints = map[string]string{
 	"hog_watcher":       "Keep watching the hog.",
 	"konami":            "Some codes never die.",
 	"queue_shuffler":    "Chaos is a ladder. Or a queue.",
+	"breaking_even":     "Arithmetic, but for books. You can do arithmetic.",
 }
 
 // MaskedHint returns the teasing copy for a locked hidden achievement, or

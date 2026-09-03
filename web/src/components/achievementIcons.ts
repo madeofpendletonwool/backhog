@@ -77,6 +77,11 @@ const ICONS: Record<string, GiName> = {
   eyeball: "eyeball",
   keyboard: "keyboard",
   whirlwind: "whirlwind",
+  // The books arena; the rest of its icons reuse the games keys above.
+  building: "building",
+  headphones: "headphones",
+  sliders: "sliders",
+  camera: "camera",
   // The generic glyph a locked hidden achievement is masked with.
   lock: "lock",
 };

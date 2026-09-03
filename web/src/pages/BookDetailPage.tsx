@@ -127,9 +127,9 @@ export function BookDetailPage() {
                 )}
               </div>
 
-              {book.subjects.length > 0 && (
+              {(book.subjects ?? []).length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {book.subjects.slice(0, 6).map((subject) => (
+                  {(book.subjects ?? []).slice(0, 6).map((subject) => (
                     <span
                       key={subject}
                       className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs text-ink-300"
@@ -432,7 +432,7 @@ function UnattachedFiles({ entryId }: { entryId: string }) {
   const { data } = useQuery({ queryKey: ["media", "candidates"], queryFn: api.mediaCandidates });
 
   const waiting = (data?.candidates ?? []).filter((candidate) =>
-    candidate.suggestions.some((suggestion) => suggestion.entry_id === entryId),
+    candidate.suggestions?.some((suggestion) => suggestion.entry_id === entryId),
   );
   if (waiting.length === 0) return null;
 

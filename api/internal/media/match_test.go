@@ -396,3 +396,68 @@ func TestMatchIgnoresAndThresholds(t *testing.T) {
 		t.Errorf("top = %+v, want Dune below the bar", top)
 	}
 }
+
+// TestCandidatesMarshalEmptySuggestions: a candidate nobody matched must
+// serialize "suggestions": [], never null — the client indexes
+// suggestions[0] unguarded and a null blanks the whole review page.
+func TestCandidatesMarshalEmptySuggestions(t *testing.T) {
+	// A library that explains nothing, a provider that offers nothing:
+	// every candidate comes back with zero suggestions.
+	cs := matchCandidates(t, &fakeProvider{}, testLibrary,
+		[]models.MediaFile{epubFile("zzz unrelated book.epub")})
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates, want 1: %v", len(cs), keysOf(cs))
+	}
+	encoded, err := json.Marshal(cs[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var probe struct {
+		Suggestions []Suggestion `json:"suggestions"`
+	}
+	if err := json.Unmarshal(encoded, &probe); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if probe.Suggestions == nil {
+		t.Errorf("suggestions = null in %s; want []", encoded)
+	}
+}
+
+// countingProvider counts searches so a test can prove the matcher's
+// memoization keeps repeat candidates requests off the provider.
+type countingProvider struct {
+	fakeProvider
+	searches int
+}
+
+func (c *countingProvider) Search(_ context.Context, _ string, _ int) ([]metadata.Book, error) {
+	c.searches++
+	return nil, nil
+}
+
+// TestCandidatesMemoizeProviderSearches: candidates requests are budgeted,
+// so the same query on a second visit must come from the cache — otherwise
+// every page load re-spends the whole Open Library budget on the same work.
+func TestCandidatesMemoizeProviderSearches(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	userID := testUser(t, st)
+	files := []models.MediaFile{
+		plainAudio("Stephen King/1974 - Carrie/01.mp3"),
+		plainAudio("Stephen King/1974 - Carrie/02.mp3"),
+	}
+	if err := st.InsertMediaFiles(ctx, files); err != nil {
+		t.Fatalf("insert files: %v", err)
+	}
+	provider := &countingProvider{}
+	m := NewMatcher(st, provider)
+
+	for range 2 {
+		if _, err := m.Candidates(ctx, userID); err != nil {
+			t.Fatalf("candidates: %v", err)
+		}
+	}
+	if provider.searches != 1 {
+		t.Errorf("provider searched %d times across 2 candidates runs, want 1", provider.searches)
+	}
+}

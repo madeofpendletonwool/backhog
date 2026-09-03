@@ -6,6 +6,7 @@ import { AchievementToasts } from "./AchievementToasts";
 import { AddBookDialog } from "./AddBookDialog";
 import { AddGameDialog } from "./AddGameDialog";
 import { AudioPlayer } from "./AudioPlayer";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { PickDialog } from "./PickDialog";
 import { ReadDialog } from "./ReadDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
@@ -297,7 +298,9 @@ export function Layout() {
       {/* The player bar publishes its own height as --player-h (0 when no
           book is open), so the last row of a page is never buried under it. */}
       <main className="min-w-0 flex-1 pb-[var(--player-h,0px)] pt-20 lg:pl-[17rem] lg:pt-0">
-        <Outlet context={{ openAddDialog: () => setAddOpen(true) }} />
+        <ErrorBoundary>
+          <Outlet context={{ openAddDialog: () => setAddOpen(true) }} />
+        </ErrorBoundary>
       </main>
 
       <AddGameDialog open={addOpen && arena === "games"} onClose={() => setAddOpen(false)} />

@@ -101,6 +101,32 @@ func TestOpenLibrarySearchEmptyQuery(t *testing.T) {
 	}
 }
 
+// TestOpenLibrarySearchStopwordQuery: Open Library answers 422 for
+// stopword-only queries ("the"); that must surface as an empty result set,
+// not an error the caller would render as a failed search.
+func TestOpenLibrarySearchStopwordQuery(t *testing.T) {
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/search.json", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		writeFixture(t, w, map[string]any{
+			"detail": []map[string]any{{
+				"type":  "value_error",
+				"loc":   []any{"query", "q"},
+				"msg":   "Value error, ('Invalid query; the following queries are not allowed: the',)",
+				"input": "the",
+			}},
+		})
+	})
+
+	books, err := client.Search(context.Background(), "the ", 20)
+	if err != nil {
+		t.Fatalf("stopword query: %v; want empty results, not an error", err)
+	}
+	if books == nil || len(books) != 0 {
+		t.Errorf("stopword query: books = %v; want empty non-nil slice", books)
+	}
+}
+
 func TestOpenLibraryGetByWorkKey(t *testing.T) {
 	f, client := newFakeOpenLibrary(t)
 	// The work record: description in Open Library's object form.

@@ -90,13 +90,14 @@ export function BookFilesPage() {
 
   const bulkConfirm = async () => {
     const bulkable = (queue.data?.candidates ?? []).filter(
-      (c) => c.high_confidence && c.suggestions[0],
+      (c) => c.high_confidence && c.suggestions?.[0],
     );
     setStatus(null);
     for (const candidate of bulkable) {
       markBusy(candidate.key, true);
       try {
-        const suggestion = candidate.suggestions[0];
+        const suggestion = candidate.suggestions?.[0];
+        if (!suggestion) continue;
         let entryId = suggestion.entry_id;
         if (!entryId) {
           const entry = await api.addBookToLibrary(suggestion.book.id);
@@ -122,7 +123,7 @@ export function BookFilesPage() {
 
   const candidates = queue.data?.candidates ?? [];
   const skipped = queue.data?.skipped ?? [];
-  const bulkableCount = candidates.filter((c) => c.high_confidence && c.suggestions[0]).length;
+  const bulkableCount = candidates.filter((c) => c.high_confidence && c.suggestions?.[0]).length;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -294,7 +295,7 @@ function CandidateRow({
   onPick: () => void;
   onIgnore: () => void;
 }) {
-  const top = candidate.suggestions[0];
+  const top = candidate.suggestions?.[0];
   const isAudio = candidate.kind === "audio";
 
   return (
@@ -351,7 +352,7 @@ function CandidateRow({
               <>
                 <div className="text-right">
                   <p className="text-sm font-semibold text-ink-100">{top.book.title}</p>
-                  <p className="text-xs text-ink-400">{top.book.authors.join(", ")}</p>
+                  <p className="text-xs text-ink-400">{(top.book.authors ?? []).join(", ")}</p>
                   <p className="mt-0.5 font-display text-[10px] uppercase tracking-wider text-ink-500">
                     {Math.round(top.confidence * 100)}% · from {top.signal} ·{" "}
                     {top.in_library ? "in your library" : "Open Library"}
@@ -530,7 +531,7 @@ function PickBookDialog({
             >
               <span className="text-sm font-semibold text-ink-100">{result.book.title}</span>
               <span className="text-xs text-ink-400">
-                {result.book.authors.join(", ")}
+                {(result.book.authors ?? []).join(", ")}
                 {result.book.first_publish_year ? ` · ${result.book.first_publish_year}` : ""}
                 {result.in_library ? " · in your library" : ""}
               </span>

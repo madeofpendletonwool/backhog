@@ -80,10 +80,28 @@ type Candidate struct {
 type Matcher struct {
 	store *store.Store
 	books metadata.BookProvider
+
+	// searchCache memoizes provider searches by query. A candidates request
+	// can only afford a handful of provider calls within its budget, so a
+	// large library is enriched across visits; without the cache every
+	// visit would restart from zero and re-spend the whole budget — and
+	// Open Library's rate limit — on the same queries.
+	searchMu    sync.Mutex
+	searchCache map[string]cachedSearch
 }
 
+// cachedSearch is one memoized provider result. Book records are effectively
+// immutable, so a long TTL just means fewer polite requests.
+type cachedSearch struct {
+	books []models.Book
+	at    time.Time
+}
+
+// searchCacheTTL bounds how long a memoized search is trusted.
+const searchCacheTTL = 24 * time.Hour
+
 func NewMatcher(st *store.Store, books metadata.BookProvider) *Matcher {
-	return &Matcher{store: st, books: books}
+	return &Matcher{store: st, books: books, searchCache: map[string]cachedSearch{}}
 }
 
 // searchBudget bounds the Open Library portion of one candidates request so
@@ -178,20 +196,57 @@ func (m *Matcher) enrichFromProvider(ctx context.Context, g *group) {
 	if query == "" {
 		return
 	}
-	results, err := m.books.Search(ctx, query, 8)
-	if err != nil {
-		slog.WarnContext(ctx, "media match search failed", "query", query, "error", err)
+	if cached, ok := m.lookupSearch(query); ok {
+		g.providerBooks = append(g.providerBooks, cached...)
 		return
 	}
+	results, err := m.books.Search(ctx, query, 8)
+	if err != nil {
+		// The shared budget expiring mid-run is the steady state of a
+		// large first library, not a malfunction worth a warn per
+		// candidate; anything else still gets noticed.
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "media match search out of budget", "query", query, "error", err)
+		} else {
+			slog.WarnContext(ctx, "media match search failed", "query", query, "error", err)
+		}
+		return
+	}
+	var fetched []models.Book
 	for _, b := range results {
 		if err := m.store.UpsertBook(ctx, b, ""); err != nil {
 			slog.WarnContext(ctx, "media match cache book", "book_id", b.ID, "error", err)
 			continue
 		}
 		if book, err := m.store.GetBook(ctx, b.ID); err == nil {
-			g.providerBooks = append(g.providerBooks, book)
+			fetched = append(fetched, book)
 		}
 	}
+	// Only memoize a run that finished inside its budget: a partial fetch
+	// cached as complete would starve those candidates of suggestions.
+	if ctx.Err() == nil {
+		m.saveSearch(query, fetched)
+	}
+	g.providerBooks = append(g.providerBooks, fetched...)
+}
+
+// lookupSearch returns a memoized provider search, if one is fresh enough.
+func (m *Matcher) lookupSearch(query string) ([]models.Book, bool) {
+	m.searchMu.Lock()
+	defer m.searchMu.Unlock()
+	cached, ok := m.searchCache[query]
+	if !ok || time.Since(cached.at) > searchCacheTTL {
+		return nil, false
+	}
+	return cached.books, true
+}
+
+// saveSearch memoizes a provider search, empty results included — a query
+// that found nothing once will find nothing tomorrow.
+func (m *Matcher) saveSearch(query string, books []models.Book) {
+	m.searchMu.Lock()
+	defer m.searchMu.Unlock()
+	m.searchCache[query] = cachedSearch{books: books, at: time.Now()}
 }
 
 // --- grouping ---------------------------------------------------------------
@@ -722,17 +777,24 @@ func sortGroups(groups []group) {
 func groupsToCandidates(groups []group) []Candidate {
 	out := make([]Candidate, 0, len(groups))
 	for _, g := range groups {
+		// A group nobody matched carries a nil slice, which JSON renders
+		// as null — and a null where the client expects an array is a
+		// crash. Empty means "no suggestions"; null means "no field".
+		suggestions := g.suggestions
+		if suggestions == nil {
+			suggestions = []Suggestion{}
+		}
 		c := Candidate{
 			Key: g.key, Kind: g.kind, Root: g.root, DirPath: g.dirPath,
 			TitleGuess: g.signal.title, AuthorGuess: g.signal.author,
-			Files: g.files, Suggestions: g.suggestions,
+			Files: g.files, Suggestions: suggestions,
 		}
 		for _, f := range g.files {
 			if f.DurationSeconds != nil {
 				c.TotalDurationSeconds += *f.DurationSeconds
 			}
 		}
-		c.HighConfidence = len(g.suggestions) > 0 && g.suggestions[0].Confidence >= HighConfidence
+		c.HighConfidence = len(suggestions) > 0 && suggestions[0].Confidence >= HighConfidence
 		out = append(out, c)
 	}
 	return out

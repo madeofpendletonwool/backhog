@@ -16,9 +16,34 @@ export interface LibraryParams {
   list?: string;
 }
 
-/** Invalidates every view whose contents depend on entry state. */
-function invalidateLibrary(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const key of ["library", "queue", "stats", "debt", "insights", "lists", "list", "entry", "facets", "series", "achievements", "season"]) {
+/**
+ * Invalidates every view whose contents depend on entry state. Both arenas
+ * share the entries table and this list, so a status change anywhere — the
+ * shared StatusMenu above all — refreshes the shelf it happened on, whichever
+ * arena that is.
+ */
+export function invalidateLibrary(queryClient: ReturnType<typeof useQueryClient>) {
+  for (const key of [
+    "library", // games shelf
+    "books", // books shelf, search, ISBN lookups
+    "queue",
+    "stats",
+    "bookStats",
+    "debt",
+    "readingDebt",
+    "insights",
+    "readingInsights",
+    "lists",
+    "list",
+    "entry",
+    "facets",
+    "bookFacets",
+    "series",
+    "achievements",
+    "season",
+    "projects",
+    "project",
+  ]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }

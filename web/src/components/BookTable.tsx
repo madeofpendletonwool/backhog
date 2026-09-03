@@ -48,7 +48,7 @@ export function BookTable({ entries }: { entries: BookEntry[] }) {
                   {byline(entry.book) || "—"}
                 </td>
                 <td className="max-w-[14rem] truncate px-4 py-2.5 text-xs text-ink-400">
-                  {entry.book.subjects.slice(0, 3).join(", ") || "—"}
+                  {(entry.book.subjects ?? []).slice(0, 3).join(", ") || "—"}
                 </td>
                 <td className="px-4 py-2.5 text-right">
                   {entry.user_rating != null ? (

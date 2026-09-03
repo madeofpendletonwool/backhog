@@ -29,6 +29,11 @@ const (
 // edition or search — a real "no such book", not a transport failure.
 var ErrBookNotFound = errors.New("book not found upstream")
 
+// ErrQueryNotAllowed is returned when Open Library answers 422 for a search —
+// it rejects stopword-only queries ("the", "a") outright. That is an empty
+// result set, not a failure the caller should surface as an error.
+var ErrQueryNotAllowed = errors.New("query not allowed upstream")
+
 // Book is a provider-agnostic, work-level metadata record. ID is the
 // provider's work key (Open Library "OL12345W"). Edition is set only when the
 // record came from an edition-oriented lookup such as ISBN.
@@ -201,6 +206,9 @@ func (c *OpenLibrary) Search(ctx context.Context, query string, limit int) ([]Bo
 	path := fmt.Sprintf("/search.json?q=%s&limit=%d&fields=key,title,author_name,first_publish_year,cover_i",
 		url.QueryEscape(query), limit)
 	if err := c.getJSON(ctx, path, &payload); err != nil {
+		if errors.Is(err, ErrQueryNotAllowed) {
+			return []Book{}, nil
+		}
 		return nil, err
 	}
 
@@ -388,6 +396,9 @@ func (c *OpenLibrary) getJSON(ctx context.Context, path string, dst any) error {
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("%w: %s", ErrBookNotFound, path)
+	}
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		return fmt.Errorf("%w: %s", ErrQueryNotAllowed, path)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("openlibrary: %s returned %d: %s", path, resp.StatusCode, truncate(string(body), 200))

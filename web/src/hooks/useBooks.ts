@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { PAGE_SIZE } from "@/hooks/useLibrary";
+import { invalidateLibrary, PAGE_SIZE } from "@/hooks/useLibrary";
 import { api } from "@/lib/api";
 import { isBookEntry, type BookEntry, type Status } from "@/lib/types";
 
@@ -22,11 +22,7 @@ export interface BookLibraryParams {
 }
 
 /** Invalidates every view whose contents depend on book entry state. */
-function invalidateBooks(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const key of ["library", "books", "queue", "stats", "bookStats", "bookFacets", "readingInsights", "readingDebt", "lists", "list", "entry", "projects", "project"]) {
-    queryClient.invalidateQueries({ queryKey: [key] });
-  }
-}
+const invalidateBooks = invalidateLibrary;
 
 /**
  * Paged book library query. `media=book` is pinned on every request: the

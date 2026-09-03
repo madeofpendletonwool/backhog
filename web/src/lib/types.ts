@@ -122,14 +122,16 @@ export interface GameExtras {
 export interface Book {
   id: string;
   title: string;
-  authors: string[];
+  /** The API emits null, not [], when a work has no authors. */
+  authors: string[] | null;
   description: string;
   cover_url: string;
   accent_hex: string;
   first_publish_year: number | null;
-  subjects: string[];
+  /** The API emits null, not [], when a work has no subjects. */
+  subjects: string[] | null;
   /** The printings cache, present on detail and add responses. */
-  editions?: BookEdition[];
+  editions?: BookEdition[] | null;
 }
 
 /** One printing of a work. Page maps key off the edition, never the work. */
@@ -694,7 +696,8 @@ export interface MediaCandidate {
   author_guess: string;
   files: MediaFile[];
   total_duration_seconds: number;
-  suggestions: MediaSuggestion[];
+  /** Null from older API builds when nothing matched; always treat as []. */
+  suggestions: MediaSuggestion[] | null;
   high_confidence: boolean;
 }
 

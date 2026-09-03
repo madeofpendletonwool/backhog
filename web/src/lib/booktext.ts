@@ -1,4 +1,4 @@
-import type { BookTextChapters, ChapterImage, TextChapter } from "./types";
+import type { BookTextChapters, ChapterImage, PositionPage, TextChapter } from "./types";
 
 /**
  * The reader's coordinate maths, kept out of the component because it is the
@@ -164,4 +164,37 @@ export function chapterTitle(chapter: TextChapter): string {
 export function percentAt(text: BookTextChapters | undefined, offset: number): number {
   if (!text || text.char_count <= 0) return 0;
   return Math.min(100, Math.max(0, (offset / text.char_count) * 100));
+}
+
+/**
+ * The printed page, said out loud with its error bar: "page 214 ± 3".
+ *
+ * A page number derived from an anchor map is an estimate, and how good an
+ * estimate depends entirely on how near the last scan was. Printing the bare
+ * number would claim a precision the map does not have — front matter,
+ * plates and chapter-break whitespace all bend the line between text and
+ * paper — so the bar travels with the number everywhere it is shown.
+ *
+ * Three shapes, in decreasing order of certainty:
+ *
+ *   page 214      — the reader scanned this page; it was measured, not derived
+ *   page 214 ± 3  — interpolated, and the map can bound how wrong it might be
+ *   page ~214     — one anchor and no scale, so there is no bound to state
+ */
+export function formatPage(page: PositionPage | null | undefined): string | null {
+  if (!page) return null;
+  if (page.margin === null) return `page ~${page.page}`;
+  // Rounded up, because a bar rounded down to zero reads as a promise.
+  const margin = Math.ceil(page.margin);
+  return margin > 0 ? `page ${page.page} ± ${margin}` : `page ${page.page}`;
+}
+
+/** The same estimate explained, for a tooltip or a caption under it. */
+export function explainPage(page: PositionPage | null | undefined): string | null {
+  if (!page) return null;
+  if (page.margin === null) {
+    return "Only one page of this printing has been scanned, so there is no way to tell how fast its pages go by. Scan another and this gets a real accuracy.";
+  }
+  if (Math.ceil(page.margin) === 0) return "You scanned this page, so this is where you are.";
+  return `Estimated from the pages you have scanned; the nearest is about ${Math.round(page.anchor_distance)} page${Math.round(page.anchor_distance) === 1 ? "" : "s"} away. Scanning more tightens it.`;
 }

@@ -51,12 +51,20 @@ func (a alignmentAnchors) AudioAnchors(ctx context.Context, entryID string) ([]p
 	return out, nil
 }
 
+// pageSeedConfidence is what the printing's own page count is worth as an
+// anchor. It is a real number off the catalogue, not a guess, but nobody
+// has looked at the paper: front matter, plates and a different leading
+// all push the true map away from the straight line between the covers.
+// Low enough that any scanned anchor near it dominates the interpolation,
+// high enough that the map is usable before the first scan.
+const pageSeedConfidence = 0.3
+
 func (a alignmentAnchors) PageAnchors(ctx context.Context, entryID string) ([]position.Anchor, error) {
 	stored, err := a.store.PageAnchorsForEntry(ctx, entryID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]position.Anchor, 0, len(stored))
+	out := make([]position.Anchor, 0, len(stored)+2)
 	for _, s := range stored {
 		out = append(out, position.Anchor{
 			CharOffset: s.CharOffset,
@@ -64,7 +72,52 @@ func (a alignmentAnchors) PageAnchors(ctx context.Context, entryID string) ([]po
 			Confidence: s.Confidence,
 		})
 	}
-	return out, nil
+
+	seed, err := a.store.PageMapSeedForEntry(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, seedPageAnchors(seed, stored)...), nil
+}
+
+// seedPageAnchors stretches the printing's page count across the canonical
+// text: page one at the start, the last page at the end. That is enough to
+// answer "roughly where am I in the paperback" the day a copy is
+// registered, and every real scan lands inside it and tightens the
+// segments it falls between.
+//
+// A seed that would contradict a real anchor is dropped rather than
+// merged: the translator resolves a non-monotonic pair by keeping the
+// earlier one, which for a seed pinned at the very ends of the book would
+// mean a guess silently evicting a measurement. Scanning page one, or a
+// page past the printing's own page count, is exactly the case where the
+// catalogue is wrong and the reader is right.
+func seedPageAnchors(seed models.PageMapSeed, stored []models.PageAnchor) []position.Anchor {
+	if !seed.Usable() {
+		return nil
+	}
+	first, last := true, true
+	for _, s := range stored {
+		if s.CharOffset <= 0 || s.PrintedPage <= 1 {
+			first = false
+		}
+		if s.CharOffset >= seed.CharCount || s.PrintedPage >= seed.PageCount {
+			last = false
+		}
+	}
+
+	out := make([]position.Anchor, 0, 2)
+	if first {
+		out = append(out, position.Anchor{CharOffset: 0, Value: 1, Confidence: pageSeedConfidence})
+	}
+	if last {
+		out = append(out, position.Anchor{
+			CharOffset: seed.CharCount,
+			Value:      float64(seed.PageCount),
+			Confidence: pageSeedConfidence,
+		})
+	}
+	return out
 }
 
 // handleBookAlignEnqueue queues an alignment for one of the caller's

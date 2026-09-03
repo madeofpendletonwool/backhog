@@ -13,6 +13,8 @@ import {
   blockIndexAt,
   chapterAt,
   chapterTitle,
+  explainPage,
+  formatPage,
   percentAt,
   readableChapters,
   readerBlocks,
@@ -536,7 +538,7 @@ function Reader({ entry }: { entry: BookEntry }) {
   const next = spineOrder >= 0 && spineOrder < toc.length - 1 ? toc[spineOrder + 1] : null;
 
   const percent = percentAt(text.data, liveOffset);
-  const page = position.data?.page?.page ?? null;
+  const page = position.data?.page ?? null;
   const totalPages = (work?.editions ?? []).find((edition) => edition.page_count)?.page_count ?? null;
 
   // The flash names a character offset, but the pulse paints a block: the
@@ -646,10 +648,12 @@ function Reader({ entry }: { entry: BookEntry }) {
           </div>
           <span className="shrink-0 tabular-nums">{Math.round(percent)}%</span>
           {/* The page view exists only once a page map does; until then the
-              server sends page: null and this simply is not there. */}
+              server sends page: null and this simply is not there. The bar
+              travels with the number: a derived page is an estimate, and one
+              shown bare would claim a precision the map does not have. */}
           {page !== null && (
-            <span className="shrink-0 tabular-nums">
-              page {page}
+            <span className="shrink-0 tabular-nums" title={explainPage(page) ?? undefined}>
+              {formatPage(page)}
               {totalPages !== null ? ` of ${totalPages}` : ""}
             </span>
           )}

@@ -834,6 +834,62 @@ export interface PositionPage {
   confidence: number;
   /** Pages to the nearest page-map anchor; 0 means it was measured. */
   anchor_distance: number;
+  /**
+   * The error bar, in pages: `page` ± this. Null when the map holds a single
+   * anchor and so knows where one page is but nothing about how fast pages
+   * go by — say the accuracy is unknown rather than drawing a bar.
+   */
+  margin: number | null;
+}
+
+/** One place a scanned passage was found in the canonical text. */
+export interface PassageMatch {
+  char_offset: number;
+  char_end: number;
+  confidence: number;
+}
+
+/**
+ * POST /api/books/{entryId}/passage — where a stretch of text read off paper
+ * sits in the ebook. `context` is the canonical text around the match, and
+ * showing it is the point: a reader confirms or rejects the whole map in one
+ * glance at a line they just read.
+ */
+export interface PassageResult {
+  match: PassageMatch;
+  alternatives: PassageMatch[];
+  /** True when the passage recurs and the server refused to pick. */
+  ambiguous: boolean;
+  context: { before: string; passage: string; after: string };
+}
+
+/**
+ * A printing of a book the reader physically holds. Page numbers belong to a
+ * printing, so the page map hangs off this and never off the work.
+ */
+export interface PhysicalCopy {
+  id: string;
+  entry_id: string;
+  edition_id: string;
+  notes: string;
+  /** How many pages have been mapped; the number the copy panel reports. */
+  anchor_count: number;
+  /**
+   * Whether this is the copy the position endpoints read. Only the printing
+   * the entry is anchored to feeds them, so a reader who owns two printings
+   * has two maps and exactly one of them is what "page 214" means.
+   */
+  drives_pages: boolean;
+  created_at: string;
+}
+
+/** One printed page pinned to the canonical offset where it begins. */
+export interface PageAnchor {
+  printed_page: number;
+  char_offset: number;
+  source: "ocr" | "manual";
+  confidence: number;
+  created_at: string;
 }
 
 /**

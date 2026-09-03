@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { BookCover } from "@/components/BookCover";
+import { PhysicalCopyPanel } from "@/components/PhysicalCopyPanel";
 import { ListMembership, ProjectMembership } from "@/components/EntryMembership";
 import { StatusMenu } from "@/components/StatusMenu";
 import { Dialog } from "@/components/ui/Dialog";
@@ -219,6 +220,8 @@ export function BookDetailPage() {
           <UnattachedFiles entryId={entry.id} />
 
           <AlignmentPanel entryId={entry.id} />
+
+          <PhysicalCopyPanel entryId={entry.id} editions={editions} />
 
           <ListMembership entry={entry} />
 

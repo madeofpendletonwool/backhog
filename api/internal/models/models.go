@@ -877,7 +877,12 @@ type PhysicalCopy struct {
 	Notes     string `json:"notes"`
 	// AnchorCount is computed on list, so the copy UI can say how much of
 	// a page map exists without fetching it.
-	AnchorCount int       `json:"anchor_count"`
+	AnchorCount int `json:"anchor_count"`
+	// DrivesPages reports whether this is the copy the position endpoints
+	// read: only the printing the entry itself is anchored to feeds them.
+	// A reader who owns two printings has two maps and one of them is
+	// what "page 214" means, and the UI has to be able to say which.
+	DrivesPages bool      `json:"drives_pages"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -893,6 +898,29 @@ type PageAnchor struct {
 	Confidence     float64   `json:"confidence"`
 	CreatedAt      time.Time `json:"created_at"`
 }
+
+// PageMapSeed is the coarse page map a printing has before anybody has
+// scanned anything: the printing's own page count against the length of
+// the canonical text. It is not a measurement — nobody has looked at the
+// paper — but "this printing has 412 pages and the text is 640k
+// characters" already places every offset to within a chapter, which is
+// enough to be useful on day one and improves with every real anchor
+// scanned over the top of it.
+//
+// It exists only for a printing the reader actually registered a copy
+// of: page numbers of a printing nobody owns are page numbers of
+// nothing, and inventing them would put a page readout on every book in
+// the library.
+type PageMapSeed struct {
+	PageCount int
+	CharCount int
+}
+
+// Usable reports whether the seed has both halves it needs to span a
+// book. A printing whose page count Open Library never recorded, or a
+// book whose EPUB has not been parsed, has no seed and simply waits for
+// real anchors.
+func (s PageMapSeed) Usable() bool { return s.PageCount > 1 && s.CharCount > 0 }
 
 // Alignment job states. The first four are the worker pipeline's live
 // positions; the last three are terminal. 'low_confidence' is a *usable*

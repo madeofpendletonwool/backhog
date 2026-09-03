@@ -80,6 +80,27 @@ type pageView struct {
 	Confidence float64 `json:"confidence"`
 	// AnchorDistance is the gap to the nearest page-map anchor, in pages.
 	AnchorDistance float64 `json:"anchor_distance"`
+	// Margin is the error bar, in pages: "page 214 ± 3". It is null when
+	// the map holds a single anchor and therefore knows where one page is
+	// but nothing about how fast pages go by — a client that gets null
+	// must say the accuracy is unknown rather than draw a bar it invented.
+	Margin *float64 `json:"margin"`
+}
+
+// newPageView renders one page translation, carrying its error bar through
+// as null when the map could not bound it.
+func newPageView(tr position.Translation) *pageView {
+	out := &pageView{
+		Page:           int(tr.Value),
+		Derived:        true,
+		Confidence:     tr.Confidence,
+		AnchorDistance: tr.AnchorDistance,
+	}
+	if tr.MarginKnown {
+		margin := tr.Margin
+		out.Margin = &margin
+	}
+	return out
 }
 
 // positionRequest carries exactly one of the three ways to say where you are.
@@ -321,10 +342,7 @@ func (s *Server) translateBookPosition(w http.ResponseWriter, r *http.Request,
 	}
 	if views.translator.HasPages() {
 		if tr, ok := views.translator.CharToPageT(charOffset); ok {
-			out.Page = &pageView{
-				Page: int(tr.Value), Derived: true,
-				Confidence: tr.Confidence, AnchorDistance: tr.AnchorDistance,
-			}
+			out.Page = newPageView(tr)
 		}
 	}
 
@@ -705,10 +723,7 @@ func pageAt(p models.BookProgress, v bookViews) *pageView {
 	if !ok {
 		return nil
 	}
-	return &pageView{
-		Page: int(tr.Value), Derived: true,
-		Confidence: tr.Confidence, AnchorDistance: tr.AnchorDistance,
-	}
+	return newPageView(tr)
 }
 
 // chapterAt finds the spine document owning an offset. Ranges are

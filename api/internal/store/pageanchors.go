@@ -51,6 +51,26 @@ func (s *Store) CreatePhysicalCopy(ctx context.Context, userID, entryID, edition
 	if err != nil {
 		return models.PhysicalCopy{}, err
 	}
+
+	// Only the copy of the printing the entry is anchored to feeds the page
+	// map, and most entries are added by title and anchored to nothing. "I
+	// own this on paper" is the strongest statement anyone makes about which
+	// printing an entry is, so an unanchored entry adopts it — otherwise the
+	// reader scans pages into a map nothing reads and is never told why. An
+	// entry already anchored elsewhere keeps its printing: owning two is
+	// allowed, and silently re-pointing progress at the other one is not.
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE library_entries SET edition_id = ?
+		WHERE id = ? AND user_id = ? AND (edition_id IS NULL OR edition_id = '')`,
+		c.EditionID, entryID, userID); err != nil {
+		return models.PhysicalCopy{}, err
+	}
+	var anchored sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT edition_id FROM library_entries WHERE id = ?`, entryID).Scan(&anchored); err != nil {
+		return models.PhysicalCopy{}, err
+	}
+	c.DrivesPages = anchored.Valid && anchored.String == c.EditionID
 	return c, nil
 }
 
@@ -62,8 +82,10 @@ func (s *Store) PhysicalCopies(ctx context.Context, userID, entryID string) ([]m
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT pc.id, pc.user_id, pc.entry_id, pc.edition_id, pc.notes, pc.created_at,
-		       (SELECT COUNT(*) FROM page_anchors pa WHERE pa.physical_copy_id = pc.id)
+		       (SELECT COUNT(*) FROM page_anchors pa WHERE pa.physical_copy_id = pc.id),
+		       (e.edition_id = pc.edition_id)
 		FROM physical_copies pc
+		JOIN library_entries e ON e.id = pc.entry_id
 		WHERE pc.user_id = ? AND pc.entry_id = ?
 		ORDER BY pc.created_at, pc.id`, userID, entryID)
 	if err != nil {
@@ -74,10 +96,12 @@ func (s *Store) PhysicalCopies(ctx context.Context, userID, entryID string) ([]m
 	out := []models.PhysicalCopy{}
 	for rows.Next() {
 		var c models.PhysicalCopy
+		var drives sql.NullBool
 		if err := rows.Scan(&c.ID, &c.UserID, &c.EntryID, &c.EditionID,
-			&c.Notes, &c.CreatedAt, &c.AnchorCount); err != nil {
+			&c.Notes, &c.CreatedAt, &c.AnchorCount, &drives); err != nil {
 			return nil, err
 		}
+		c.DrivesPages = drives.Bool
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -218,6 +242,59 @@ func (s *Store) PageAnchorsForEntry(ctx context.Context, entryID string) ([]mode
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// PageMapSeedForEntry returns the coarse page map an entry starts with:
+// the page count of the printing the user registered a copy of, and the
+// length of the canonical text those pages hold. Both halves are
+// optional — a printing Open Library never recorded a page count for, or
+// a book whose EPUB has not been parsed, seeds nothing — and an entry
+// with no registered copy seeds nothing either, because a page readout
+// for a printing nobody owns is a page readout for nothing.
+func (s *Store) PageMapSeedForEntry(ctx context.Context, entryID string) (models.PageMapSeed, error) {
+	var seed models.PageMapSeed
+	var pageCount sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT ed.page_count
+		FROM library_entries e
+		JOIN physical_copies pc ON pc.entry_id = e.id AND pc.edition_id = e.edition_id
+		JOIN book_editions ed ON ed.id = pc.edition_id
+		WHERE e.id = ?
+		ORDER BY pc.created_at, pc.id
+		LIMIT 1`, entryID).Scan(&pageCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return seed, nil
+	}
+	if err != nil {
+		return seed, err
+	}
+	if !pageCount.Valid {
+		return seed, nil
+	}
+	seed.PageCount = int(pageCount.Int64)
+
+	// The other half is the canonical text's length, which lives behind
+	// the entry's book and its parsed EPUB. Neither absence is an error:
+	// a book with no EPUB attached has no text for pages to divide.
+	var charCount sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT et.char_count
+		FROM library_entries e
+		JOIN media_files mf ON mf.book_id = e.book_id AND mf.kind = ? AND mf.missing_at IS NULL
+		JOIN epub_texts et ON et.media_file_id = mf.id
+		WHERE e.id = ?
+		ORDER BY mf.id
+		LIMIT 1`, models.MediaFileEpub, entryID).Scan(&charCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return seed, nil
+	}
+	if err != nil {
+		return seed, err
+	}
+	if charCount.Valid {
+		seed.CharCount = int(charCount.Int64)
+	}
+	return seed, nil
 }
 
 // physicalCopyForUser resolves a copy id within one user's entry,

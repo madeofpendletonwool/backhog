@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RATES, SLEEP_MINUTES, useAudioClock, useAudioPlayer } from "@/hooks/useAudioPlayer";
 import { useTheme } from "@/hooks/useTheme";
 import { api, bookCoverUrl } from "@/lib/api";
+import { explainPage, formatPage } from "@/lib/booktext";
 import { accentStyle, byline, formatRemaining, formatTimecode } from "@/lib/format";
 import type { GiName } from "@/lib/gameicons";
 import { Gi } from "./ui/Gi";
@@ -213,6 +214,8 @@ function Expanded() {
 
   return (
     <div className="mb-3 space-y-4 border-b-2 border-line pb-3">
+      <PaperPage />
+
       <ContinueReading />
 
       <Section label="Skip">
@@ -290,6 +293,50 @@ function Expanded() {
     </div>
   );
 }
+
+/**
+ * Where the tape is, in the paper copy: "page 214 ± 3".
+ *
+ * This is the third leg of the translation closing — you are listening, and
+ * the app can still tell you which page of the paperback on your nightstand
+ * you would be looking at. It needs both maps (audio→text through the
+ * alignment, text→page through the scans), so it is simply absent unless both
+ * exist.
+ *
+ * The lookup is speculative and bucketed to the half minute rather than run
+ * on every tick: a page number that moves once a minute is exactly as useful
+ * as one that moves sixty times, and costs a sixtieth as much.
+ */
+function PaperPage() {
+  const player = useAudioPlayer();
+  const clock = useAudioClock();
+  const entry = player.entry;
+  const bucket = Math.floor(clock / PAGE_REFRESH_SECONDS) * PAGE_REFRESH_SECONDS;
+
+  const { data } = useQuery({
+    queryKey: ["bookPagePosition", entry?.id, bucket],
+    queryFn: () => api.translateBookPosition(entry!.id, { audio: bucket }),
+    enabled: Boolean(entry),
+    retry: false,
+    staleTime: Infinity,
+  });
+
+  const page = data?.page ?? null;
+  if (!page) return null;
+
+  return (
+    <p
+      className="font-display text-[11px] uppercase tracking-wider text-ink-300"
+      title={explainPage(page) ?? undefined}
+    >
+      <Gi name="book-pile" className="mr-1.5 inline size-3.5 text-ink-500" />
+      {formatPage(page)} in your paper copy
+    </p>
+  );
+}
+
+/** How coarsely the paper-page readout follows the tape, in seconds. */
+const PAGE_REFRESH_SECONDS = 30;
 
 /**
  * The reverse handoff: "Continue reading" opens the reader on the sentence

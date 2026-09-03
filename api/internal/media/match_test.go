@@ -911,3 +911,84 @@ func TestEpubMetadataOutranksFilename(t *testing.T) {
 		t.Errorf("signal = %q; want %q", c.Suggestions[0].Signal, SourceSignalSidecar)
 	}
 }
+
+// A library bigger than one page of entries must still be recognised as
+// owned. ListEntries silently defaults to 60 rows when given no limit, so the
+// matcher used to treat everything past the 60th newest book as unowned:
+// it offered a book the user already had as a fresh Open Library hit, and
+// confirming it tried to add a duplicate and failed with a conflict the user
+// could do nothing about.
+func TestOwnedBooksBeyondOnePageAreRecognised(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	userID := testUser(t, st)
+
+	// The book we care about goes in FIRST, so the newest-first default page
+	// pushes it out of the window.
+	target := metadata.Book{ID: "OL1W", Title: "Anathem", Authors: []string{"Neal Stephenson"}}
+	seed := append([]metadata.Book{target}, make([]metadata.Book, 0, 80)...)
+	for i := 0; i < 80; i++ {
+		seed = append(seed, metadata.Book{
+			ID:      fmt.Sprintf("OL%dW", 1000+i),
+			Title:   fmt.Sprintf("Filler Book %d", i),
+			Authors: []string{"Someone Else"},
+		})
+	}
+	var targetEntry string
+	for i, b := range seed {
+		if err := st.UpsertBook(ctx, b, ""); err != nil {
+			t.Fatalf("seed book %s: %v", b.ID, err)
+		}
+		e, err := st.AddBookEntry(ctx, userID, b.ID, nil, models.StatusBacklog)
+		if err != nil {
+			t.Fatalf("add entry %s: %v", b.ID, err)
+		}
+		// Distinct, ascending timestamps: the default library sort is
+		// created_at DESC, so without them every row ties and the page
+		// boundary lands wherever the storage engine feels like. The target
+		// is the oldest, which is precisely what a paged read drops.
+		if _, err := st.DB().ExecContext(ctx,
+			`UPDATE library_entries SET created_at = ? WHERE id = ?`,
+			time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC), e.ID); err != nil {
+			t.Fatalf("backdate entry: %v", err)
+		}
+		if b.ID == target.ID {
+			targetEntry = e.ID
+		}
+	}
+
+	f := epubFile("downloads/anathem.epub")
+	raw, err := json.Marshal(bookTags{Title: "Anathem", Authors: []string{"Neal Stephenson"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.ContainerMetadata = raw
+	if err := st.InsertMediaFiles(ctx, []models.MediaFile{f}); err != nil {
+		t.Fatalf("insert files: %v", err)
+	}
+
+	m := NewMatcher(st, nil)
+	defer m.Close()
+	cands, err := m.Candidates(ctx, userID)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if len(cands) != 1 || len(cands[0].Suggestions) == 0 {
+		t.Fatalf("expected one suggested candidate, got %+v", cands)
+	}
+	top := cands[0].Suggestions[0]
+	if top.Book.ID != target.ID {
+		t.Fatalf("top suggestion = %s, want %s", top.Book.ID, target.ID)
+	}
+	// The three fields the confirm button depends on. Without them the UI
+	// tries to add a book that is already there.
+	if !top.InLibrary {
+		t.Error("in_library = false for a book the user owns")
+	}
+	if top.EntryID != targetEntry {
+		t.Errorf("entry_id = %q, want %q — confirm cannot attach without it", top.EntryID, targetEntry)
+	}
+	if top.Source != SourceLibrary {
+		t.Errorf("source = %q, want %q", top.Source, SourceLibrary)
+	}
+}

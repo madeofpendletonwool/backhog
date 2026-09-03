@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/db"
+	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
 
@@ -555,5 +556,60 @@ func chmodTree(t *testing.T, root string, transform func(fs.FileMode) fs.FileMod
 	})
 	if err != nil {
 		t.Fatalf("chmod %s: %v", root, err)
+	}
+}
+
+// An EPUB whose OPF cannot be read must still be inventoried. Reading package
+// metadata was added to a step that previously only checked for DRM, and
+// treating a parse failure as a scan failure silently dropped real books out
+// of the library — a legacy iso-8859-1 declaration was enough to lose one.
+// Metadata is a bonus; a book's place in the library is not.
+func TestEpubWithUnreadableMetadataStillInventories(t *testing.T) {
+	base := t.TempDir()
+	booksDir := filepath.Join(base, "ebooks")
+	writeFile(t, filepath.Join(booksDir, "legacy.epub"), buildEPUBWithOPF(false, legacyOPF))
+	writeFile(t, filepath.Join(booksDir, "broken.epub"), buildEPUBWithOPF(false, brokenOPF))
+	writeFile(t, filepath.Join(booksDir, "truncated.epub"), []byte("PK\x03\x04 not really a zip"))
+
+	st := newTestStore(t)
+	runner := NewRunner(st, []string{booksDir})
+	res, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	// The two real books are inventoried; only the file that is not a
+	// container at all fails, because a container we cannot open is one
+	// whose DRM status we cannot rule out.
+	if res.Found != 2 || res.Failed != 1 {
+		t.Errorf("counts = %+v; want found 2, failed 1", res)
+	}
+
+	files, err := st.ListMediaFiles(context.Background(), store.MediaFileFilter{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byPath := map[string]models.MediaFile{}
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	if _, ok := byPath["legacy.epub"]; !ok {
+		t.Fatal("an iso-8859-1 OPF cost the book its place in the library")
+	}
+	if _, ok := byPath["broken.epub"]; !ok {
+		t.Fatal("a malformed OPF cost the book its place in the library")
+	}
+
+	// The legacy charset is decoded, not merely tolerated.
+	var tags map[string]any
+	if err := json.Unmarshal(byPath["legacy.epub"].ContainerMetadata, &tags); err != nil {
+		t.Fatalf("legacy metadata not JSON: %v", err)
+	}
+	if tags["title"] != "Of Mice and Men" {
+		t.Errorf("legacy OPF metadata = %v; want it decoded, not dropped", tags)
+	}
+	// The malformed one is inventoried with no metadata, so it falls back to
+	// filename matching exactly as it did before metadata was read at all.
+	if byPath["broken.epub"].ContainerMetadata != nil {
+		t.Errorf("broken OPF produced metadata: %s", byPath["broken.epub"].ContainerMetadata)
 	}
 }

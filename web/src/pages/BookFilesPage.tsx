@@ -7,7 +7,40 @@ import { Button, EmptyState, Input, Panel, Select, Spinner } from "@/components/
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { byline, formatDuration } from "@/lib/format";
-import type { Book, MediaCandidate, MediaSuggestion } from "@/lib/types";
+import type { Book, Entry, MediaCandidate, MediaSuggestion } from "@/lib/types";
+
+/**
+ * Resolves the library entry to attach a suggestion's files to, adding the
+ * book first when the user does not own it yet.
+ *
+ * The recovery matters: `entry_id` can be missing for a book the user really
+ * does own, and adding it again answers 409. Treating that as "already
+ * yours, find it" turns a dead end into the entry we needed, instead of
+ * surfacing a conflict the user has no way to act on.
+ */
+async function entryForSuggestion(suggestion: MediaSuggestion): Promise<string> {
+  if (suggestion.entry_id) return suggestion.entry_id;
+  try {
+    const entry = await api.addBookToLibrary(suggestion.book.id);
+    return entry.id;
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 409) throw error;
+    const existing = await findBookEntry(suggestion.book.id);
+    if (!existing) throw error;
+    return existing;
+  }
+}
+
+/** Finds the user's existing entry for a book they already own. */
+async function findBookEntry(bookId: string): Promise<string | null> {
+  const pageSize = 200; // the API's ceiling
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await api.library({ media: "book", limit: pageSize, offset });
+    const match = page.entries.find((e: Entry) => e.book?.id === bookId);
+    if (match) return match.id;
+    if (page.entries.length < pageSize || offset + pageSize >= page.total) return null;
+  }
+}
 
 /**
  * The attach review queue. The scanner knows what files exist, the matcher
@@ -71,11 +104,7 @@ export function BookFilesPage() {
     mutationFn: async ({ candidate, suggestion }: { candidate: MediaCandidate; suggestion: MediaSuggestion }) => {
       // The attach API is entry-keyed. If the user doesn't own the book
       // yet, adding it to the library produces the entry to attach to.
-      let entryId = suggestion.entry_id;
-      if (!entryId) {
-        const entry = await api.addBookToLibrary(suggestion.book.id);
-        entryId = entry.id;
-      }
+      const entryId = await entryForSuggestion(suggestion);
       return api.attachFiles(
         entryId,
         candidate.files.map((f) => f.id),
@@ -88,6 +117,8 @@ export function BookFilesPage() {
     },
     onError: (error, { candidate }) => {
       markBusy(candidate.key, false);
+      // Only the attach call can report a file conflict; a 409 from adding
+      // the book means something else entirely and used to be mislabelled.
       const message =
         error instanceof ApiError && error.status === 409
           ? "One of these files is already attached to another book — detach it there first."
@@ -112,11 +143,7 @@ export function BookFilesPage() {
       try {
         const suggestion = candidate.suggestions?.[0];
         if (!suggestion) continue;
-        let entryId = suggestion.entry_id;
-        if (!entryId) {
-          const entry = await api.addBookToLibrary(suggestion.book.id);
-          entryId = entry.id;
-        }
+        const entryId = await entryForSuggestion(suggestion);
         await api.attachFiles(
           entryId,
           candidate.files.map((f) => f.id),

@@ -3,9 +3,12 @@ package epub
 import (
 	"archive/zip"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+
+	"golang.org/x/text/encoding/htmlindex"
 )
 
 // Metadata is the OPF <metadata> block: what a book says about itself. It is
@@ -45,13 +48,22 @@ func (m Metadata) Empty() bool {
 		m.Language == "" && m.Date == "" && len(m.Identifiers) == 0
 }
 
+// ErrBadMetadata marks a package whose container opened fine but whose OPF
+// could not be read — a missing rootfile, malformed XML, an exotic charset
+// declaration. It exists so a caller can tell "this file is unusable" from
+// "this file is fine, its metadata is not": the second is a book that still
+// belongs in a library, just without what it says about itself.
+var ErrBadMetadata = errors.New("epub: package metadata could not be read")
+
 // ReadMetadata pulls the metadata block out of an EPUB held in r, resolving
 // the OPF through META-INF/container.xml the same way Parse does. It reads
 // exactly two zip members and never touches the spine, so a scanner can call
 // it on every file in a library.
 //
 // ErrDRM is returned for an encrypted package, so a caller that already needs
-// the DRM verdict gets both answers from one open.
+// the DRM verdict gets both answers from one open. Errors reading the OPF
+// itself wrap ErrBadMetadata; anything else means the container is unreadable
+// and nothing about the file — DRM included — could be determined.
 func ReadMetadata(r io.ReaderAt, size int64) (Metadata, error) {
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
@@ -68,18 +80,22 @@ func metadataFromZip(zr *zip.Reader) (Metadata, error) {
 	}
 	container, err := readContainer(zr)
 	if err != nil {
-		return Metadata{}, err
+		return Metadata{}, fmt.Errorf("%w: %w", ErrBadMetadata, err)
 	}
 	f := zipLookup(zr, container.RootfilePath)
 	if f == nil {
-		return Metadata{}, fmt.Errorf("epub: OPF not found at %s", container.RootfilePath)
+		return Metadata{}, fmt.Errorf("%w: OPF not found at %s", ErrBadMetadata, container.RootfilePath)
 	}
 	rc, err := f.Open()
 	if err != nil {
-		return Metadata{}, fmt.Errorf("epub: open %s: %w", container.RootfilePath, err)
+		return Metadata{}, fmt.Errorf("%w: open %s: %w", ErrBadMetadata, container.RootfilePath, err)
 	}
 	defer rc.Close()
-	return ParseMetadata(rc)
+	m, err := ParseMetadata(rc)
+	if err != nil {
+		return Metadata{}, fmt.Errorf("%w: %w", ErrBadMetadata, err)
+	}
+	return m, nil
 }
 
 // ParseMetadata decodes an OPF package document — a standalone .opf sidecar,
@@ -110,10 +126,13 @@ func ParseMetadata(r io.Reader) (Metadata, error) {
 			} `xml:"meta"`
 		} `xml:"metadata"`
 	}
-	// No CharsetReader, matching readOPF and the TOC parsers: the OPF files
-	// tools actually emit are UTF-8, and one with an exotic declaration is
-	// better skipped with a logged reason than half-decoded.
-	if err := xml.NewDecoder(r).Decode(&raw); err != nil {
+	dec := xml.NewDecoder(r)
+	// Plenty of real EPUBs — anything converted by an older tool — declare
+	// iso-8859-1 or windows-1252. Without a CharsetReader the decoder
+	// refuses the file outright, which would cost those books their metadata
+	// for no better reason than the year they were packaged.
+	dec.CharsetReader = charsetReader
+	if err := dec.Decode(&raw); err != nil {
 		return Metadata{}, fmt.Errorf("epub: parse OPF metadata: %w", err)
 	}
 
@@ -176,4 +195,16 @@ func firstNonBlank(values []string) string {
 		}
 	}
 	return ""
+}
+
+// charsetReader decodes an OPF declared in something other than UTF-8. The
+// encoding names in these files are the HTML ones, which is exactly what
+// htmlindex resolves; an encoding nothing recognises is an error rather than
+// a guess, and the caller degrades to no metadata.
+func charsetReader(charset string, input io.Reader) (io.Reader, error) {
+	enc, err := htmlindex.Get(charset)
+	if err != nil {
+		return nil, fmt.Errorf("epub: unsupported OPF charset %q: %w", charset, err)
+	}
+	return enc.NewDecoder().Reader(input), nil
 }

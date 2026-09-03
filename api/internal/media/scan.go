@@ -8,6 +8,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/collinpendleton/backhog/api/internal/books/epub"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -336,11 +338,23 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 			// One open answers both questions: DRM, and what the book's own
 			// OPF says it is. Without the metadata an epub is matched on its
 			// filename alone, which is the weakest evidence there is.
+			//
+			// Only the DRM verdict can stop a file being inventoried. An OPF
+			// that will not parse — an exotic charset declaration, a
+			// malformed package — costs the book its metadata, never its
+			// place in the library: it falls back to filename matching,
+			// exactly as it did before any metadata was read at all.
 			encrypted, tags, err := readEpubMetadata(path)
-			if err != nil {
+			if err != nil && !errors.Is(err, epub.ErrBadMetadata) {
+				// The container itself would not open, so nothing about this
+				// file could be determined — DRM included. Refusing to
+				// inventory it is the DRM-respecting answer.
 				slog.Warn("media scan epub", "path", path, "error", err)
 				s.mutate(func(l *ScanResult) { l.Failed++ })
 				return nil
+			}
+			if err != nil {
+				slog.Warn("media scan epub metadata", "path", path, "error", err)
 			}
 			file.ContainerMetadata = marshalTags(tags)
 			if encrypted {

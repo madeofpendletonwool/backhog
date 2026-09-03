@@ -301,3 +301,47 @@ func inClauseStr(ids []string) (string, []any) {
 	}
 	return strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","), args
 }
+
+// OwnedBookEntries returns every book the user has a library entry for, with
+// that entry's id, in the lean shape (no editions) the matcher scores against.
+//
+// Deliberately not ListEntries: that one paginates, and silently defaults to
+// 60 rows when no limit is given. A matcher that sees only part of a library
+// proposes books the user already owns as if they were new, which then fails
+// to attach — so this query is unbounded by design. It stays cheap because it
+// is one join returning only what scoring and display need.
+func (s *Store) OwnedBookEntries(ctx context.Context, userID string) ([]models.Book, map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT b.id, b.title, b.authors_json, COALESCE(b.description, ''), COALESCE(b.cover_url, ''),
+		       COALESCE(b.accent_hex, ''), b.first_publish_year, b.subjects_json, e.id
+		FROM library_entries e
+		JOIN books b ON b.id = e.book_id
+		WHERE e.user_id = ? AND e.media_type = 'book'
+		ORDER BY e.created_at DESC, e.id`, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var books []models.Book
+	entryIDs := map[string]string{}
+	for rows.Next() {
+		var b models.Book
+		var authorsJSON, subjectsJSON string
+		var entryID string
+		if err := rows.Scan(&b.ID, &b.Title, &authorsJSON, &b.Description, &b.CoverURL,
+			&b.AccentHex, &b.FirstPublishYear, &subjectsJSON, &entryID); err != nil {
+			return nil, nil, err
+		}
+		b.Authors = unmarshalStrings(authorsJSON)
+		b.Subjects = unmarshalStrings(subjectsJSON)
+		// A user with two entries for one book keeps the first, which the
+		// ordering makes the most recently added.
+		if _, seen := entryIDs[b.ID]; seen {
+			continue
+		}
+		entryIDs[b.ID] = entryID
+		books = append(books, b)
+	}
+	return books, entryIDs, rows.Err()
+}

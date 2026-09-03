@@ -197,21 +197,18 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 	if err != nil {
 		return nil, err
 	}
-	entries, err := m.store.ListEntries(ctx, userID, store.LibraryFilter{MediaType: models.MediaBook})
+	// The WHOLE library, not a page of it. This used to call ListEntries,
+	// which paginates and silently falls back to 60 rows when given no
+	// limit: every book past the 60th newest looked unowned, so the matcher
+	// offered it as a fresh Open Library hit and confirming it tried to add
+	// a book the user already had.
+	owned, entryIDs, err := m.store.OwnedBookEntries(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	owned := make([]models.Book, 0, len(entries))
-	ownedIDs := map[string]bool{}
-	entryIDs := map[string]string{}
-	for _, e := range entries {
-		if e.Book != nil && !ownedIDs[e.Book.ID] {
-			ownedIDs[e.Book.ID] = true
-			owned = append(owned, *e.Book)
-		}
-		if e.Book != nil {
-			entryIDs[e.Book.ID] = e.ID
-		}
+	ownedIDs := make(map[string]bool, len(owned))
+	for _, b := range owned {
+		ownedIDs[b.ID] = true
 	}
 
 	sidecars, err := m.store.ListMediaSidecars(ctx)

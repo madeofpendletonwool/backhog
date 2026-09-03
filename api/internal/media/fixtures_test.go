@@ -87,7 +87,40 @@ func buildM4B(title, albumArtist string, seconds float64) []byte {
 // buildEPUB writes a minimal OCF container: mimetype, container.xml, one
 // package document, one chapter. encrypted adds META-INF/encryption.xml —
 // the DRM marker the scanner refuses.
+// defaultOPF is the package document buildEPUB writes: a well-formed UTF-8
+// EPUB 3 metadata block with a credited author and an ISBN.
+const defaultOPF = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="id">urn:uuid:test</dc:identifier>
+    <dc:identifier opf:scheme="ISBN">9780306406157</dc:identifier>
+    <dc:title>Fixture Book</dc:title>
+    <dc:creator opf:role="ill">Fixture Illustrator</dc:creator>
+    <dc:creator opf:role="aut">Fixture Author</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+</package>`
+
+// legacyOPF declares a non-UTF-8 charset, the way anything converted by an
+// older tool does. Its metadata must still be read.
+const legacyOPF = `<?xml version="1.0" encoding="iso-8859-1"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="id">urn:uuid:legacy</dc:identifier>
+    <dc:title>Of Mice and Men</dc:title>
+    <dc:creator opf:role="aut">John Steinbeck</dc:creator>
+  </metadata>
+</package>`
+
+// brokenOPF is a good container holding an unparseable package document. The
+// book must still be inventoried; it just loses its metadata.
+const brokenOPF = `<?xml version="1.0"?><package><metadata>`
+
 func buildEPUB(encrypted bool) []byte {
+	return buildEPUBWithOPF(encrypted, defaultOPF)
+}
+
+func buildEPUBWithOPF(encrypted bool, opf string) []byte {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 
@@ -104,17 +137,7 @@ func buildEPUB(encrypted bool) []byte {
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
 </container>`,
-		"OEBPS/content.opf": `<?xml version="1.0"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-    <dc:identifier id="id">urn:uuid:test</dc:identifier>
-    <dc:identifier opf:scheme="ISBN">9780306406157</dc:identifier>
-    <dc:title>Fixture Book</dc:title>
-    <dc:creator opf:role="ill">Fixture Illustrator</dc:creator>
-    <dc:creator opf:role="aut">Fixture Author</dc:creator>
-    <dc:language>en</dc:language>
-  </metadata>
-</package>`,
+		"OEBPS/content.opf": opf,
 	}
 	if encrypted {
 		files["META-INF/encryption.xml"] = `<?xml version="1.0"?>

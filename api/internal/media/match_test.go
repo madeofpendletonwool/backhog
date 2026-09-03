@@ -570,3 +570,52 @@ func slicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// TestSignalFromAuthorYearTitleFilenames: the "Author - YYYY - Title" and
+// "Author - Series NN - Title" ebook conventions used to leave the author
+// and series junk inside the title guess, which both polluted provider
+// queries and collided ("king" token) with unrelated library books.
+func TestSignalFromAuthorYearTitleFilenames(t *testing.T) {
+	cases := []struct {
+		path       string
+		wantTitle  string
+		wantAuthor string
+	}{
+		{"Stephen King/Stephen King - 1975 - Salem's Lot.epub", "Salem's Lot", "Stephen King"},
+		{"Stephen King/Stephen King - Talisman 01 - The Talisman.epub", "The Talisman", "Stephen King"},
+		{"Stephen King/Stephen King - The Shining 01 - The Shining.epub", "The Shining", "Stephen King"},
+		{"Stephen King/Stephen King - 1979 - The Dead Zone.epub", "The Dead Zone", "Stephen King"},
+		// Two-segment "Title - Author" still works.
+		{"Mort Terry Pratchett.epub", "Mort Terry Pratchett", ""},
+	}
+	for _, tc := range cases {
+		cs := matchCandidates(t, nil, nil, []models.MediaFile{epubFile(tc.path)})
+		if len(cs) != 1 {
+			t.Fatalf("%s: got %d candidates, want 1", tc.path, len(cs))
+		}
+		if cs[0].TitleGuess != tc.wantTitle || cs[0].AuthorGuess != tc.wantAuthor {
+			t.Errorf("%s: signal = (%q, %q), want (%q, %q)",
+				tc.path, cs[0].TitleGuess, cs[0].AuthorGuess, tc.wantTitle, tc.wantAuthor)
+		}
+	}
+}
+
+// TestKingFilesDoNotMatchKingArthur: a King-named epub must never score the
+// Steinbeck-edited "Acts of King Arthur" — the only overlap was the "king"
+// token in the polluted title, and the authors disagree.
+func TestKingFilesDoNotMatchKingArthur(t *testing.T) {
+	library := []metadata.Book{{
+		ID: "OL9W", Title: "The Acts of King Arthur and his Noble Knights",
+		Authors: []string{"John Steinbeck"},
+	}}
+	cs := matchCandidates(t, &fakeProvider{}, library,
+		[]models.MediaFile{epubFile("Stephen King/Stephen King - 1979 - The Long Walk.epub")})
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates, want 1", len(cs))
+	}
+	for _, s := range cs[0].Suggestions {
+		if s.Book.ID == "OL9W" {
+			t.Errorf("King Arthur matched The Long Walk at %.0f%%", s.Confidence*100)
+		}
+	}
+}

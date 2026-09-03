@@ -530,8 +530,17 @@ func lowerByte(b byte) byte {
 var (
 	bracketPattern      = regexp.MustCompile(`\s*[\(\[\{][^\)\]\}]*[\)\]\}]`)
 	leadingTrackPattern = regexp.MustCompile(`^\s*\d{1,3}\s[-._]*\s*`)
-	sepPattern          = regexp.MustCompile(`[\s._]+`)
-	titleAuthorSplit    = regexp.MustCompile(`\s+[-–—]\s+`)
+	// leadingYearPattern strips a copyright-year prefix ("1975 - Salem's
+	// Lot") — four digits, so the two-digit decade-prefix books of the
+	// filename conventions this handles never collide with a real title.
+	leadingYearPattern = regexp.MustCompile(`^\s*\d{4}\s*[-–—.]\s*`)
+	sepPattern         = regexp.MustCompile(`[\s._]+`)
+	titleAuthorSplit   = regexp.MustCompile(`\s+[-–—]\s+`)
+	// seriesMarkerPattern matches the middle segment of the "Author -
+	// Series NN - Title" convention: anything ending in a small number
+	// ("Talisman 01", "Discworld 20").
+	seriesMarkerPattern = regexp.MustCompile(`^.+\s+\d{1,3}$`)
+	yearOnlyPattern     = regexp.MustCompile(`^\d{4}$`)
 )
 
 // extractSignal pulls (title, author) from a group, in priority order.
@@ -549,11 +558,17 @@ func extractSignal(g *group) signal {
 
 	if g.kind == models.MediaFileAudio && len(g.files) > 1 {
 		// A directory of numbered parts: the directory names the book.
+		// Directory names use the same "Author - ... - Title" conventions
+		// as filenames, so parse them the same way.
 		s := signal{weight: 0.9, source: SourceSignalDir}
 		if len(parts) > 0 {
-			s.title = cleanTitle(parts[len(parts)-1])
+			dirTitle, dirNameAuthor := splitTitleAuthor(cleanTitle(parts[len(parts)-1]))
+			s.title = dirTitle
 			if len(parts) >= 2 {
 				s.author = cleanAuthor(parts[len(parts)-2])
+			}
+			if s.author == "" {
+				s.author = dirNameAuthor
 			}
 		}
 		if s.title == "" {
@@ -568,8 +583,8 @@ func extractSignal(g *group) signal {
 	// filename is the title — unless the filename echoes the directory,
 	// in which case the directory is the title nested one level deeper.
 	if len(parts) >= 2 {
-		dirTitle := cleanTitle(parts[len(parts)-1])
-		dirAuthor := cleanAuthor(parts[len(parts)-2])
+		dirTitle, dirNameAuthor := splitTitleAuthor(cleanTitle(parts[len(parts)-1]))
+		dirAuthor := firstNonEmpty(cleanAuthor(parts[len(parts)-2]), dirNameAuthor)
 		if fileTitle == "" || titleScore(fileTitle, dirTitle) >= 0.9 {
 			return signal{title: dirTitle, author: dirAuthor, weight: 0.9, source: SourceSignalDir}
 		}
@@ -636,11 +651,12 @@ func dirParts(dir string) []string {
 	return out
 }
 
-// cleanBase strips extension, leading track numbers and bracketed junk from
-// a filename.
+// cleanBase strips extension, leading track numbers and years, and
+// bracketed junk from a filename.
 func cleanBase(name string) string {
 	name = strings.TrimSuffix(name, path.Ext(name))
 	name = leadingTrackPattern.ReplaceAllString(name, "")
+	name = leadingYearPattern.ReplaceAllString(name, "")
 	return cleanTitle(name)
 }
 
@@ -657,23 +673,43 @@ func cleanAuthor(s string) string {
 	return cleanTitle(s)
 }
 
-// splitTitleAuthor recognises the "Title - Author" filename convention.
-// Only exactly one separator counts, and the right side must carry a real
-// word — "Book - 2" stays a title.
+// splitTitleAuthor recognises the filename conventions rippers actually use:
+//
+//   - "Title - Author"        — one separator, right side a real name.
+//   - "Author - YYYY - Title" — the year-in-the-middle ebook convention.
+//   - "Author - Series NN - Title" — "Stephen King - Talisman 01 - The
+//     Talisman", where the middle segment is a series marker, not title.
+//
+// Anything else stays one lump — a wrong guess here pollutes every query
+// and match downstream, so certainty is worth more than coverage.
 func splitTitleAuthor(s string) (title, author string) {
-	locs := titleAuthorSplit.FindAllStringIndex(s, -1)
-	if len(locs) != 1 {
-		return s, ""
-	}
-	left := strings.TrimSpace(s[:locs[0][0]])
-	right := strings.TrimSpace(s[locs[0][1]:])
-	if left == "" || right == "" {
-		return s, ""
-	}
-	for _, word := range strings.Fields(right) {
-		if len(word) >= 3 && hasLetter(word) {
-			return left, right
+	parts := titleAuthorSplit.Split(s, -1)
+	switch len(parts) {
+	case 2:
+		left := strings.TrimSpace(parts[0])
+		right := strings.TrimSpace(parts[1])
+		if left == "" || right == "" {
+			return s, ""
 		}
+		for _, word := range strings.Fields(right) {
+			if len(word) >= 3 && hasLetter(word) {
+				return left, right
+			}
+		}
+		return s, ""
+	case 3:
+		left := strings.TrimSpace(parts[0])
+		middle := strings.TrimSpace(parts[1])
+		right := strings.TrimSpace(parts[2])
+		if left == "" || middle == "" || right == "" {
+			return s, ""
+		}
+		if yearOnlyPattern.MatchString(middle) || seriesMarkerPattern.MatchString(middle) {
+			if hasLetter(left) && hasLetter(right) {
+				return right, left
+			}
+		}
+		return s, ""
 	}
 	return s, ""
 }
@@ -753,6 +789,11 @@ func titleScore(a, b string) float64 {
 		return 1
 	}
 	ta, tb := tokens(na), tokens(nb)
+	if len(ta) == 0 || len(tb) == 0 {
+		// A title that reduces to stopwords ("The") has nothing to
+		// distinguish it by — same as no title at all.
+		return 0
+	}
 	inter := 0
 	for t := range ta {
 		if _, ok := tb[t]; ok {
@@ -762,11 +803,12 @@ func titleScore(a, b string) float64 {
 	if inter == 0 {
 		return 0
 	}
-	maxLen := max(len(ta), len(tb))
-	overlap := float64(inter) / float64(maxLen)
+	// Containment divides by the *smaller* set: "dune" inside "dune 40th
+	// anniversary edition" fully covers one side, which is the strong
+	// near-match signal — not the weaker max-length overlap.
+	minLen := min(len(ta), len(tb))
+	overlap := float64(inter) / float64(minLen)
 	jaccard := float64(inter) / float64(len(ta)+len(tb)-inter)
-	// Token containment ("dune" vs "dune 40th anniversary edition") is a
-	// strong near-match; plain overlap degrades gracefully from there.
 	if overlap == 1 {
 		return 0.9
 	}

@@ -481,11 +481,47 @@ export const api = {
   bookCopies: (entryId: string) =>
     request<{ copies: PhysicalCopy[] }>(`/books/${entryId}/copies`),
 
-  /** Registers a printing. 409 means it is already registered. */
-  createBookCopy: (entryId: string, editionId: string, notes = "") =>
+  /**
+   * Registers a printing, owned or checked out of the library. 409 means
+   * it is already registered — a returned borrowing reopens instead.
+   * dueAt is a bare date (YYYY-MM-DD) and only means anything borrowed.
+   */
+  createBookCopy: (
+    entryId: string,
+    editionId: string,
+    opts: { acquisition: "owned" | "borrowed"; dueAt?: string } = { acquisition: "owned" },
+    notes = "",
+  ) =>
     request<{ copy: PhysicalCopy }>(`/books/${entryId}/copies`, {
       method: "POST",
-      body: body({ edition_id: editionId, notes }),
+      body: body({
+        edition_id: editionId,
+        notes,
+        acquisition: opts.acquisition,
+        ...(opts.dueAt ? { due_at: opts.dueAt } : {}),
+      }),
+    }),
+
+  /** Marks a borrowed copy returned. The row and its page map stay. */
+  returnBookCopy: (entryId: string, copyId: string) =>
+    request<{ copy: PhysicalCopy }>(`/books/${entryId}/copies/${copyId}/return`, {
+      method: "POST",
+    }),
+
+  /**
+   * Checks a returned printing out again: the same row and its map reopen,
+   * with a fresh due date (or none, when the library never said).
+   */
+  reopenBookCopy: (entryId: string, copyId: string, dueAt?: string | null) =>
+    request<{ copy: PhysicalCopy }>(`/books/${entryId}/copies/${copyId}/reopen`, {
+      method: "POST",
+      body: body({ ...(dueAt ? { due_at: dueAt } : {}) }),
+    }),
+
+  /** Upgrades a borrowing to ownership — the reader bought the book. */
+  ownBookCopy: (entryId: string, copyId: string) =>
+    request<{ copy: PhysicalCopy }>(`/books/${entryId}/copies/${copyId}/own`, {
+      method: "POST",
     }),
 
   /** Drops a printing and its whole page map; scanning rebuilds it. */

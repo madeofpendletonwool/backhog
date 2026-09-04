@@ -896,19 +896,26 @@ export interface PassageResult {
 }
 
 /**
- * A printing of a book the reader physically holds. Page numbers belong to a
- * printing, so the page map hangs off this and never off the work.
+ * A printing of a book the reader physically holds, owned or borrowed from
+ * the library. Page numbers belong to a printing, so the page map hangs
+ * off this and never off the work.
  */
 export interface PhysicalCopy {
   id: string;
   entry_id: string;
   edition_id: string;
   notes: string;
+  /** How the printing was acquired — "owned" or a "borrowed" library copy. */
+  acquisition: "owned" | "borrowed";
+  /** The library return deadline, when known. Display-only for now. */
+  due_at: string | null;
+  /** Null while the copy is in hand; return stamps it, re-checkout clears it. */
+  returned_at: string | null;
   /** How many pages have been mapped; the number the copy panel reports. */
   anchor_count: number;
   /**
    * Whether this is the copy the position endpoints read. Only the printing
-   * the entry is anchored to feeds them, so a reader who owns two printings
+   * the entry is anchored to feeds them, so a reader who holds two printings
    * has two maps and exactly one of them is what "page 214" means.
    */
   drives_pages: boolean;

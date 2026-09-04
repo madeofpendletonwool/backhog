@@ -95,6 +95,18 @@ func evaluateBookEventTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind 
 	return unlockMatchingTx(ctx, tx, userID, entryID, kind, e, models.MediaBook)
 }
 
+// borrowedOnlyExclusion is the finishes-versus-acquisitions race's
+// denominator guard: an entry whose registered printings are all library
+// copies was checked out, not bought, so it leaves the acquisitions
+// count. An entry with no registered copy still counts — registering a
+// copy is the act of declaring possession, and a bare entry says nothing
+// about borrowing (an entry-level ownership marker is the fuller fix, if
+// that edge ever matters). Judged from current state, the same way the
+// paper flag above reads.
+const borrowedOnlyExclusion = `
+	AND NOT (EXISTS(SELECT 1 FROM physical_copies pc WHERE pc.entry_id = library_entries.id)
+	         AND NOT EXISTS(SELECT 1 FROM physical_copies pc WHERE pc.entry_id = library_entries.id AND pc.acquisition = 'owned'))`
+
 // snapshotBookAggregatesTx fills the book-scoped user aggregates the book
 // predicates read: finished count, the unread pile and its peak, and the
 // calendar-year finishes-versus-acquisitions race. Every query is scoped to
@@ -129,7 +141,7 @@ func snapshotBookAggregatesTx(ctx context.Context, tx *sql.Tx, userID string, e 
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM library_entries
 		WHERE user_id = ? AND media_type = 'book' AND status <> 'wishlist'
-		  AND strftime('%Y', created_at) = ?`,
+		  AND strftime('%Y', created_at) = ?`+borrowedOnlyExclusion,
 		userID, year).Scan(&e.YearAdditions); err != nil {
 		return err
 	}

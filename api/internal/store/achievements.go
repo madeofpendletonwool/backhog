@@ -639,11 +639,17 @@ func finishMonthStreak(months map[string]int, at time.Time) int {
 // additionsTx returns every non-wishlist acquisition timestamp in order —
 // ignored entries included, an acquisition is an acquisition — for the
 // backfill's running same-year addition counts. Scoped to one media type,
-// like every aggregate here.
+// like every aggregate here. Books narrow "acquisition" one notch: an
+// entry whose registered printings are all library copies was checked
+// out, not bought, and stays out of the denominator (see
+// borrowedOnlyExclusion); games never had copies to register.
 func additionsTx(ctx context.Context, tx *sql.Tx, userID, mediaType string) ([]time.Time, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT created_at FROM library_entries
-		WHERE user_id = ? AND media_type = ? AND status <> 'wishlist'`, userID, mediaType)
+	query := `SELECT created_at FROM library_entries
+		WHERE user_id = ? AND media_type = ? AND status <> 'wishlist'`
+	if mediaType == models.MediaBook {
+		query += borrowedOnlyExclusion
+	}
+	rows, err := tx.QueryContext(ctx, query, userID, mediaType)
 	if err != nil {
 		return nil, err
 	}

@@ -31,6 +31,9 @@ type createProjectRequest struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Kind        string          `json:"kind"`
+	// Media is the arena the project lives in ('game' or 'book'); empty
+	// defaults to game. The client sends the arena it was created from.
+	Media       string          `json:"media"`
 	TargetCount *int            `json:"target_count"`
 	Rules       *models.RuleSet `json:"rules"`
 }
@@ -49,7 +52,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project, err := s.store.CreateProject(r.Context(), userID,
-		body.Name, body.Description, body.Kind, body.TargetCount, body.Rules)
+		body.Name, body.Description, body.Kind, body.Media, body.TargetCount, body.Rules)
 	if err != nil {
 		fail(w, errorf(http.StatusBadRequest, err.Error()))
 		return

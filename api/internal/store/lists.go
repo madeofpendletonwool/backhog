@@ -190,6 +190,14 @@ func (s *Store) ListEntriesFor(ctx context.Context, userID, listID string) ([]mo
 
 // evaluateSmart runs a smart list's rules against the user's library.
 func (s *Store) evaluateSmart(ctx context.Context, userID string, rs models.RuleSet) ([]models.Entry, error) {
+	return s.evaluateSmartInMedia(ctx, userID, rs, "")
+}
+
+// evaluateSmartInMedia is evaluateSmart constrained to one arena's entries.
+// Smart lists scope themselves through their media_type rules; projects are
+// arena-scoped at the row level, so their rule goals clamp the media here —
+// the stored rules alone must not be able to leak the other arena in.
+func (s *Store) evaluateSmartInMedia(ctx context.Context, userID string, rs models.RuleSet, media string) ([]models.Entry, error) {
 	where, args, err := compileRules(rs)
 	if err != nil {
 		return nil, err
@@ -213,10 +221,17 @@ func (s *Store) evaluateSmart(ctx context.Context, userID string, rs models.Rule
 		limit = 200
 	}
 
-	query := entrySelect + " WHERE e.user_id = ? AND " + where +
-		" ORDER BY " + orderBy + " LIMIT ?"
-	full := append([]any{userID}, args...)
+	conditions := "e.user_id = ?"
+	full := []any{userID}
+	if media != "" {
+		conditions += " AND e.media_type = ?"
+		full = append(full, media)
+	}
+	full = append(full, args...)
 	full = append(full, limit)
+
+	query := entrySelect + " WHERE " + conditions + " AND " + where +
+		" ORDER BY " + orderBy + " LIMIT ?"
 
 	return s.queryEntries(ctx, query, full...)
 }
@@ -420,7 +435,10 @@ type defaultList struct {
 	rules             models.RuleSet
 }
 
-// defaultListRuleSets defines the smart lists every new account starts with.
+// defaultListRuleSets defines the smart lists every new account starts with,
+// in both arenas. Each set carries an explicit media_type rule so the games
+// arena's lists never answer for books and vice versa — an unscoped seed would
+// follow the user into the other arena wearing the wrong words.
 func defaultListRuleSets() []defaultList {
 	return []defaultList{
 		{
@@ -428,6 +446,7 @@ func defaultListRuleSets() []defaultList {
 			models.RuleSet{
 				Match: "all",
 				Rules: []models.Rule{
+					{Field: "media_type", Op: "eq", Value: models.MediaGame},
 					{Field: "status", Op: "eq", Value: models.StatusBacklog},
 					{Field: "hours_to_beat", Op: "lt", Value: 8.0},
 				},
@@ -439,6 +458,7 @@ func defaultListRuleSets() []defaultList {
 			models.RuleSet{
 				Match: "all",
 				Rules: []models.Rule{
+					{Field: "media_type", Op: "eq", Value: models.MediaGame},
 					{Field: "status", Op: "eq", Value: models.StatusBacklog},
 					{Field: "igdb_rating", Op: "gt", Value: 85.0},
 				},
@@ -446,10 +466,11 @@ func defaultListRuleSets() []defaultList {
 			},
 		},
 		{
-			"Stalled", "Started over a month ago and still going",
+			"Stalled", "Games started over a month ago and still going",
 			models.RuleSet{
 				Match: "all",
 				Rules: []models.Rule{
+					{Field: "media_type", Op: "eq", Value: models.MediaGame},
 					{Field: "status", Op: "eq", Value: models.StatusPlaying},
 					{Field: "days_since_started", Op: "gt", Value: 30.0},
 				},
@@ -457,14 +478,51 @@ func defaultListRuleSets() []defaultList {
 			},
 		},
 		{
-			"Gathering Dust", "In the backlog for more than six months",
+			"Gathering Dust", "Games in the backlog for more than six months",
 			models.RuleSet{
 				Match: "all",
 				Rules: []models.Rule{
+					{Field: "media_type", Op: "eq", Value: models.MediaGame},
 					{Field: "status", Op: "eq", Value: models.StatusBacklog},
 					{Field: "days_since_added", Op: "gt", Value: 180.0},
 				},
 				Sort: &models.Sort{Field: "added", Dir: "asc"},
+			},
+		},
+		{
+			"Stalled", "Books started over a month ago and still going",
+			models.RuleSet{
+				Match: "all",
+				Rules: []models.Rule{
+					{Field: "media_type", Op: "eq", Value: models.MediaBook},
+					{Field: "status", Op: "eq", Value: models.StatusPlaying},
+					{Field: "days_since_started", Op: "gt", Value: 30.0},
+				},
+				Sort: &models.Sort{Field: "updated", Dir: "asc"},
+			},
+		},
+		{
+			"Gathering Dust", "Books on the to-read pile for more than six months",
+			models.RuleSet{
+				Match: "all",
+				Rules: []models.Rule{
+					{Field: "media_type", Op: "eq", Value: models.MediaBook},
+					{Field: "status", Op: "eq", Value: models.StatusBacklog},
+					{Field: "days_since_added", Op: "gt", Value: 180.0},
+				},
+				Sort: &models.Sort{Field: "added", Dir: "asc"},
+			},
+		},
+		{
+			"Old Friends", "Backlog books first published before 1970",
+			models.RuleSet{
+				Match: "all",
+				Rules: []models.Rule{
+					{Field: "media_type", Op: "eq", Value: models.MediaBook},
+					{Field: "status", Op: "eq", Value: models.StatusBacklog},
+					{Field: "publish_year", Op: "lt", Value: 1970.0},
+				},
+				Sort: &models.Sort{Field: "published", Dir: "asc"},
 			},
 		},
 	}

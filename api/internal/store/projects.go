@@ -27,13 +27,21 @@ type ProjectUpdate struct {
 }
 
 // CreateProject creates a project of any kind. Kind-specific requirements are
-// enforced here so an invalid project can never be persisted.
-func (s *Store) CreateProject(ctx context.Context, userID, name, description, kind string, targetCount *int, rules *models.RuleSet) (models.Project, error) {
+// enforced here so an invalid project can never be persisted. mediaScope is
+// the arena the project lives in ('game' or 'book'); empty defaults to game,
+// matching the column default pre-existing rows carry.
+func (s *Store) CreateProject(ctx context.Context, userID, name, description, kind, mediaScope string, targetCount *int, rules *models.RuleSet) (models.Project, error) {
 	if !models.ValidProjectKind(kind) {
 		return models.Project{}, fmt.Errorf("kind must be 'checklist', 'count_goal' or 'rule_goal'")
 	}
 	if strings.TrimSpace(name) == "" {
 		return models.Project{}, fmt.Errorf("name is required")
+	}
+	if mediaScope == "" {
+		mediaScope = models.MediaGame
+	}
+	if !models.ValidMediaType(mediaScope) {
+		return models.Project{}, fmt.Errorf("media must be 'game' or 'book'")
 	}
 
 	switch kind {
@@ -67,11 +75,11 @@ func (s *Store) CreateProject(ctx context.Context, userID, name, description, ki
 		rulesJSON = &str
 	}
 
-	p := models.Project{ID: newID(), Name: name, Description: description, Kind: kind, TargetCount: targetCount, Rules: rules}
+	p := models.Project{ID: newID(), Name: name, Description: description, Kind: kind, MediaScope: mediaScope, TargetCount: targetCount, Rules: rules}
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO projects (id, user_id, name, description, kind, target_count, rules_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING created_at`,
-		p.ID, userID, name, description, kind, targetCount, rulesJSON).Scan(&p.CreatedAt)
+		INSERT INTO projects (id, user_id, name, description, kind, media_scope, target_count, rules_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING created_at`,
+		p.ID, userID, name, description, kind, mediaScope, targetCount, rulesJSON).Scan(&p.CreatedAt)
 	if err != nil {
 		return models.Project{}, err
 	}
@@ -83,7 +91,7 @@ func (s *Store) CreateProject(ctx context.Context, userID, name, description, ki
 // recorded even if it happened as a side effect of a status change elsewhere.
 func (s *Store) GetProjects(ctx context.Context, userID string) ([]models.Project, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, description, kind, target_count, rules_json, created_at, completed_at
+		SELECT id, name, description, kind, media_scope, target_count, rules_json, created_at, completed_at
 		FROM projects WHERE user_id = ?
 		ORDER BY completed_at IS NOT NULL, created_at DESC`, userID)
 	if err != nil {
@@ -209,7 +217,8 @@ func (s *Store) DeleteProject(ctx context.Context, userID, projectID string) err
 
 // ProjectItemsFor resolves a project to its item view: stored members with
 // their done overrides for checklists, the live match pool for rule goals,
-// nothing for count goals (every finished game counts, not a fixed set).
+// nothing for count goals (every finished entry in the project's arena counts,
+// not a fixed set).
 func (s *Store) ProjectItemsFor(ctx context.Context, userID, projectID string) ([]models.ProjectItem, error) {
 	p, err := s.projectRow(ctx, userID, projectID)
 	if err != nil {
@@ -217,7 +226,7 @@ func (s *Store) ProjectItemsFor(ctx context.Context, userID, projectID string) (
 	}
 
 	if p.Kind == models.ProjectRuleGoal && p.Rules != nil {
-		entries, err := s.evaluateSmart(ctx, userID, *p.Rules)
+		entries, err := s.evaluateSmartInMedia(ctx, userID, *p.Rules, p.MediaScope)
 		if err != nil {
 			return nil, err
 		}
@@ -284,7 +293,8 @@ func (s *Store) ProjectItemsFor(ctx context.Context, userID, projectID string) (
 }
 
 // AddProjectItem appends an entry to a checklist project. Both the project and
-// the entry must belong to the caller.
+// the entry must belong to the caller, and the entry must live in the
+// project's arena — a book project's checklist is books, full stop.
 func (s *Store) AddProjectItem(ctx context.Context, userID, projectID, entryID string) error {
 	p, err := s.projectRow(ctx, userID, projectID)
 	if err != nil {
@@ -293,8 +303,12 @@ func (s *Store) AddProjectItem(ctx context.Context, userID, projectID, entryID s
 	if p.Kind != models.ProjectChecklist {
 		return fmt.Errorf("only checklist projects have members")
 	}
-	if _, err := s.GetEntry(ctx, userID, entryID); err != nil {
+	entry, err := s.GetEntry(ctx, userID, entryID)
+	if err != nil {
 		return err
+	}
+	if entry.MediaType != p.MediaScope {
+		return fmt.Errorf("this project is scoped to %ss", p.MediaScope)
 	}
 
 	var maxPos sql.NullFloat64
@@ -431,7 +445,7 @@ func (s *Store) ProjectIDsForEntry(ctx context.Context, userID, entryID string) 
 // one-member checklist must not "complete" the project as a side effect.
 func (s *Store) projectRow(ctx context.Context, userID, projectID string) (models.Project, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, description, kind, target_count, rules_json, created_at, completed_at
+		SELECT id, name, description, kind, media_scope, target_count, rules_json, created_at, completed_at
 		FROM projects WHERE user_id = ? AND id = ?`, userID, projectID)
 	p, err := scanProject(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -473,22 +487,25 @@ func (s *Store) computeProgress(ctx context.Context, userID string, p models.Pro
 	case models.ProjectChecklist:
 		return s.checklistProgress(ctx, p.ID)
 	case models.ProjectCountGoal:
-		return s.countGoalProgress(ctx, userID, p.TargetCount)
+		return s.countGoalProgress(ctx, userID, p.MediaScope, p.TargetCount)
 	case models.ProjectRuleGoal:
 		if p.Rules == nil {
 			return models.ProjectProgress{}, fmt.Errorf("rule goal has no rules")
 		}
-		return s.ruleGoalProgress(ctx, userID, p.TargetCount, *p.Rules)
+		return s.ruleGoalProgress(ctx, userID, p.MediaScope, p.TargetCount, *p.Rules)
 	}
 	return models.ProjectProgress{}, fmt.Errorf("unknown project kind %q", p.Kind)
 }
 
 // itemDone is the per-member completion expression: the manual override when
-// set, otherwise derived from the entry's status.
+// set, otherwise derived from the entry's status. 'played' is the finished
+// status in both arenas — a read book is a played entry.
 const itemDone = `COALESCE(pi.done_override, e.status = 'played')`
 
 func (s *Store) checklistProgress(ctx context.Context, projectID string) (models.ProjectProgress, error) {
 	var pr models.ProjectProgress
+	// LEFT JOIN games: a checklist may hold book members, and only games carry
+	// a time-to-beat — a book contributes to the counts and zero to the hours.
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
 		       COALESCE(SUM(`+itemDone+`), 0),
@@ -496,7 +513,7 @@ func (s *Store) checklistProgress(ctx context.Context, projectID string) (models
 		       COALESCE(SUM(CASE WHEN `+itemDone+` THEN g.time_to_beat_main ELSE 0 END), 0)
 		FROM project_items pi
 		JOIN library_entries e ON e.id = pi.entry_id
-		JOIN games g ON g.id = e.game_id
+		LEFT JOIN games g ON g.id = e.game_id
 		WHERE pi.project_id = ?`, projectID).
 		Scan(&pr.TargetCount, &pr.CompletedCount, &pr.EstHoursTotal, &pr.EstHoursDone)
 	if err != nil {
@@ -506,12 +523,16 @@ func (s *Store) checklistProgress(ctx context.Context, projectID string) (models
 	return pr, nil
 }
 
-// countGoalProgress measures against the owned library: played games count as
-// done, backlog + playing are the remaining candidates. Game-scoped by hand —
-// a count goal is "finish N games".
-func (s *Store) countGoalProgress(ctx context.Context, userID string, target *int) (models.ProjectProgress, error) {
+// countGoalProgress measures against the owned library of the project's
+// arena: finished entries count as done, backlog + in-progress are the
+// remaining candidates — "finish N games" and "finish N books" are the same
+// query with a different media_type.
+func (s *Store) countGoalProgress(ctx context.Context, userID, media string, target *int) (models.ProjectProgress, error) {
 	if target == nil {
 		return models.ProjectProgress{}, fmt.Errorf("count goal has no target")
+	}
+	if media == "" {
+		media = models.MediaGame
 	}
 	pr := models.ProjectProgress{TargetCount: *target}
 
@@ -519,8 +540,8 @@ func (s *Store) countGoalProgress(ctx context.Context, userID string, target *in
 		SELECT COALESCE(SUM(e.status = 'played'), 0),
 		       COALESCE(SUM(g.time_to_beat_main), 0),
 		       COALESCE(SUM(CASE WHEN e.status = 'played' THEN g.time_to_beat_main ELSE 0 END), 0)
-		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.media_type = 'game' AND e.status IN ('backlog','playing','played')`, userID).
+		FROM library_entries e LEFT JOIN games g ON g.id = e.game_id
+		WHERE e.user_id = ? AND e.media_type = ? AND e.status IN ('backlog','playing','played')`, userID, media).
 		Scan(&pr.CompletedCount, &pr.EstHoursTotal, &pr.EstHoursDone)
 	if err != nil {
 		return models.ProjectProgress{}, err
@@ -530,9 +551,14 @@ func (s *Store) countGoalProgress(ctx context.Context, userID string, target *in
 }
 
 // ruleGoalProgress evaluates the rule set live: the match pool is the target
-// set, and matching entries already played count as done. Without an explicit
-// target_count the goal is to finish the whole pool.
-func (s *Store) ruleGoalProgress(ctx context.Context, userID string, target *int, rs models.RuleSet) (models.ProjectProgress, error) {
+// set, and matching entries already finished count as done. Without an
+// explicit target_count the goal is to finish the whole pool. The pool is
+// constrained to the project's arena — the rules alone must not be able to
+// pull the other arena's entries into a book project's target.
+func (s *Store) ruleGoalProgress(ctx context.Context, userID, media string, target *int, rs models.RuleSet) (models.ProjectProgress, error) {
+	if media == "" {
+		media = models.MediaGame
+	}
 	where, args, err := compileRules(rs)
 	if err != nil {
 		return models.ProjectProgress{}, err
@@ -542,8 +568,9 @@ func (s *Store) ruleGoalProgress(ctx context.Context, userID string, target *int
 	var poolHours float64
 	err = s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(g.time_to_beat_main), 0)
-		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND `+where, append([]any{userID}, args...)...).
+		FROM library_entries e LEFT JOIN games g ON g.id = e.game_id
+		WHERE e.user_id = ? AND e.media_type = ? AND `+where,
+		append([]any{userID, media}, args...)...).
 		Scan(&poolCount, &poolHours)
 	if err != nil {
 		return models.ProjectProgress{}, err
@@ -555,8 +582,9 @@ func (s *Store) ruleGoalProgress(ctx context.Context, userID string, target *int
 		SELECT COUNT(*),
 		       COALESCE(SUM(g.time_to_beat_main), 0),
 		       COALESCE(SUM(CASE WHEN e.status = 'played' THEN g.time_to_beat_main ELSE 0 END), 0)
-		FROM library_entries e JOIN games g ON g.id = e.game_id
-		WHERE e.user_id = ? AND e.status = 'played' AND `+where, append([]any{userID}, args...)...).
+		FROM library_entries e LEFT JOIN games g ON g.id = e.game_id
+		WHERE e.user_id = ? AND e.media_type = ? AND e.status = 'played' AND `+where,
+		append([]any{userID, media}, args...)...).
 		Scan(&doneCount, &totalHours, &doneHours)
 	if err != nil {
 		return models.ProjectProgress{}, err
@@ -591,8 +619,11 @@ func scanProject(sc scanner) (models.Project, error) {
 	var target sql.NullInt64
 	var rulesJSON sql.NullString
 	var completed sql.NullTime
-	if err := sc.Scan(&p.ID, &p.Name, &p.Description, &p.Kind, &target, &rulesJSON, &p.CreatedAt, &completed); err != nil {
+	if err := sc.Scan(&p.ID, &p.Name, &p.Description, &p.Kind, &p.MediaScope, &target, &rulesJSON, &p.CreatedAt, &completed); err != nil {
 		return models.Project{}, err
+	}
+	if p.MediaScope == "" {
+		p.MediaScope = models.MediaGame
 	}
 	if target.Valid {
 		t := int(target.Int64)

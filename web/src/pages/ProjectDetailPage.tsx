@@ -46,6 +46,7 @@ import {
   type ProjectKind,
   type RuleSet,
 } from "@/lib/types";
+import { useArena } from "@/hooks/useArena";
 
 const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
   checklist: <Gi name="list-checks" className="size-5 shrink-0" />,
@@ -56,15 +57,23 @@ const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const [media, setMedia] = useMediaFilter();
   const { data, isLoading } = useProject(projectId);
   const update = useUpdateProject();
   const remove = useDeleteProject();
+  const { arena } = useArena();
+
+  const project = data?.project;
+  // A project lives in one arena; with no URL preference the page opens on
+  // that half, not on games by default.
+  const [media, setMedia] = useMediaFilter(project?.media_scope === "book" ? "book" : "game");
 
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const project = data?.project;
+  // The project's own arena picks the words, not the nav's: a book project
+  // opened from the games arena still speaks books.
+  const books = project?.media_scope === "book";
+  const noun = books ? "book" : "game";
   // A project can span both arenas — "finish the trilogy and the games it
   // spun off" is one objective — so the filter picks the half you are looking
   // at rather than the page picking one for you.
@@ -178,8 +187,8 @@ export function ProjectDetailPage() {
             title="Nothing in this project yet"
             description="Open a game or a book and check it into this project to start building the list."
             action={
-              <Button variant="secondary" onClick={() => navigate("/library")}>
-                Browse library
+              <Button variant="secondary" onClick={() => navigate(arena === "books" ? "/books" : "/library")}>
+                Browse {arena === "books" ? "shelf" : "library"}
               </Button>
             }
           />
@@ -236,9 +245,9 @@ export function ProjectDetailPage() {
       ) : (
         <Panel className="p-5">
           <p className="text-sm leading-relaxed text-ink-300">
-            Every game you finish counts toward this goal — no membership to manage.
-            Progress updates the moment a game's status becomes{" "}
-            <span className="text-ink-100">played</span>.
+            Every {noun} you finish counts toward this goal — no membership to manage. Progress
+            updates the moment a {noun}'s status becomes{" "}
+            <span className="text-ink-100">{books ? "read" : "played"}</span>.
           </p>
         </Panel>
       )}
@@ -270,6 +279,7 @@ export function ProjectDetailPage() {
 function ProgressPanel({ project }: { project: Project }) {
   const { progress } = project;
   const complete = Boolean(project.completed_at);
+  const books = project.media_scope === "book";
 
   return (
     <Panel className="mb-8 p-5">
@@ -300,8 +310,8 @@ function ProgressPanel({ project }: { project: Project }) {
         {complete
           ? `Target met or closed · ${formatDate(project.completed_at ?? null)}`
           : progress.est_hours_remaining > 0
-            ? `${formatHours(progress.est_hours_remaining)} of estimated playtime to go`
-            : "No estimated hours left in this set"}
+            ? `${formatHours(progress.est_hours_remaining)} of estimated ${books ? "reading time" : "playtime"} to go`
+            : `No estimated ${books ? "reading time" : "hours"} left in this set`}
       </p>
     </Panel>
   );
@@ -478,7 +488,7 @@ function EditProjectDialog({
             <span className="mb-1.5 block text-xs font-medium text-ink-300">
               Target
               {project.kind === "rule_goal" && (
-                <span className="text-ink-600"> (empty = every matching game)</span>
+                <span className="text-ink-600"> (empty = every matching {project.media_scope === "book" ? "book" : "game"})</span>
               )}
             </span>
             <Input

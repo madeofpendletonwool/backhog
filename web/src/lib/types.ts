@@ -328,6 +328,8 @@ export interface SmartField {
   type: "text" | "number" | "date" | "enum" | "ref";
   ops: string[];
   enum?: string[];
+  /** Which arena's columns the field reads: "game", "book", or empty for either. */
+  media?: string;
 }
 
 export interface SearchResult {
@@ -628,6 +630,8 @@ export interface Project {
   name: string;
   description: string;
   kind: ProjectKind;
+  /** The arena this project lives in — decides which library feeds progress. */
+  media_scope: MediaType;
   target_count?: number | null;
   rules?: RuleSet;
   created_at: string;

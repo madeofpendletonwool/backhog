@@ -6,29 +6,37 @@ import { useNavigate } from "react-router-dom";
 import { SmartListBuilder } from "./SmartListBuilder";
 import { Button, Input } from "./ui/primitives";
 import { Dialog } from "./ui/Dialog";
+import { useArena } from "@/hooks/useArena";
 import { useCreateList } from "@/hooks/useLists";
-import type { RuleSet } from "@/lib/types";
+import type { MediaType, RuleSet } from "@/lib/types";
 
-const DEFAULT_RULES: RuleSet = {
+/** A smart list starts scoped to the arena it was built in. */
+const defaultRules = (media: MediaType): RuleSet => ({
   match: "all",
-  rules: [{ field: "status", op: "eq", value: "backlog" }],
+  rules: [
+    { field: "media_type", op: "eq", value: media },
+    { field: "status", op: "eq", value: "backlog" },
+  ],
   sort: { field: "added", dir: "desc" },
-};
+});
 
 export function CreateListDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const create = useCreateList();
+  const { arena } = useArena();
+  const media: MediaType = arena === "books" ? "book" : "game";
+  const books = arena === "books";
 
   const [kind, setKind] = useState<"manual" | "smart">("manual");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [rules, setRules] = useState<RuleSet>(DEFAULT_RULES);
+  const [rules, setRules] = useState<RuleSet>(defaultRules(media));
 
   const reset = () => {
     setKind("manual");
     setName("");
     setDescription("");
-    setRules(DEFAULT_RULES);
+    setRules(defaultRules(media));
     create.reset();
   };
 
@@ -84,7 +92,7 @@ export function CreateListDialog({ open, onClose }: { open: boolean; onClose: ()
             autoFocus
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder={kind === "smart" ? "Short and sweet" : "Summer 2026"}
+            placeholder={kind === "smart" ? "Short and sweet" : books ? "Beach reads 2026" : "Summer 2026"}
           />
         </label>
 

@@ -26,6 +26,7 @@ export function invalidateLibrary(queryClient: ReturnType<typeof useQueryClient>
   for (const key of [
     "library", // games shelf
     "books", // books shelf, search, ISBN lookups
+    "book", // one work: adding enriches its editions server-side
     "queue",
     "stats",
     "bookStats",

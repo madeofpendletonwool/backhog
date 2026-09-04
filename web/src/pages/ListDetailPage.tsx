@@ -30,6 +30,7 @@ import { Dialog } from "@/components/ui/Dialog";
 import { useDeleteList, useList, useReorderListItem, useUpdateList } from "@/hooks/useLists";
 import { entryHours, entryTitle, matchesMedia } from "@/lib/entry";
 import { formatHours } from "@/lib/format";
+import { ruleSetTarget } from "@/lib/smartlists";
 import { isBookEntry, type Entry, type RuleSet } from "@/lib/types";
 
 /**
@@ -63,7 +64,6 @@ function SortableEntryCard({ entry }: { entry: Entry }) {
 export function ListDetailPage() {
   const { listId } = useParams<{ listId: string }>();
   const navigate = useNavigate();
-  const [media, setMedia] = useMediaFilter();
   const { data, isLoading } = useList(listId);
   const update = useUpdateList();
   const remove = useDeleteList();
@@ -75,7 +75,16 @@ export function ListDetailPage() {
 
   const list = data?.list;
   // A list can hold both arenas at once; the filter says which half you are
-  // looking at, and "Both" shows the list as it actually is.
+  // looking at. With no URL preference a book-scoped smart list opens on its
+  // books, a game-scoped one on its games, and an unscoped or manual list
+  // opens on "Both" — the list as it actually is, nothing hidden.
+  const [media, setMedia] = useMediaFilter(
+    ruleSetTarget(list?.rules) === "book"
+      ? "book"
+      : ruleSetTarget(list?.rules) === "game"
+        ? "game"
+        : "all",
+  );
   const members = data?.entries ?? [];
   const entries = members.filter((entry) => matchesMedia(entry, media));
   const showFilter = media !== "game" || members.some(isBookEntry);
@@ -168,7 +177,7 @@ export function ListDetailPage() {
           <p className="mt-1 text-sm text-ink-400">
             {entries.length} {noun}
             {entries.length === 1 ? "" : "s"}
-            {totalHours > 0 && ` · ${formatHours(totalHours)} of playing`}
+            {totalHours > 0 && ` · ${formatHours(totalHours)} of ${media === "book" ? "reading" : "playing"}`}
             {list.description && ` · ${list.description}`}
           </p>
         </div>
@@ -277,7 +286,7 @@ export function ListDetailPage() {
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Confirm deletion">
         <h2 className="text-lg font-semibold text-ink-100">Delete "{list.name}"?</h2>
         <p className="mt-2 text-sm text-ink-400">
-          The list goes away, but the games in it stay in your library.
+          The list goes away, but the {noun}s in it stay in your library.
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirmDelete(false)}>

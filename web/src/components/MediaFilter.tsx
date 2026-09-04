@@ -12,17 +12,25 @@ import type { GiName } from "@/lib/gameicons";
  *
  * The filter lives in the URL, not in localStorage: it is what makes the books
  * nav's "Reading Queue" a different link from the games nav's "Play Queue"
- * while both point at the same page. No parameter means games, which is what
- * those pages showed before books existed.
+ * while both point at the same page. No parameter means the fallback — "game"
+ * by default (what those pages showed before books existed), but a page that
+ * knows its own arena (a book project, a book-scoped smart list) passes it so
+ * the first paint shows the half you came for.
  */
-export function useMediaFilter(): [MediaFilterValue, (next: MediaFilterValue) => void] {
+export function useMediaFilter(
+  fallback: MediaFilterValue = "game",
+): [MediaFilterValue, (next: MediaFilterValue) => void] {
   const [params, setParams] = useSearchParams();
   const raw = params.get("media");
-  const value: MediaFilterValue = raw === "book" || raw === "all" ? raw : "game";
+  const value: MediaFilterValue =
+    raw === "book" || raw === "all" || raw === "game" ? raw : fallback;
 
   const set = (next: MediaFilterValue) => {
     const updated = new URLSearchParams(params);
-    if (next === "game") updated.delete("media");
+    // With the games default, dropping the param keeps legacy URLs clean;
+    // with any other fallback it has to be written out, or an explicit
+    // "Games" pick would be indistinguishable from "no preference".
+    if (next === "game" && fallback === "game") updated.delete("media");
     else updated.set("media", next);
     // replace: flipping a filter is not a place you want to land on Back.
     setParams(updated, { replace: true });

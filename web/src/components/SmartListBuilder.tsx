@@ -1,8 +1,17 @@
 import { useState } from "react";
 
 import { Button, Input, Select, Gi } from "./ui/primitives";
+import { useArena } from "@/hooks/useArena";
 import { useSmartFields } from "@/hooks/useLists";
-import { STATUS_LABELS, type Rule, type RuleSet, type SmartField, type Status } from "@/lib/types";
+import { ruleSetTarget } from "@/lib/smartlists";
+import {
+  statusLabel,
+  type MediaType,
+  type Rule,
+  type RuleSet,
+  type SmartField,
+  type Status,
+} from "@/lib/types";
 
 const OP_LABELS: Record<string, string> = {
   eq: "is",
@@ -20,6 +29,24 @@ const OP_LABELS: Record<string, string> = {
 
 const VALUELESS_OPS = new Set(["is_null", "not_null"]);
 
+/**
+ * The sort whitelist mirrors the server's smartSorts map. The media tag says
+ * which arena a key orders meaningfully; the builder hides the other arena's
+ * keys from a scoped set, exactly as it does rule fields.
+ */
+const SORT_FIELDS: { value: string; label: string; media?: string }[] = [
+  { value: "added", label: "date added" },
+  { value: "updated", label: "last updated" },
+  { value: "name", label: "title" },
+  { value: "user_rating", label: "my rating" },
+  { value: "igdb_rating", label: "IGDB rating", media: "game" },
+  { value: "hours_to_beat", label: "hours to beat", media: "game" },
+  { value: "release_year", label: "release date", media: "game" },
+  { value: "author", label: "author", media: "book" },
+  { value: "published", label: "date published", media: "book" },
+  { value: "pages", label: "page count", media: "book" },
+];
+
 const emptyRule = (field: SmartField): Rule => ({
   field: field.key,
   op: field.ops[0],
@@ -28,7 +55,10 @@ const emptyRule = (field: SmartField): Rule => ({
 
 /**
  * Builds a smart list rule set. Fields and operators come from the API so the
- * builder can never offer something the server-side whitelist would reject.
+ * builder can never offer something the server-side whitelist would reject —
+ * including the arena split: a set scoped to one arena (through its media_type
+ * rules, or simply by being built from that arena) is offered that arena's
+ * fields and sorts, never the other's.
  */
 export function SmartListBuilder({
   value,
@@ -37,9 +67,22 @@ export function SmartListBuilder({
   value: RuleSet;
   onChange: (rules: RuleSet) => void;
 }) {
+  const { arena } = useArena();
   const { data } = useSmartFields();
-  const fields = data?.fields ?? [];
-  const byKey = new Map(fields.map((field) => [field.key, field]));
+
+  // A set scoped by its own rules decides its arena; an unscoped set is built
+  // for the arena the user is standing in.
+  const arenaMedia: MediaType = arena === "books" ? "book" : "game";
+  const target = ruleSetTarget(value) ?? arenaMedia;
+  // Saved rules stay visible and editable even when their field is out of
+  // scope for this set — dropping one silently would change what the list
+  // matches the moment the dialog opens. The dropdowns only offer in-scope
+  // fields; the odd one out has to be removed by hand before saving.
+  const allFields = data?.fields ?? [];
+  const byKey = new Map(allFields.map((field) => [field.key, field]));
+  const fields = allFields.filter((field) => !field.media || field.media === target);
+  const sorts = SORT_FIELDS.filter((sort) => !sort.media || sort.media === target);
+  const noun = target === "book" ? "book" : "game";
 
   const [newFieldKey, setNewFieldKey] = useState("");
 
@@ -58,6 +101,12 @@ export function SmartListBuilder({
     onChange({ ...value, rules: [...value.rules, emptyRule(field)] });
     setNewFieldKey("");
   };
+
+  // A saved sort key survives a scope change that hides it from the list.
+  const sortOptions =
+    value.sort && !sorts.some((s) => s.value === value.sort?.field)
+      ? [...sorts, { value: value.sort.field, label: value.sort.field }]
+      : sorts;
 
   if (fields.length === 0) {
     return <p className="text-sm text-ink-500">Loading fields…</p>;
@@ -80,7 +129,7 @@ export function SmartListBuilder({
 
       {value.rules.length === 0 && (
         <p className="rounded-xl border border-dashed border-edge-strong px-4 py-6 text-center text-xs text-ink-500">
-          No conditions yet — this list would match every game in your library.
+          No conditions yet — this list would match every {noun} in your library.
         </p>
       )}
 
@@ -102,6 +151,11 @@ export function SmartListBuilder({
                 }}
                 className="h-9 w-auto min-w-[9rem] flex-1 text-xs"
               >
+                {/* The rule's own field stays selectable even when out of
+                    scope, so the row never silently rewrites itself. */}
+                {!fields.some((f) => f.key === rule.field) && field && (
+                  <option value={field.key}>{field.label}</option>
+                )}
                 {fields.map((option) => (
                   <option key={option.key} value={option.key}>
                     {option.label}
@@ -122,7 +176,12 @@ export function SmartListBuilder({
               </Select>
 
               {!VALUELESS_OPS.has(rule.op) && (
-                <ValueInput field={field} rule={rule} onChange={(v) => patchRule(index, { value: v })} />
+                <ValueInput
+                  field={field}
+                  rule={rule}
+                  media={target}
+                  onChange={(v) => patchRule(index, { value: v })}
+                />
               )}
 
               <button
@@ -169,7 +228,7 @@ export function SmartListBuilder({
           }
           className="h-8 w-auto flex-1 px-2 text-xs"
         >
-          {SORT_FIELDS.map((option) => (
+          {sortOptions.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -193,24 +252,16 @@ export function SmartListBuilder({
   );
 }
 
-// Mirrors the server's smartSorts whitelist.
-const SORT_FIELDS = [
-  { value: "added", label: "date added" },
-  { value: "updated", label: "last updated" },
-  { value: "name", label: "title" },
-  { value: "igdb_rating", label: "IGDB rating" },
-  { value: "user_rating", label: "my rating" },
-  { value: "hours_to_beat", label: "hours to beat" },
-  { value: "release_year", label: "release date" },
-];
-
 function ValueInput({
   field,
   rule,
+  media,
   onChange,
 }: {
   field: SmartField;
   rule: Rule;
+  /** The arena whose words the enum labels use ("Reading", not "Playing"). */
+  media: MediaType;
   onChange: (value: Rule["value"]) => void;
 }) {
   // Multi-value operators send an array; the server expects names for refs.
@@ -236,7 +287,7 @@ function ValueInput({
                     : "rounded-lg bg-ink-800 px-2 py-1.5 text-xs text-ink-400 hover:text-ink-200"
                 }
               >
-                {STATUS_LABELS[option as Status] ?? option}
+                {statusLabel(option as Status, media)}
               </button>
             );
           })}
@@ -262,15 +313,23 @@ function ValueInput({
   }
 
   if (field.type === "enum") {
+    const labels =
+      field.key === "status"
+        ? (field.enum ?? []).map((option) => ({
+            value: option,
+            label: statusLabel(option as Status, media),
+          }))
+        : (field.enum ?? []).map((option) => ({ value: option, label: option }));
+
     return (
       <Select
         value={String(rule.value ?? "")}
         onChange={(event) => onChange(event.target.value)}
         className="h-9 w-auto min-w-[8rem] flex-1 text-xs"
       >
-        {(field.enum ?? []).map((option) => (
-          <option key={option} value={option}>
-            {STATUS_LABELS[option as Status] ?? option}
+        {labels.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
           </option>
         ))}
       </Select>

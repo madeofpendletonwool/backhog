@@ -19,19 +19,24 @@
      library themes/library.css — the reading room. Serif display, print-flat
                                   surfaces, a margin rule on the live item.
 
-   The contract that lets one set of components serve both:
+   The contract that lets one set of components serve all three:
 
    1. Components never name a family. They use the vocabulary — .panel,
-      .f-field, .f-btn-gold, .chip, .f-bar, font-display, ink-*, hl-* —
-      and each family supplies its own recipe for it.
-   2. The ink ramp is a fixed lightness ladder. A theme may move its hue;
-      it may not change the contrast between two steps, so text that is
-      legible in one theme is legible in all of them.
-   3. Meaning-bearing colour never re-themes: status cyan/green/red, the
-      achievement tiers, and the per-game cover accent are the same in
-      every theme. Only the room around them changes.
+      .f-field, .f-btn-gold, .chip, .f-bar, font-display, ink-*, hl-*,
+      edge, fill-hover, scrim — and each family supplies the recipe.
+   2. The ink ramp is a fixed *contrast* ladder. A theme may move its hue,
+      and a light theme inverts the direction of lightness, but no theme
+      may change the contrast between two steps — so text that is legible
+      in one theme is legible in all of them. The roles never move: 950 is
+      the page, 800 the plate text is solved against, 100 the strongest ink.
+   3. Meaning-bearing colour keeps its hue in every theme and cannot keep
+      its lightness. Status cyan/green/red and the achievement tiers are
+      constant in hue; their ink is mixed toward --c-100 by --tone-darken,
+      which is 0 on every dark ground. The per-game cover accent is fixed
+      outright. Only the room around them changes.
    4. hl-* is the "this is the live one" ramp — coin gold in the arcade,
-      brand violet in Midnight. It is chrome, so it does re-theme.
+      brand violet in Midnight, ember or oxblood in the library. It is
+      chrome, so it does re-theme.
 --------------------------------------------------------------------------- */
 
 @theme inline {
@@ -83,8 +88,9 @@
   --color-brand-500: #8b5cf6;
   --color-brand-600: #7c3aed;
 
-  /* The highlight ramp: focus rings, the live nav item, "unlocked!".
-     Coin gold under the arcade family, brand violet under Midnight. */
+  /* The highlight ramp: focus rings, the live nav item, "unlocked!". Coin
+     gold in the arcade, brand violet in Midnight, ember or oxblood in the
+     library. --hl-bright is the step that has to be readable on its own. */
   --color-hl-pale: var(--hl-pale);
   --color-hl-bright: var(--hl-bright);
   --color-hl-mid: var(--hl-mid);
@@ -105,9 +111,9 @@
   --radius-xl: var(--r-xl);
   --radius-2xl: var(--r-2xl);
 
-  /* The display face: Silkscreen in the arcade, the UI sans in Midnight.
-     Every `font-display` site also sets uppercase + tracking, which is the
-     shape both faces are used in. */
+  /* The display face: Silkscreen in the arcade, the UI sans in Midnight, a
+     serif in the library. Most `font-display` sites also set uppercase +
+     tracking, which is the shape all three faces are used in. */
   --font-display: var(--f-display);
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
@@ -263,7 +269,9 @@ body {
 @utility tone-chip {
   background-color: color-mix(in srgb, var(--tone) 15%, transparent);
   color: color-mix(in oklab, var(--tone-ink) calc(100% - var(--tone-darken, 0%)), var(--c-100));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 30%, transparent);
+  /* 0 0 0 1px, not inset: this is what Tailwind's own `ring-1` draws, and
+     these chips used to use it. */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 30%, transparent);
 }
 
 /** The same ink, with no plate under it. */

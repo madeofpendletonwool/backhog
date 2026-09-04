@@ -4,13 +4,23 @@ import { Link } from "react-router-dom";
 import { CreateListDialog } from "@/components/CreateListDialog";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { useArena } from "@/hooks/useArena";
 import { useLists } from "@/hooks/useLists";
+import { ruleSetTarget } from "@/lib/smartlists";
 
 export function ListsPage() {
+  const { arena } = useArena();
   const { data, isLoading } = useLists();
   const [creating, setCreating] = useState(false);
 
-  const lists = data?.lists ?? [];
+  const books = arena === "books";
+
+  // Smart lists carry their arena in their rules: a set scoped to books
+  // belongs to the books arena, a game set to games, and an unscoped set to
+  // both. Manual lists are shared collections and show in both.
+  const lists = (data?.lists ?? []).filter(
+    (list) => list.kind !== "smart" || ruleSetTarget(list.rules) === null || ruleSetTarget(list.rules) === (books ? "book" : "game"),
+  );
   const manual = lists.filter((list) => list.kind === "manual");
   const smart = lists.filter((list) => list.kind === "smart");
 
@@ -39,7 +49,11 @@ export function ListsPage() {
         <EmptyState
           icon={<Gi name="list-tree" className="size-7" />}
           title="No lists yet"
-          description="Group games however you like — a manual list you curate, or a smart list defined by rules."
+          description={
+            books
+              ? "Group books however you like — a manual list you curate, or a smart list defined by rules."
+              : "Group games however you like — a manual list you curate, or a smart list defined by rules."
+          }
           action={
             <Button variant="primary" onClick={() => setCreating(true)}>
               Create a list

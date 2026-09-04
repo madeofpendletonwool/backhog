@@ -6,31 +6,41 @@ import { useNavigate } from "react-router-dom";
 import { SmartListBuilder } from "./SmartListBuilder";
 import { Button, Input } from "./ui/primitives";
 import { Dialog } from "./ui/Dialog";
+import { useArena } from "@/hooks/useArena";
 import { useCreateProject } from "@/hooks/useProjects";
-import type { ProjectKind, RuleSet } from "@/lib/types";
+import type { MediaType, ProjectKind, RuleSet } from "@/lib/types";
 
-const DEFAULT_RULES: RuleSet = {
+/** A rule goal starts scoped to the arena it was built in. */
+const defaultRules = (media: MediaType): RuleSet => ({
   match: "all",
-  rules: [{ field: "status", op: "eq", value: "backlog" }],
+  rules: [
+    { field: "media_type", op: "eq", value: media },
+    { field: "status", op: "eq", value: "backlog" },
+  ],
   sort: { field: "added", dir: "desc" },
-};
+});
 
 export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const create = useCreateProject();
+  const { arena } = useArena();
+  const media: MediaType = arena === "books" ? "book" : "game";
+  const books = arena === "books";
+  const noun = books ? "book" : "game";
+  const nouns = books ? "books" : "games";
 
   const [kind, setKind] = useState<ProjectKind>("checklist");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [target, setTarget] = useState("");
-  const [rules, setRules] = useState<RuleSet>(DEFAULT_RULES);
+  const [rules, setRules] = useState<RuleSet>(defaultRules(media));
 
   const reset = () => {
     setKind("checklist");
     setName("");
     setDescription("");
     setTarget("");
-    setRules(DEFAULT_RULES);
+    setRules(defaultRules(media));
     create.reset();
   };
 
@@ -48,6 +58,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
         name: name.trim(),
         description: description.trim(),
         kind,
+        media,
         target_count:
           kind === "count_goal"
             ? targetNumber
@@ -84,14 +95,14 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
             onClick={() => setKind("checklist")}
             icon={<Gi name="list-checks" className="size-4" />}
             title="Checklist"
-            description="Finish these games."
+            description={`Finish these ${nouns}.`}
           />
           <KindOption
             active={kind === "count_goal"}
             onClick={() => setKind("count_goal")}
             icon={<Gi name="target" className="size-4" />}
             title="Count goal"
-            description="Finish N games."
+            description={`Finish N ${nouns}.`}
           />
           <KindOption
             active={kind === "rule_goal"}
@@ -111,10 +122,16 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
             onChange={(event) => setName(event.target.value)}
             placeholder={
               kind === "checklist"
-                ? "Finish the Souls games"
+                ? books
+                  ? "Read the Dune books"
+                  : "Finish the Souls games"
                 : kind === "count_goal"
-                  ? "10 games before buying another"
-                  : "Play my PS2 backlog"
+                  ? books
+                    ? "10 books before buying another"
+                    : "10 games before buying another"
+                  : books
+                    ? "Read my classics shelf"
+                    : "Play my PS2 backlog"
             }
           />
         </label>
@@ -135,7 +152,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
             <span className="mb-1.5 block text-xs font-medium text-ink-300">
               {kind === "count_goal" ? "Target" : "Target"}
               {kind === "rule_goal" && (
-                <span className="text-ink-600"> (empty = every matching game)</span>
+                <span className="text-ink-600"> (empty = every matching {noun})</span>
               )}
             </span>
             <Input

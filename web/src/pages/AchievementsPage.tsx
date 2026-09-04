@@ -243,8 +243,8 @@ function AchievementCard({ achievement }: { achievement: AchievementStatus }) {
           style={unlockedAt ? tierStyle(achievement.tier) : undefined}
           className={cn(
             "flex size-10 items-center justify-center rounded-xl",
-            // tone-chip draws its own inset ring; the locked tile needs one.
-            unlockedAt ? "tone-chip" : "bg-ink-850 text-ink-600 ring-1 ring-inset ring-edge",
+            // tone-chip draws its own ring; the locked tile needs one.
+            unlockedAt ? "tone-chip" : "bg-ink-850 text-ink-600 ring-1 ring-edge",
           )}
         >
           <Gi name={achievementIcon(achievement.icon)} className="size-5" />

@@ -82,7 +82,7 @@ func strPtr(v string) *string { return &v }
 func mustCreateChecklist(t *testing.T, s *Store, userID string, entries map[int64]models.Entry) models.Project {
 	t.Helper()
 	ctx := context.Background()
-	p, err := s.CreateProject(ctx, userID, "Finish the Souls games", "Every one, start to finish", models.ProjectChecklist, nil, nil)
+	p, err := s.CreateProject(ctx, userID, "Finish the Souls games", "Every one, start to finish", models.ProjectChecklist, models.MediaGame, nil, nil)
 	if err != nil {
 		t.Fatalf("create checklist: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestCountGoalProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := s.CreateProject(ctx, userID, "10 before buying another", "", models.ProjectCountGoal, intPtr(5), nil)
+	p, err := s.CreateProject(ctx, userID, "10 before buying another", "", models.ProjectCountGoal, models.MediaGame, intPtr(5), nil)
 	if err != nil {
 		t.Fatalf("create count goal: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestCountGoalProgress(t *testing.T) {
 	}
 
 	// A target already met completes on first read, capped at 100%.
-	early, err := s.CreateProject(ctx, userID, "2 quick wins", "", models.ProjectCountGoal, intPtr(2), nil)
+	early, err := s.CreateProject(ctx, userID, "2 quick wins", "", models.ProjectCountGoal, models.MediaGame, intPtr(2), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,14 +312,14 @@ func TestCountGoalValidation(t *testing.T) {
 	s, userID := newProjectsStore(t)
 	ctx := context.Background()
 
-	if _, err := s.CreateProject(ctx, userID, "no target", "", models.ProjectCountGoal, nil, nil); err == nil {
+	if _, err := s.CreateProject(ctx, userID, "no target", "", models.ProjectCountGoal, models.MediaGame, nil, nil); err == nil {
 		t.Error("count goal without target_count was allowed")
 	}
-	if _, err := s.CreateProject(ctx, userID, "zero target", "", models.ProjectCountGoal, intPtr(0), nil); err == nil {
+	if _, err := s.CreateProject(ctx, userID, "zero target", "", models.ProjectCountGoal, models.MediaGame, intPtr(0), nil); err == nil {
 		t.Error("count goal with target_count 0 was allowed")
 	}
 
-	p, err := s.CreateProject(ctx, userID, "fine", "", models.ProjectCountGoal, intPtr(3), nil)
+	p, err := s.CreateProject(ctx, userID, "fine", "", models.ProjectCountGoal, models.MediaGame, intPtr(3), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestRuleGoalEvaluation(t *testing.T) {
 	}
 
 	// No explicit target: the goal is the whole pool (2 PS2 games, 155h).
-	p, err := s.CreateProject(ctx, userID, "Play my PS2 backlog", "", models.ProjectRuleGoal, nil, &ps2Rule)
+	p, err := s.CreateProject(ctx, userID, "Play my PS2 backlog", "", models.ProjectRuleGoal, models.MediaGame, nil, &ps2Rule)
 	if err != nil {
 		t.Fatalf("create rule goal: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestRuleGoalEvaluation(t *testing.T) {
 	}
 
 	// Explicit target: first N matches count as the goal.
-	targeted, err := s.CreateProject(ctx, userID, "One PS2 game down", "", models.ProjectRuleGoal, intPtr(1), &ps2Rule)
+	targeted, err := s.CreateProject(ctx, userID, "One PS2 game down", "", models.ProjectRuleGoal, models.MediaGame, intPtr(1), &ps2Rule)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +405,7 @@ func TestRuleGoalEvaluation(t *testing.T) {
 
 	// Invalid rule sets are rejected at write time, not at read time.
 	bad := models.RuleSet{Match: "all", Rules: []models.Rule{{Field: "nope", Op: "eq", Value: 1}}}
-	if _, err := s.CreateProject(ctx, userID, "bad", "", models.ProjectRuleGoal, nil, &bad); err == nil {
+	if _, err := s.CreateProject(ctx, userID, "bad", "", models.ProjectRuleGoal, models.MediaGame, nil, &bad); err == nil {
 		t.Error("invalid rule set was allowed at create")
 	}
 	if _, err := s.UpdateProject(ctx, userID, p.ID, ProjectUpdate{Rules: &bad}); err == nil {
@@ -413,7 +413,7 @@ func TestRuleGoalEvaluation(t *testing.T) {
 	}
 
 	// Only rule goals carry rules.
-	checklist, err := s.CreateProject(ctx, userID, "curated", "", models.ProjectChecklist, nil, nil)
+	checklist, err := s.CreateProject(ctx, userID, "curated", "", models.ProjectChecklist, models.MediaGame, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,18 +427,18 @@ func TestProjectKindValidation(t *testing.T) {
 	s, userID := newProjectsStore(t)
 	ctx := context.Background()
 
-	if _, err := s.CreateProject(ctx, userID, "weird", "", "bucket_list", nil, nil); err == nil {
+	if _, err := s.CreateProject(ctx, userID, "weird", "", "bucket_list", models.MediaGame, nil, nil); err == nil {
 		t.Error("unknown kind was allowed")
 	}
-	if _, err := s.CreateProject(ctx, userID, "  ", "", models.ProjectChecklist, nil, nil); err == nil {
+	if _, err := s.CreateProject(ctx, userID, "  ", "", models.ProjectChecklist, models.MediaGame, nil, nil); err == nil {
 		t.Error("blank name was allowed")
 	}
 	rules := models.RuleSet{Match: "all", Rules: []models.Rule{{Field: "status", Op: "eq", Value: models.StatusBacklog}}}
-	if _, err := s.CreateProject(ctx, userID, "ruleless", "", models.ProjectRuleGoal, nil, nil); err == nil {
+	if _, err := s.CreateProject(ctx, userID, "ruleless", "", models.ProjectRuleGoal, models.MediaGame, nil, nil); err == nil {
 		t.Error("rule goal without rules was allowed")
 	}
 	// A checklist silently drops target and rules: the member list is the target.
-	checklist, err := s.CreateProject(ctx, userID, "curated", "", models.ProjectChecklist, intPtr(4), &rules)
+	checklist, err := s.CreateProject(ctx, userID, "curated", "", models.ProjectChecklist, models.MediaGame, intPtr(4), &rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +504,7 @@ func TestProjectItemMembership(t *testing.T) {
 	}
 
 	// Goal projects have no members to manage.
-	goal, err := s.CreateProject(ctx, userID, "10 games", "", models.ProjectCountGoal, intPtr(10), nil)
+	goal, err := s.CreateProject(ctx, userID, "10 games", "", models.ProjectCountGoal, models.MediaGame, intPtr(10), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,5 +552,157 @@ func TestProjectIsolation(t *testing.T) {
 	// The owner still sees it.
 	if _, err := s.GetProject(ctx, userID, p.ID); err != nil {
 		t.Errorf("owner lost sight of the project: %v", err)
+	}
+}
+
+// --- books arena -----------------------------------------------------------
+
+// seedBookProjectLibrary caches three works and seeds one entry each: Dune
+// read, the other two on the to-read pile. Returns entries keyed by work id.
+func seedBookProjectLibrary(t *testing.T, s *Store, userID string) map[string]models.Entry {
+	t.Helper()
+	ctx := context.Background()
+	works := []struct {
+		id     string
+		title  string
+		author string
+	}{
+		{"OL1W", "Dune", "Frank Herbert"},
+		{"OL2W", "The Hobbit", "J. R. R. Tolkien"},
+		{"OL3W", "A Wizard of Earthsea", "Ursula K. Le Guin"},
+	}
+	entries := map[string]models.Entry{}
+	for _, w := range works {
+		seedBook(t, s, w.id, w.title, []string{w.author}, nil, nil, nil)
+		status := models.StatusBacklog
+		if w.id == "OL1W" {
+			status = models.StatusPlayed
+		}
+		e, err := s.AddBookEntry(ctx, userID, w.id, nil, status)
+		if err != nil {
+			t.Fatalf("add %s: %v", w.id, err)
+		}
+		entries[w.id] = e
+	}
+	return entries
+}
+
+// TestBookProjectsWorkAtAll is the regression test for the bug: book members
+// vanished from checklist counts (an inner JOIN on games dropped them) and a
+// book count goal counted games. Both must now answer in books.
+func TestBookProjectsWorkAtAll(t *testing.T) {
+	s, userID := newProjectsStore(t)
+	ctx := context.Background()
+	books := seedBookProjectLibrary(t, s, userID)
+	// One game entry too, to prove the scoping cuts both ways.
+	soulsLibrary(t, s, userID, map[int64]bool{200: true})
+
+	// A book checklist: 3 members, 1 read, zero estimated hours.
+	checklist, err := s.CreateProject(ctx, userID, "Read the Dune saga", "", models.ProjectChecklist, models.MediaBook, nil, nil)
+	if err != nil {
+		t.Fatalf("create book checklist: %v", err)
+	}
+	for _, id := range []string{"OL1W", "OL2W", "OL3W"} {
+		if err := s.AddProjectItem(ctx, userID, checklist.ID, books[id].ID); err != nil {
+			t.Fatalf("add %s: %v", id, err)
+		}
+	}
+	got, err := s.GetProject(ctx, userID, checklist.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MediaScope != models.MediaBook {
+		t.Errorf("media_scope = %q, want book", got.MediaScope)
+	}
+	if got.Progress.TargetCount != 3 || got.Progress.CompletedCount != 1 {
+		t.Errorf("checklist counts = %d/%d, want 1/3", got.Progress.CompletedCount, got.Progress.TargetCount)
+	}
+	if got.Progress.EstHoursTotal != 0 {
+		t.Errorf("book checklist hours = %v, want 0 (books carry no time-to-beat)", got.Progress.EstHoursTotal)
+	}
+
+	// A book count goal counts finished books, never played games.
+	goal, err := s.CreateProject(ctx, userID, "10 books before buying another", "", models.ProjectCountGoal, models.MediaBook, intPtr(5), nil)
+	if err != nil {
+		t.Fatalf("create book count goal: %v", err)
+	}
+	got, err = s.GetProject(ctx, userID, goal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Progress.CompletedCount != 1 {
+		t.Errorf("book count goal completed = %d, want 1 (Dune, not Demon's Souls)", got.Progress.CompletedCount)
+	}
+
+	// A book rule goal's pool stays books even with unscoped rules.
+	rules := models.RuleSet{Match: "all", Rules: []models.Rule{{Field: "status", Op: "in", Value: []any{models.StatusBacklog, models.StatusPlayed}}}}
+	ruleGoal, err := s.CreateProject(ctx, userID, "Clear the shelf", "", models.ProjectRuleGoal, models.MediaBook, nil, &rules)
+	if err != nil {
+		t.Fatalf("create book rule goal: %v", err)
+	}
+	got, err = s.GetProject(ctx, userID, ruleGoal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Progress.TargetCount != 3 || got.Progress.CompletedCount != 1 {
+		t.Errorf("rule goal counts = %d/%d, want 1/3 books", got.Progress.CompletedCount, got.Progress.TargetCount)
+	}
+	items, err := s.ProjectItemsFor(ctx, userID, ruleGoal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 {
+		t.Errorf("rule goal pool = %d items, want 3 books", len(items))
+	}
+	for _, item := range items {
+		if item.Entry.MediaType != models.MediaBook {
+			t.Errorf("rule goal pool leaked a %s entry", item.Entry.MediaType)
+		}
+	}
+}
+
+// TestProjectMembershipIsMediaScoped: a book project refuses a game entry and
+// vice versa — an arena's checklist is that arena's entries, full stop.
+func TestProjectMembershipIsMediaScoped(t *testing.T) {
+	s, userID := newProjectsStore(t)
+	ctx := context.Background()
+	books := seedBookProjectLibrary(t, s, userID)
+	gameEntries := soulsLibrary(t, s, userID, nil)
+
+	bookProject, err := s.CreateProject(ctx, userID, "Read the classics", "", models.ProjectChecklist, models.MediaBook, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddProjectItem(ctx, userID, bookProject.ID, gameEntries[200].ID); err == nil {
+		t.Error("book project accepted a game entry")
+	}
+
+	gameProject, err := s.CreateProject(ctx, userID, "Finish the Souls games", "", models.ProjectChecklist, models.MediaGame, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddProjectItem(ctx, userID, gameProject.ID, books["OL1W"].ID); err == nil {
+		t.Error("game project accepted a book entry")
+	}
+	// The matching media still joins fine.
+	if err := s.AddProjectItem(ctx, userID, bookProject.ID, books["OL1W"].ID); err != nil {
+		t.Errorf("book project refused a book entry: %v", err)
+	}
+}
+
+// TestCreateProjectMediaValidation: the media scope must name a real arena.
+func TestCreateProjectMediaValidation(t *testing.T) {
+	s, userID := newProjectsStore(t)
+	ctx := context.Background()
+	if _, err := s.CreateProject(ctx, userID, "vinyl", "", models.ProjectChecklist, "vinyl", nil, nil); err == nil {
+		t.Error("unknown media scope was allowed")
+	}
+	// Empty defaults to game (the column default pre-existing rows carry).
+	p, err := s.CreateProject(ctx, userID, "legacy shape", "", models.ProjectChecklist, "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MediaScope != models.MediaGame {
+		t.Errorf("empty media scope = %q, want game", p.MediaScope)
 	}
 }

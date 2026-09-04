@@ -100,6 +100,15 @@ media-agnostic; books got the same statuses, the same drag queue and
 the same achievement ledger (tagged `domain` — see
 [ACHIEVEMENTS.md](ACHIEVEMENTS.md)).
 
+Lists and projects scope differently. A smart list carries its arena in
+its own rule set (`media_type eq book`); the builder offers only that
+arena's fields, and the server rejects the other arena's fields from a
+scoped set. Projects are arena-scoped at the row level —
+`projects.media_scope` is `'game' | 'book'`, set from the arena the
+project was created in — so a count goal counts finished books, a rule
+goal's match pool stays books, and a checklist refuses entries from the
+other arena.
+
 The book-specific hierarchy, one table per concept:
 
 | Table | Is a | Keyed by | Notes |

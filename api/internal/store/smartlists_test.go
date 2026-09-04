@@ -234,3 +234,94 @@ func TestCompileMediaTypeRule(t *testing.T) {
 		t.Error("invalid media_type value should be rejected")
 	}
 }
+
+func TestGameScopedRuleSetRejectsBookOnlyFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		rules   []models.Rule
+		wantErr bool
+	}{
+		{
+			"game scope rejects a book-only field",
+			[]models.Rule{
+				{Field: "media_type", Op: "eq", Value: models.MediaGame},
+				{Field: "author", Op: "contains", Value: "Tolkien"},
+			},
+			true,
+		},
+		{
+			"game in-list scope rejects a book-only field",
+			[]models.Rule{
+				{Field: "media_type", Op: "in", Value: []any{models.MediaGame}},
+				{Field: "publish_year", Op: "lt", Value: 1970.0},
+			},
+			true,
+		},
+		{
+			"book scope keeps book-only fields",
+			[]models.Rule{
+				{Field: "media_type", Op: "eq", Value: models.MediaBook},
+				{Field: "title", Op: "contains", Value: "dune"},
+			},
+			false,
+		},
+		{
+			"mixed scope keeps book-only fields",
+			[]models.Rule{
+				{Field: "media_type", Op: "in", Value: []any{models.MediaGame, models.MediaBook}},
+				{Field: "author", Op: "eq", Value: "Frank Herbert"},
+			},
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRuleSet(models.RuleSet{Match: "all", Rules: tt.rules})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateRuleSet error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// The book-only fields compile against the books table and accept the new
+// book sorts.
+func TestBookFieldsCompile(t *testing.T) {
+	rs := models.RuleSet{
+		Match: "all",
+		Rules: []models.Rule{
+			{Field: "media_type", Op: "eq", Value: models.MediaBook},
+			{Field: "author", Op: "contains", Value: "le guin"},
+			{Field: "publish_year", Op: "gte", Value: 1960.0},
+			{Field: "logged_hours", Op: "gt", Value: 4.0},
+		},
+		Sort: &models.Sort{Field: "author", Dir: "asc"},
+	}
+	sql, args, err := compileRules(rs)
+	if err != nil {
+		t.Fatalf("compileRules: %v", err)
+	}
+	if !strings.Contains(sql, "authors_json") || !strings.Contains(sql, "first_publish_year") {
+		t.Errorf("book fields should read the books table: %s", sql)
+	}
+	if !strings.Contains(sql, "reading_sessions") {
+		t.Errorf("logged_hours should include reading sessions: %s", sql)
+	}
+	if strings.Contains(sql, "le guin") {
+		t.Errorf("author value was interpolated into SQL: %s", sql)
+	}
+	if len(args) != 4 {
+		t.Errorf("args = %d, want 4: %v", len(args), args)
+	}
+
+	for _, key := range []string{"author", "published", "pages", "name"} {
+		if err := ValidateRuleSet(models.RuleSet{Match: "all", Sort: &models.Sort{Field: key}}); err != nil {
+			t.Errorf("sort %q rejected: %v", key, err)
+		}
+	}
+	// "name" must now coalesce so a book-scoped set sorts by its titles.
+	if !strings.Contains(smartSorts["name"], "COALESCE") {
+		t.Errorf(`sort "name" should coalesce game names and book titles: %s`, smartSorts["name"])
+	}
+}

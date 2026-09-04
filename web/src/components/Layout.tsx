@@ -19,6 +19,7 @@ import { AudioPlayerProvider } from "@/hooks/useAudioPlayer";
 import { useTheme, type ThemeFamily } from "@/hooks/useTheme";
 import { useLists } from "@/hooks/useLists";
 import { useStats } from "@/hooks/useLibrary";
+import { ruleSetTarget } from "@/lib/smartlists";
 import type { Arena } from "@/lib/arena";
 import type { GiName } from "@/lib/gameicons";
 
@@ -126,7 +127,16 @@ export function Layout() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const smartLists = listData?.lists.filter((list) => list.kind === "smart") ?? [];
+  // A smart list files itself under the arena its rules target; an unscoped
+  // set matches both arenas and shows in both. The books nav therefore never
+  // surfaces the games arena's lists wearing the wrong words.
+  const arenaMedia = arena === "books" ? "book" : "game";
+  const smartLists =
+    listData?.lists.filter(
+      (list) =>
+        list.kind === "smart" &&
+        (ruleSetTarget(list.rules) === null || ruleSetTarget(list.rules) === arenaMedia),
+    ) ?? [];
 
   /* The whole app lives inside the audio player's provider, so the one
      <audio> element survives every navigation; the player bar itself is

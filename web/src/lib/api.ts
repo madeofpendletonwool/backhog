@@ -285,6 +285,8 @@ export const api = {
     name: string;
     description?: string;
     kind: ProjectKind;
+    /** The arena the project lives in; defaults to games server-side. */
+    media?: "game" | "book";
     target_count?: number | null;
     rules?: RuleSet;
   }) => request<Project>("/projects", { method: "POST", body: body(input) }),

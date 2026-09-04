@@ -5,6 +5,7 @@ import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { useArena } from "@/hooks/useArena";
 import { useProjects } from "@/hooks/useProjects";
 import { formatDate, formatHours } from "@/lib/format";
 import { PROJECT_KIND_LABELS, type Project, type ProjectKind } from "@/lib/types";
@@ -16,10 +17,13 @@ const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
 };
 
 export function ProjectsPage() {
+  const { arena } = useArena();
   const { data, isLoading } = useProjects();
   const [creating, setCreating] = useState(false);
 
-  const projects = data?.projects ?? [];
+  const books = arena === "books";
+  // Projects are arena-scoped at creation; each arena sees its own.
+  const projects = (data?.projects ?? []).filter((project) => project.media_scope === (books ? "book" : "game"));
   const active = projects.filter((project) => !project.completed_at);
   const completed = projects.filter((project) => project.completed_at);
 
@@ -29,7 +33,9 @@ export function ProjectsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Projects</h1>
           <p className="mt-1 text-sm text-ink-400">
-            Temporary objectives — finish a set, hit a count, clear a slice of the backlog.
+            {books
+              ? "Temporary objectives — finish a series, hit a count, clear a slice of the pile."
+              : "Temporary objectives — finish a set, hit a count, clear a slice of the backlog."}
           </p>
         </div>
         <Button variant="primary" onClick={() => setCreating(true)}>

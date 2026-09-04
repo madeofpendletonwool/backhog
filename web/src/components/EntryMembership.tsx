@@ -71,7 +71,8 @@ export function ListMembership({ entry }: { entry: Entry }) {
 
 /**
  * Checklist-project membership. Goal projects are excluded: their target is
- * the whole library or a rule set, not a curated list.
+ * the whole library or a rule set, not a curated list. Projects are
+ * arena-scoped, so only the entry's own arena's checklists are offered.
  */
 export function ProjectMembership({ entry }: { entry: Entry }) {
   const { data: projectData } = useProjects();
@@ -79,7 +80,10 @@ export function ProjectMembership({ entry }: { entry: Entry }) {
   const toggle = useToggleProjectMembership(entry.id);
 
   const checklists = projectData?.projects.filter(
-    (project) => project.kind === "checklist" && !project.completed_at,
+    (project) =>
+      project.kind === "checklist" &&
+      !project.completed_at &&
+      project.media_scope === entry.media_type,
   ) ?? [];
   const memberOf = new Set(membership?.project_ids ?? []);
 

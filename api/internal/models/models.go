@@ -331,6 +331,9 @@ type Project struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Kind        string    `json:"kind"`
+	// MediaScope is the arena this project lives in ('game' or 'book') — it
+	// decides which half of the library feeds the project's progress.
+	MediaScope  string    `json:"media_scope"`
 	TargetCount *int      `json:"target_count,omitempty"`
 	Rules       *RuleSet  `json:"rules,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`

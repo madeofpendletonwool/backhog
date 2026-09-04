@@ -243,7 +243,9 @@ func (s *Server) handleEntryLists(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSmartFields describes the queryable fields so the rule builder does not
-// have to hard-code them, and stays in sync with the compiler's whitelist.
+// have to hard-code them, and stays in sync with the compiler's whitelist. The
+// media tag says which arena a field reads ('game', 'book', or empty for
+// either) so the builder can hide the other arena's fields from a scoped set.
 func (s *Server) handleSmartFields(w http.ResponseWriter, r *http.Request) {
 	type fieldDTO struct {
 		Key   string   `json:"key"`
@@ -251,12 +253,13 @@ func (s *Server) handleSmartFields(w http.ResponseWriter, r *http.Request) {
 		Type  string   `json:"type"`
 		Ops   []string `json:"ops"`
 		Enum  []string `json:"enum,omitempty"`
+		Media string   `json:"media,omitempty"`
 	}
 
 	fields := store.SmartFields()
 	out := make([]fieldDTO, 0, len(fields))
 	for key, f := range fields {
-		out = append(out, fieldDTO{Key: key, Label: f.Label, Type: f.Type, Ops: f.Ops, Enum: f.Enum})
+		out = append(out, fieldDTO{Key: key, Label: f.Label, Type: f.Type, Ops: f.Ops, Enum: f.Enum, Media: f.Media})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"fields": out})
 }

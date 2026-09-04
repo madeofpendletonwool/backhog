@@ -356,3 +356,107 @@ func TestReadingSeason(t *testing.T) {
 		t.Errorf("empty season = %+v, want all zeros", empty)
 	}
 }
+
+// TestBorrowedCopiesAndTheAcquisitionsRace pins the two achievement
+// semantics of a library habit: a checkout is not a book bought — an
+// entry whose registered printings are all borrowed leaves the
+// acquisitions denominator, so finishes can outrun buys — and a borrowed
+// paperback is still the paper format, so it closes every_which_way.
+func TestBorrowedCopiesAndTheAcquisitionsRace(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "borrowed_race.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := New(database)
+
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	exec(`INSERT INTO users (id, email, username, password_hash) VALUES ('u1', 'u1@example.com', 'u1', 'x')`)
+
+	year := time.Now().UTC().Year()
+	ymd := func(monthDay string) string {
+		return fmt.Sprintf("%04d-%s 12:00:00", year, monthDay)
+	}
+
+	// Two works this year. bB is an ordinary acquisition: bought, or at
+	// least never declared borrowed — it counts. bA is the library
+	// habit: borrowed-only, and it carries all three formats so the
+	// borrowed-paper case rides the same fixture.
+	for _, w := range []struct{ id, title string }{
+		{"OLAW", "Library Book"}, {"OLBW", "Bought Book"},
+	} {
+		exec(`INSERT INTO books (id, title, authors_json) VALUES (?, ?, '[]')`, w.id, w.title)
+	}
+	exec(`INSERT INTO book_editions (id, book_id, page_count) VALUES ('OLAM', 'OLAW', 300)`)
+	exec(`INSERT INTO library_entries (id, user_id, media_type, book_id, status, created_at, finished_at)
+		VALUES ('bB', 'u1', 'book', 'OLBW', 'played', ?, ?)`, ymd("01-05"), ymd("02-01"))
+	exec(`INSERT INTO library_entries (id, user_id, media_type, book_id, edition_id, status, created_at, finished_at)
+		VALUES ('bA', 'u1', 'book', 'OLAW', 'OLAM', 'played', ?, ?)`, ymd("01-10"), ymd("03-01"))
+	exec(`INSERT INTO physical_copies (id, user_id, entry_id, edition_id, acquisition)
+		VALUES ('pcA', 'u1', 'bA', 'OLAM', 'borrowed')`)
+	exec(`INSERT INTO media_files (id, root, path, kind, size_bytes, mtime, book_id, scanned_at)
+		VALUES (21, '/nas', 'a/epub.epub', 'epub', 1, 1, 'OLAW', CURRENT_TIMESTAMP)`)
+	exec(`INSERT INTO media_files (id, root, path, kind, size_bytes, mtime, book_id, scanned_at)
+		VALUES (22, '/nas', 'a/audio.m4b', 'audio', 1, 1, 'OLAW', CURRENT_TIMESTAMP)`)
+
+	// Backfill: two finishes this year against one acquisition (bB), so
+	// breaking_even crosses on the second finish — only because the
+	// borrowed-only bA stayed out of the denominator. Counted as a buy,
+	// it would be 2 against 2 and nothing would cross.
+	unlocked := map[string]string{}
+	if _, err := s.Achievements(context.Background(), "u1"); err != nil {
+		t.Fatalf("Achievements: %v", err)
+	}
+	rows, err := database.Query(
+		`SELECT achievement_id, COALESCE(entry_id, '') FROM achievement_unlocks
+		 WHERE user_id = 'u1' AND domain = 'book'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, entryID string
+		if err := rows.Scan(&id, &entryID); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		unlocked[id] = entryID
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if unlocked["breaking_even"] != "bA" {
+		t.Errorf("breaking_even = %q, want bA — the borrowed-only entry must not count as a buy",
+			unlocked["breaking_even"])
+	}
+	if unlocked["every_which_way"] != "bA" {
+		t.Errorf("every_which_way = %q, want bA — a borrowed paperback is still the paper format",
+			unlocked["every_which_way"])
+	}
+
+	// The same exclusion answers at live evaluation, not only in the
+	// replay: a fresh user finishing their only holding — borrowed, and
+	// so not in the denominator — breaks even on the spot.
+	exec(`INSERT INTO users (id, email, username, password_hash) VALUES ('u3', 'u3@example.com', 'u3', 'x')`)
+	exec(`INSERT INTO books (id, title, authors_json) VALUES ('OLCW', 'Third Book', '[]')`)
+	exec(`INSERT INTO book_editions (id, book_id) VALUES ('OLCM', 'OLCW')`)
+	exec(`INSERT INTO library_entries (id, user_id, media_type, book_id, edition_id, status, created_at)
+		VALUES ('bC', 'u3', 'book', 'OLCW', 'OLCM', 'backlog', ?)`, ymd("06-01"))
+	exec(`INSERT INTO physical_copies (id, user_id, entry_id, edition_id, acquisition)
+		VALUES ('pcC', 'u3', 'bC', 'OLCM', 'borrowed')`)
+	_, unlocks, err := s.UpdateEntry(context.Background(), "u3", "bC", EntryUpdate{Status: strptr(models.StatusPlayed)})
+	if err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	if got := unlockedIDs(unlocks); got["breaking_even"] != "bC" {
+		t.Errorf("live breaking_even = %q, want bC — one finish beats zero buys when the checkout is not a buy", got["breaking_even"])
+	}
+}

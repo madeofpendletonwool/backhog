@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -104,10 +105,15 @@ func (s *Server) handleBookPassage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// physicalCopyRequest registers a printing of a book the user holds.
+// physicalCopyRequest registers a printing of a book the user holds,
+// owned or checked out of the library: acquisition 'owned' (the default)
+// or 'borrowed', and a due date the latter may carry — a bare date
+// (YYYY-MM-DD) or a full timestamp.
 type physicalCopyRequest struct {
-	EditionID string `json:"edition_id"`
-	Notes     string `json:"notes"`
+	EditionID   string  `json:"edition_id"`
+	Notes       string  `json:"notes"`
+	Acquisition string  `json:"acquisition"`
+	DueAt       *string `json:"due_at"`
 }
 
 // handleCreateBookCopy registers one printing against one of the
@@ -125,7 +131,16 @@ func (s *Server) handleCreateBookCopy(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	c, err := s.store.CreatePhysicalCopy(r.Context(), userID, entryID, body.EditionID, body.Notes)
+	var dueAt *time.Time
+	if body.DueAt != nil {
+		var err error
+		if dueAt, err = parseCopyDueDate(*body.DueAt); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	c, err := s.store.CreatePhysicalCopy(r.Context(), userID, entryID,
+		body.EditionID, body.Notes, body.Acquisition, dueAt)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, errNotFound)
@@ -159,9 +174,31 @@ func (s *Server) handleListBookCopies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"copies": copies})
 }
 
-// handleUpdateBookCopy rewrites a copy's notes. Notes are the only
-// editable field: the edition is the copy's identity, and anchors hang
-// off it.
+// parseCopyDueDate reads a due date from a raw PATCH body: a string the
+// library would print ("2026-09-12", or a full timestamp), or JSON null
+// for "no deadline was ever given".
+func parseCopyDueDate(v any) (*time.Time, error) {
+	if v == nil {
+		return nil, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil, errorf(http.StatusBadRequest, "due_at must be a date (YYYY-MM-DD) or null")
+	}
+	for _, layout := range []string{"2006-01-02", time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, errorf(http.StatusBadRequest, "due_at must be a date (YYYY-MM-DD) or null")
+}
+
+// handleUpdateBookCopy rewrites a copy's notes, and — because a library
+// loan's deadline is the one fact about a checkout that changes while it
+// is in hand — its due date, when the body says anything about one. An
+// absent due_at key leaves the deadline alone; an explicit null clears
+// it. The edition stays immutable: it is the copy's identity, and
+// anchors hang off it.
 func (s *Server) handleUpdateBookCopy(w http.ResponseWriter, r *http.Request) {
 	userID, entryID, _, ok := s.bookEntry(w, r)
 	if !ok {
@@ -169,18 +206,116 @@ func (s *Server) handleUpdateBookCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	copyID := chi.URLParam(r, "copyID")
 
+	var raw map[string]any
+	if err := decodeRaw(r, &raw); err != nil {
+		fail(w, err)
+		return
+	}
+	for key := range raw {
+		if key != "notes" && key != "due_at" {
+			fail(w, errorf(http.StatusBadRequest, "unknown field "+key))
+			return
+		}
+	}
+	u := store.CopyUpdate{}
+	if v, ok := raw["notes"]; ok {
+		s, ok := v.(string)
+		if !ok {
+			fail(w, errorf(http.StatusBadRequest, "notes must be a string"))
+			return
+		}
+		u.Notes = s
+	} else {
+		fail(w, errorf(http.StatusBadRequest, "notes is required"))
+		return
+	}
+	if v, ok := raw["due_at"]; ok {
+		dueAt, err := parseCopyDueDate(v)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		u.DueAt, u.SetDueAt = dueAt, true
+	}
+	c, err := s.store.UpdatePhysicalCopy(r.Context(), userID, entryID, copyID, u)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, errNotFound)
+		return
+	case err != nil:
+		fail(w, errorf(http.StatusBadRequest, err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"copy": c})
+}
+
+// handleReturnBookCopy marks a borrowed copy returned: the row and its
+// page map stay — "returned" is a fact about possession, not a deletion —
+// and the same printing can be checked out again later.
+func (s *Server) handleReturnBookCopy(w http.ResponseWriter, r *http.Request) {
+	userID, entryID, _, ok := s.bookEntry(w, r)
+	if !ok {
+		return
+	}
+	c, err := s.store.ReturnPhysicalCopy(r.Context(), userID, entryID, chi.URLParam(r, "copyID"))
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, errNotFound)
+		return
+	case err != nil:
+		fail(w, errorf(http.StatusBadRequest, err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"copy": c})
+}
+
+// handleReopenBookCopy checks a returned printing out again: the same
+// row reopens with its page map intact, and a new due date may come with
+// it. Re-registering the printing instead is a 409, on purpose — the map
+// already exists and the reopen is what keeps it.
+func (s *Server) handleReopenBookCopy(w http.ResponseWriter, r *http.Request) {
+	userID, entryID, _, ok := s.bookEntry(w, r)
+	if !ok {
+		return
+	}
+	copyID := chi.URLParam(r, "copyID")
+
 	var body struct {
-		Notes *string `json:"notes"`
+		DueAt *string `json:"due_at"`
 	}
 	if err := decode(r, &body); err != nil {
 		fail(w, err)
 		return
 	}
-	if body.Notes == nil {
-		fail(w, errorf(http.StatusBadRequest, "notes is required"))
+	var dueAt *time.Time
+	if body.DueAt != nil {
+		var err error
+		if dueAt, err = parseCopyDueDate(*body.DueAt); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	c, err := s.store.ReopenPhysicalCopy(r.Context(), userID, entryID, copyID, dueAt)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, errNotFound)
+		return
+	case err != nil:
+		fail(w, errorf(http.StatusBadRequest, err.Error()))
 		return
 	}
-	c, err := s.store.UpdatePhysicalCopyNotes(r.Context(), userID, entryID, copyID, *body.Notes)
+	writeJSON(w, http.StatusOK, map[string]any{"copy": c})
+}
+
+// handleOwnBookCopy upgrades a borrowing to ownership — the reader bought
+// the book they had out from the library. The return state clears with
+// it; the page map, of course, stays.
+func (s *Server) handleOwnBookCopy(w http.ResponseWriter, r *http.Request) {
+	userID, entryID, _, ok := s.bookEntry(w, r)
+	if !ok {
+		return
+	}
+	c, err := s.store.OwnPhysicalCopy(r.Context(), userID, entryID, chi.URLParam(r, "copyID"))
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, errNotFound)

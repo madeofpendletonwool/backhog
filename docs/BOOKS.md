@@ -116,7 +116,7 @@ The book-specific hierarchy, one table per concept:
 | `books` | **Work** | Open Library work key (`OL12345W`) | Shared metadata cache, like `games`. Authors/subjects stay JSON until faceting needs them |
 | `book_editions` | **Edition / Printing** | OL edition key (`OL12345M`) | ISBN10/13, publisher, page count, binding. Page numbers belong *here*, not to the work |
 | `library_entries` | your copy of the work | + `media_type`, `book_id`, nullable `edition_id` | The spine. `edition_id` is the printing the entry is anchored to, recorded at add time |
-| `physical_copies` | the lump of paper | `(user, entry, edition)` UNIQUE | The thing page anchors attach to — a second printing is a second row with its own map |
+| `physical_copies` | the lump of paper | `(user, entry, edition)` UNIQUE | A printing the user holds, owned or borrowed (`acquisition`, `due_at`, `returned_at`). The thing page anchors attach to — a second printing is a second row with its own map |
 | `media_files` | EPUB & audiobook files | `(root, path)` UNIQUE | The NAS inventory — pointed-at, never uploaded |
 | `media_sidecars` | parsed `.opf` metadata | `(root, path)` UNIQUE | Replaced per root each scan; the matcher's best evidence |
 | `epub_texts` / `epub_chapters` | parsed canonical text | per media file | See above |
@@ -284,8 +284,12 @@ Against the shipped thresholds (`ALIGN_MIN_COVERAGE` 0.80,
 
 Page numbers are a property of a **printing**, not a work: "page 120"
 means nothing until you know which edition's pages. So the page bridge
-attaches to `physical_copies` — a printing the user actually holds — and
-one printing's map can never bleed into another's.
+attaches to `physical_copies` — a printing the user holds, owned or
+borrowed from the library — and one printing's map can never bleed into
+another's. The borrowed lifecycle never touches the map: return stamps
+`returned_at`, a re-checkout of the same printing reopens the same row
+(its map intact) with a fresh due date, and buying the book you had out
+flips the row to owned. Only "Forget this copy" ever deletes a map.
 
 The flow, from a phone:
 
@@ -452,7 +456,7 @@ handoff degrades, by asking the user to say where they were.
 | `GET/PUT /api/books/{entryID}/position`, `GET/POST …/sessions` | the one position, and reading sessions |
 | `POST/GET/DELETE /api/books/{entryID}/align` | alignment enqueue / status / delete |
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
-| `GET/POST …/copies[…]`, `GET/POST …/copies/{copyID}/pages` | physical copies + page anchors |
+| `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages` | physical copies (owned + borrowed) + page anchors |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |
 
 ---

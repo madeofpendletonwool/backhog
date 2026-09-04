@@ -405,6 +405,119 @@ func TestPhysicalCopiesAndAnchors(t *testing.T) {
 	}
 }
 
+// TestBorrowedCopyFlow walks the library loan over HTTP: the register
+// flow asks owned or borrowed, a checkout carries its due date, return
+// states the card without losing the map, a re-checkout reopens the same
+// row with a new deadline, and buying the book clears the loan state.
+func TestBorrowedCopyFlow(t *testing.T) {
+	app := newEpubTestApp(t)
+	app.attachEpub(t, passageEpubFixture(t))
+	text := app.canonicalText(t)
+	mid := len(text) / 2
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := app.store.DB().Exec(q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	exec(`INSERT INTO book_editions (id, book_id, page_count) VALUES ('OL1M', 'OL1W', 320)`)
+
+	base := "/api/books/" + epubFixtureEntry + "/copies"
+
+	// A due date belongs to a borrowing; the register flow says so.
+	status, body := app.send(t, http.MethodPost, base, map[string]any{
+		"edition_id": "OL1M", "acquisition": "owned", "due_at": "2026-09-12"})
+	if status != http.StatusBadRequest {
+		t.Fatalf("due date on an owned copy: status = %d, want 400: %v", status, body)
+	}
+
+	// Check the printing out of the library.
+	status, body = app.send(t, http.MethodPost, base, map[string]any{
+		"edition_id": "OL1M", "acquisition": "borrowed", "due_at": "2026-09-12"})
+	if status != http.StatusCreated {
+		t.Fatalf("create borrowed copy: status = %d: %v", status, body)
+	}
+	copyID := body["copy"].(map[string]any)["id"].(string)
+	c := body["copy"].(map[string]any)
+	if c["acquisition"] != "borrowed" || c["due_at"] == nil || c["returned_at"] != nil {
+		t.Errorf("fresh checkout = %v, want borrowed, due, in hand", c)
+	}
+
+	// One scanned page on the map before the loan's adventures start.
+	status, body = app.send(t, http.MethodPost, base+"/"+copyID+"/pages",
+		map[string]any{"printed_page": 240, "char_offset": mid, "source": "manual"})
+	if status != http.StatusOK {
+		t.Fatalf("pin page: status = %d: %v", status, body)
+	}
+
+	// Give it back: returned, due date kept for the record, map kept.
+	status, body = app.send(t, http.MethodPost, base+"/"+copyID+"/return", nil)
+	if status != http.StatusOK {
+		t.Fatalf("return copy: status = %d: %v", status, body)
+	}
+	c = body["copy"].(map[string]any)
+	if c["returned_at"] == nil || c["due_at"] == nil || c["acquisition"] != "borrowed" {
+		t.Errorf("returned copy = %v, want borrowed, due, returned", c)
+	}
+
+	status, body = app.send(t, http.MethodGet, base, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list copies: status = %d", status)
+	}
+	listed := body["copies"].([]any)[0].(map[string]any)
+	if listed["returned_at"] == nil || listed["anchor_count"].(float64) != 1 {
+		t.Errorf("listed returned copy = %v, want its state and its one anchor", listed)
+	}
+
+	// The impossible is refused in words: returning twice.
+	status, body = app.send(t, http.MethodPost, base+"/"+copyID+"/return", nil)
+	if status != http.StatusBadRequest || !strings.Contains(body["error"].(string), "already returned") {
+		t.Errorf("double return: status = %d %v, want 400 saying so", status, body)
+	}
+
+	// Check the same printing out again: same row, new deadline, map kept.
+	status, body = app.send(t, http.MethodPost, base+"/"+copyID+"/reopen",
+		map[string]any{"due_at": "2026-10-20"})
+	if status != http.StatusOK {
+		t.Fatalf("reopen copy: status = %d: %v", status, body)
+	}
+	c = body["copy"].(map[string]any)
+	if c["returned_at"] != nil || c["due_at"] == nil ||
+		!strings.Contains(c["due_at"].(string), "2026-10-20") {
+		t.Errorf("reopened copy = %v, want in hand with the new due date", c)
+	}
+	status, body = app.send(t, http.MethodGet, base+"/"+copyID+"/pages", nil)
+	if status != http.StatusOK || len(body["anchors"].([]any)) != 1 {
+		t.Errorf("pages after reopen = %v, want the map kept", body)
+	}
+
+	// The PATCH nudges a live loan's deadline and leaves it alone otherwise.
+	status, body = app.send(t, http.MethodPatch, base+"/"+copyID,
+		map[string]any{"notes": "renewed", "due_at": nil})
+	if status != http.StatusOK || body["copy"].(map[string]any)["due_at"] != nil {
+		t.Errorf("patch due date to none: status = %d %v", status, body)
+	}
+
+	// Buy the book: owned, no return state, map kept.
+	status, body = app.send(t, http.MethodPost, base+"/"+copyID+"/own", nil)
+	if status != http.StatusOK {
+		t.Fatalf("own copy: status = %d: %v", status, body)
+	}
+	c = body["copy"].(map[string]any)
+	if c["acquisition"] != "owned" || c["due_at"] != nil || c["returned_at"] != nil {
+		t.Errorf("bought copy = %v, want owned with the loan state cleared", c)
+	}
+	status, body = app.send(t, http.MethodGet, base+"/"+copyID+"/pages", nil)
+	if status != http.StatusOK || len(body["anchors"].([]any)) != 1 {
+		t.Errorf("pages after buying = %v, want the map kept", body)
+	}
+	if status, body = app.send(t, http.MethodPost, base+"/"+copyID+"/reopen",
+		map[string]any{}); status != http.StatusBadRequest {
+		t.Errorf("reopening an owned copy: status = %d, want 400", status)
+	}
+}
+
 // TestPageMapSeedAndErrorBar covers the honesty half of the page bridge:
 // a registered printing is usable before anybody scans anything, every
 // derived page carries an error bar, scanning tightens it, and a map

@@ -186,13 +186,19 @@ func (s *Server) Routes() http.Handler {
 
 			// The physical-copy bridge: place text read off a paper page
 			// in the canonical text, register printings of a book the
-			// user holds, and pin pages as anchors the position
-			// endpoints interpolate over.
+			// user holds (owned or borrowed), and pin pages as anchors
+			// the position endpoints interpolate over. The borrowed
+			// lifecycle is explicit transitions, not a mutable PATCH:
+			// return, check out again, upgrade to owned — all of them
+			// keep the page map; only delete ever drops one.
 			r.Post("/books/{entryID}/passage", s.handleBookPassage)
 			r.Get("/books/{entryID}/copies", s.handleListBookCopies)
 			r.Post("/books/{entryID}/copies", s.handleCreateBookCopy)
 			r.Patch("/books/{entryID}/copies/{copyID}", s.handleUpdateBookCopy)
 			r.Delete("/books/{entryID}/copies/{copyID}", s.handleDeleteBookCopy)
+			r.Post("/books/{entryID}/copies/{copyID}/return", s.handleReturnBookCopy)
+			r.Post("/books/{entryID}/copies/{copyID}/reopen", s.handleReopenBookCopy)
+			r.Post("/books/{entryID}/copies/{copyID}/own", s.handleOwnBookCopy)
 			r.Get("/books/{entryID}/copies/{copyID}/pages", s.handleListBookCopyPages)
 			r.Post("/books/{entryID}/copies/{copyID}/pages", s.handleSaveBookPageAnchor)
 

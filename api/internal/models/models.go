@@ -953,23 +953,51 @@ func ValidPageAnchorSource(s string) bool {
 	return false
 }
 
-// PhysicalCopy is one printing of a book the user actually holds: the
-// thing a camera scan reads off of. Page numbers belong to the printing,
-// so anchors hang off the copy and never off the work — a user with two
-// printings of the same book has two copies with two independent page
-// maps.
+const (
+	// CopyAcquisitionOwned is a printing the user bought or otherwise
+	// keeps: nothing about holding it expires.
+	CopyAcquisitionOwned = "owned"
+	// CopyAcquisitionBorrowed is a library copy: held, not owned, with
+	// an optional return deadline. Format is how the book was consumed,
+	// not whether it's owned — a borrowed copy still counts as paper.
+	CopyAcquisitionBorrowed = "borrowed"
+)
+
+// ValidCopyAcquisition reports whether s is a tracked acquisition kind.
+func ValidCopyAcquisition(s string) bool {
+	switch s {
+	case CopyAcquisitionOwned, CopyAcquisitionBorrowed:
+		return true
+	}
+	return false
+}
+
+// PhysicalCopy is one printing of a book the user actually holds, owned
+// or borrowed from the library: the thing a camera scan reads off of.
+// Page numbers belong to the printing, so anchors hang off the copy and
+// never off the work — a user with two printings of the same book has
+// two copies with two independent page maps.
 type PhysicalCopy struct {
 	ID        string `json:"id"`
 	UserID    string `json:"-"`
 	EntryID   string `json:"entry_id"`
 	EditionID string `json:"edition_id"`
 	Notes     string `json:"notes"`
+	// Acquisition is how the printing was acquired. A returned borrowed
+	// copy is still a row — the page map survives the return — and
+	// ReturnedAt is what says whether it is in hand.
+	Acquisition string `json:"acquisition"`
+	// DueAt is the library return deadline, when known. Display-only.
+	DueAt *time.Time `json:"due_at"`
+	// ReturnedAt is nil while the copy is in hand. Return stamps it;
+	// a re-checkout of the same printing clears it and sets a new DueAt.
+	ReturnedAt *time.Time `json:"returned_at"`
 	// AnchorCount is computed on list, so the copy UI can say how much of
 	// a page map exists without fetching it.
 	AnchorCount int `json:"anchor_count"`
 	// DrivesPages reports whether this is the copy the position endpoints
 	// read: only the printing the entry itself is anchored to feeds them.
-	// A reader who owns two printings has two maps and one of them is
+	// A reader who holds two printings has two maps and one of them is
 	// what "page 214" means, and the UI has to be able to say which.
 	DrivesPages bool      `json:"drives_pages"`
 	CreatedAt   time.Time `json:"created_at"`

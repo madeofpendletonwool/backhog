@@ -44,6 +44,28 @@ type extractor struct {
 	exists  func(string) bool
 }
 
+// ExtractBlocksHTML returns the raw text of every block-level element in an
+// HTML or XHTML document string, in document order, using the same block
+// rules the spine extractor applies: script/style bodies never contribute,
+// containers recurse into their block children, and each block-level
+// element's inline content is one entry.
+//
+// This is the shared block extraction for every text-side ebook format —
+// the MOBI/KF8 parser calls it with its decoded chapter markup, so one set
+// of rules and one implementation covers both formats and cannot drift.
+// Images are not resolved here (there is no container to resolve against);
+// a MOBI chapter owns no images by design.
+func ExtractBlocksHTML(src string) []string {
+	root, err := html.Parse(strings.NewReader(src))
+	if err != nil {
+		return nil
+	}
+	ex := &extractor{}
+	ex.walk(root)
+	ex.flush()
+	return ex.blocks
+}
+
 // extractBlocks returns the raw text of every block-level element in the
 // spine document at href, in document order, together with the internal
 // images it references.

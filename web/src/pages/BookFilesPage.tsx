@@ -490,10 +490,12 @@ const SKIP_REASONS: Record<string, (ext: string) => string> = {
   unsupported_extension: (ext) =>
     ext === ".aax" || ext === ".aaxc"
       ? "Audible DRM format — out of scope, this tool is DRM-free by decision"
-      : `Unsupported file type (${ext || "no extension"}) — only mp3, m4a, m4b, opus and epub are inventoried`,
+      : `Unsupported file type (${ext || "no extension"}) — only mp3, m4a, m4b, opus, epub, mobi, azw and azw3 are inventoried`,
   drm_epub: () => "DRM-wrapped EPUB (encryption.xml) — out of scope, this tool is DRM-free by decision",
+  drm_mobi: () =>
+    "DRM-protected Kindle file (PalmDOC encryption) — out of scope, this tool is DRM-free by decision",
   format_unhandled: (ext) =>
-    `Kindle format (${ext || "no extension"}) — not parsed. Attach the EPUB of the same book; a pure-Go MOBI reader is a separate project`,
+    `Kindle KFX (${ext || "no extension"}) — a format with no open reader; convert it to EPUB or MOBI, or attach one of those of the same book`,
   sidecar_metadata: () =>
     "Calibre metadata sidecar — read for title, author and ISBN, and used to match the books beside it. Not a book of its own",
 };

@@ -3,10 +3,13 @@ package media
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path"
 	"regexp"
 	"strings"
+
+	mobigo "github.com/madeofpendletonwool/mobi-go"
 
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
@@ -21,12 +24,20 @@ import (
 const sidecarExtension = ".opf"
 
 // knownUnhandled are ebook formats this tool recognises and deliberately does
-// not parse. Reading a Kindle file means PalmDOC LZ77 plus HUFF/CDIC Huffman
-// decompression plus KF8 fragment reassembly, with no pure-Go reader in
-// existence to build on; that is a library in its own right. Naming the format
-// and pointing at the EPUB of the same book is the honest answer, and it keeps
-// these files from reading as a broken scan.
+// not parse. MOBI, AZW and AZW3 are parsed (see mobiExtensions and
+// internal/books/mobi); KFX — Amazon's newer container — is out of scope
+// permanently: mobi-go, the pure-Go Kindle reader this project builds on,
+// does not read it by design, and no other open reader exists. Naming the
+// format and pointing at the EPUB or MOBI of the same book is the honest
+// answer, and it keeps these files from reading as a broken scan.
 var knownUnhandled = map[string]bool{
+	".kfx": true,
+}
+
+// mobiExtensions are the text-side extensions the mobi parser owns. They
+// share kind 'epub' — the text-side slot — and the same epub_texts canonical
+// model once attached.
+var mobiExtensions = map[string]bool{
 	".mobi": true,
 	".azw":  true,
 	".azw3": true,
@@ -148,6 +159,49 @@ func readEpubMetadata(p string) (encrypted bool, tags bookTags, err error) {
 	default:
 		return false, bookTags{}, err
 	}
+}
+
+// readMobiMetadata opens a MOBI/AZW/AZW3 once and answers the same two
+// questions the scanner asks of an EPUB: whether it is DRM-wrapped, and what
+// its EXTH block says about itself. mobi-go opens eagerly (decompressing the
+// whole book), so the metadata is nearly free once the DRM check has been
+// paid for — and a file that will not open is one whose DRM status could not
+// be determined, which the caller treats as a scan failure rather than an
+// inventory entry.
+func readMobiMetadata(p string) (encrypted bool, tags bookTags, err error) {
+	f, err := os.Open(p) // O_RDONLY: the media roots are read-only
+	if err != nil {
+		return false, bookTags{}, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return false, bookTags{}, err
+	}
+	b, err := mobigo.OpenBytes(data)
+	if err != nil {
+		if errors.Is(err, mobigo.ErrDRM) {
+			return true, bookTags{}, nil
+		}
+		return false, bookTags{}, err
+	}
+	md := b.Metadata()
+	tags = bookTags{
+		Title:    strings.TrimSpace(md.Title),
+		Language: strings.TrimSpace(md.Language),
+		Date:     strings.TrimSpace(md.Published),
+	}
+	for _, a := range md.Authors {
+		if a = strings.TrimSpace(a); a != "" {
+			tags.Authors = append(tags.Authors, a)
+		}
+	}
+	// Same treatment an OPF identifier gets: normalize, validate, and only
+	// then may the matcher treat it as an identity rather than a guess.
+	if isbn := metadata.NormalizeISBN(strings.TrimSpace(md.ISBN)); metadata.ValidISBN(isbn) {
+		tags.ISBN = isbn
+	}
+	return false, tags, nil
 }
 
 // parseSidecar reads one .opf file into a sidecar row. A file that parses but

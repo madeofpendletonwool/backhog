@@ -48,10 +48,10 @@ type attachRequest struct {
 	Kind string `json:"kind"`
 }
 
-// handleAttachFiles attaches media files to a book entry. Attaching an
-// EPUB also triggers its canonical-text parse — the reader and the
-// alignment work both consume that text, and it should exist by the time
-// anyone opens the book.
+// handleAttachFiles attaches media files to a book entry. Attaching a
+// text-side file (EPUB or MOBI/AZW/AZW3) also triggers its canonical-text
+// parse — the reader and the alignment work both consume that text, and it
+// should exist by the time anyone opens the book.
 func (s *Server) handleAttachFiles(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {

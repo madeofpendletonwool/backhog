@@ -12,8 +12,12 @@ import (
 	"testing"
 	"time"
 
+	mobigo "github.com/madeofpendletonwool/mobi-go"
+
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
+	"github.com/collinpendleton/backhog/api/internal/books/passage"
 	"github.com/collinpendleton/backhog/api/internal/db"
+	"github.com/collinpendleton/backhog/api/internal/fixtures"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -559,5 +563,244 @@ func TestCanonicalizeAnchorsImages(t *testing.T) {
 	}
 	if len(index.Documents[0].Images) != len(want) {
 		t.Fatalf("images = %d, want %d", len(index.Documents[0].Images), len(want))
+	}
+}
+
+// --- MOBI / AZW3 ingest ------------------------------------------------------
+//
+// The mobi path must be indistinguishable from the epub path one layer
+// down: same canonicalize, same chapter rows, same partition property,
+// same companion files. The fixtures are mobi-go's oracle-verified
+// synthetic books (see internal/fixtures).
+
+// insertBookFile writes raw book bytes to the root and inventories them as
+// a text-side media file, whatever the container.
+func insertBookFile(t *testing.T, st *store.Store, root, name string, data []byte) models.MediaFile {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, name), data, 0o644); err != nil {
+		t.Fatalf("write book: %v", err)
+	}
+	var id int64
+	err := st.DB().QueryRow(`
+		INSERT INTO media_files (root, path, kind, size_bytes, mtime, scanned_at)
+		VALUES (?, ?, 'epub', ?, ?, ?) RETURNING id`,
+		root, name, len(data), time.Now().UnixNano(), time.Now().UTC()).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert media file: %v", err)
+	}
+	return models.MediaFile{ID: id, Root: root, Path: name, Kind: models.MediaFileEpub,
+		SizeBytes: int64(len(data))}
+}
+
+func TestEnsureForMediaFileMOBI(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+
+	file := insertBookFile(t, st, root, "book.mobi", fixtures.MOBI6Palmdoc)
+	et, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if et.ParserVersion != ParserVersion {
+		t.Errorf("parser version = %q", et.ParserVersion)
+	}
+
+	// PalmDOC-compressed, EXTH-carrying, INDX-NCX TOC: four chapters from
+	// the four NCX entries, each titled, partitioning the text exactly.
+	chapters, err := st.ListEpubChapters(context.Background(), et.ID)
+	if err != nil {
+		t.Fatalf("chapters: %v", err)
+	}
+	if len(chapters) != 4 {
+		t.Fatalf("got %d chapters, want 4: %+v", len(chapters), chapters)
+	}
+	wantTitles := []string{"Begin Reading", "Synthetic PalmDOC", "Second Chapter", "Third Chapter"}
+	for i, want := range wantTitles {
+		if chapters[i].Title != want {
+			t.Errorf("chapter %d title = %q, want %q", i, chapters[i].Title, want)
+		}
+	}
+	assertContiguous(t, chapters, et.CharCount)
+
+	// The reader's ranged fetch: every chapter's canonical slice reads back
+	// as the canonical text's own bytes.
+	text, err := ing.ReadText(context.Background(), et, 0, et.CharCount)
+	if err != nil {
+		t.Fatalf("read text: %v", err)
+	}
+	if len(text) != et.CharCount {
+		t.Errorf("text length %d != char count %d", len(text), et.CharCount)
+	}
+	for _, ch := range chapters {
+		slice, err := ing.ReadText(context.Background(), et, ch.CharStart, ch.CharEnd)
+		if err != nil {
+			t.Fatalf("read chapter %d: %v", ch.SpineIndex, err)
+		}
+		if slice != text[ch.CharStart:ch.CharEnd] {
+			t.Errorf("chapter %d ranged read disagrees with the canonical text", ch.SpineIndex)
+		}
+	}
+	if !strings.Contains(text, "this book exists to be parsed") {
+		t.Errorf("canonical text missing chapter prose: %q", text)
+	}
+	if !strings.Contains(text, "third chapter see the beginning") {
+		t.Errorf("canonical text missing last chapter prose: %q", text)
+	}
+
+	// The block index resolves an offset inside chapter 3 to that chapter —
+	// the "which chapter am I in" query invariant 7 backs.
+	index, err := ing.LoadIndex(context.Background(), et)
+	if err != nil {
+		t.Fatalf("load index: %v", err)
+	}
+	loc, ok := index.Resolve(chapters[3].CharStart)
+	if !ok {
+		t.Fatal("resolve chapter 3 start")
+	}
+	if loc.SpineIndex != 3 {
+		t.Errorf("resolved spine index = %d, want 3", loc.SpineIndex)
+	}
+
+	// Re-ensure with a current parse must not re-parse (the companion files
+	// and row exist), and a stale version must re-parse in place.
+	again, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("re-ensure: %v", err)
+	}
+	if !again.ParsedAt.Equal(et.ParsedAt) {
+		t.Error("unchanged mobi was re-parsed")
+	}
+	if _, err := st.DB().Exec(`UPDATE epub_texts SET parser_version = '0' WHERE media_file_id = ?`, file.ID); err != nil {
+		t.Fatalf("age the version: %v", err)
+	}
+	refreshed, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if refreshed.ID != et.ID || refreshed.ParserVersion != ParserVersion {
+		t.Errorf("re-parse = id %q version %q; want %q / %q", refreshed.ID, refreshed.ParserVersion, et.ID, ParserVersion)
+	}
+}
+
+func TestEnsureForMediaFileKF8(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+
+	file := insertBookFile(t, st, root, "book.azw3", fixtures.AZW3KF8)
+	et, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	// One chapter per linear KF8 section, the non-linear colophon skipped,
+	// the NCX titles resolved through the pos pairs.
+	chapters, err := st.ListEpubChapters(context.Background(), et.ID)
+	if err != nil {
+		t.Fatalf("chapters: %v", err)
+	}
+	if len(chapters) != 3 {
+		t.Fatalf("got %d chapters, want 3: %+v", len(chapters), chapters)
+	}
+	wantTitles := []string{"Cover", "Chapter 1", "Chapter 2"}
+	for i, want := range wantTitles {
+		if chapters[i].Title != want {
+			t.Errorf("chapter %d title = %q, want %q", i, chapters[i].Title, want)
+		}
+	}
+	assertContiguous(t, chapters, et.CharCount)
+	if chapters[0].CharStart != chapters[0].CharEnd {
+		t.Errorf("image-only cover should be empty, got [%d,%d)",
+			chapters[0].CharStart, chapters[0].CharEnd)
+	}
+
+	// The exact canonical text: the same pinned Normalize over KF8 blocks.
+	data, err := os.ReadFile(ing.TextPath(et.ID))
+	if err != nil {
+		t.Fatalf("read text file: %v", err)
+	}
+	want := "chapter one the first section reassembles from a skeleton and its fragments " +
+		"fragments splice at insert offsets even mid tag chapter two second section also fragmented"
+	if string(data) != want {
+		t.Errorf("canonical text = %q, want %q", data, want)
+	}
+	if et.CharCount != len(want) {
+		t.Errorf("char count = %d, want %d", et.CharCount, len(want))
+	}
+}
+
+func TestEnsureForMediaFileDRMRefused(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+
+	file := insertBookFile(t, st, root, "locked.mobi", fixtures.MOBI6DRM)
+	_, err = ing.EnsureForMediaFile(context.Background(), file)
+	if !errors.Is(err, mobigo.ErrDRM) {
+		t.Fatalf("error = %v, want one wrapping mobi.ErrDRM", err)
+	}
+	// Refused whole, never half-parsed: no canonical-text row exists.
+	if _, err := st.GetEpubText(context.Background(), file.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("epub_texts row after DRM refusal: %v", err)
+	}
+}
+
+// The passage matcher — the OCR/page-anchor side of the arena — runs over a
+// MOBI-sourced canonical text the same as an EPUB-sourced one: both sides
+// speak books.Normalize, so a photographed sentence lands on its offset.
+// The alignment worker consumes the identical text file through the same
+// normalize, which is what makes MOBI-sourced alignment work by
+// construction.
+func TestPassageMatchingOverMOBIText(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+	file := insertBookFile(t, st, root, "book.azw3", fixtures.AZW3KF8)
+	et, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	matcher := passage.New(func(ctx context.Context, id string) (string, error) {
+		data, err := os.ReadFile(ing.TextPath(id))
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	})
+
+	// The query as a phone would OCR it: wrong case, curly quotes, an em
+	// dash, a stray comma. Normalization on both sides absorbs it. (The
+	// matcher refuses queries under ten words, so the query is a full
+	// sentence pair.)
+	res, err := matcher.Find(context.Background(), et.ID,
+		`The FIRST section reassembles from a skeleton and its fragments. “Fragments splice at INSERT offsets—even mid-tag.”`)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	text, err := ing.ReadText(context.Background(), et, 0, et.CharCount)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := text[res.Match.CharOffset:res.Match.CharEnd]
+	want := "the first section reassembles from a skeleton and its fragments fragments splice at insert offsets even mid tag"
+	if got != want {
+		t.Errorf("matched span = %q (offset %d)", got, res.Match.CharOffset)
 	}
 }

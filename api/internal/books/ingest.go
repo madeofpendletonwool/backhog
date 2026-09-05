@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
+	"github.com/collinpendleton/backhog/api/internal/books/mobi"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -96,7 +97,7 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 	if err != nil {
 		return models.EpubText{}, err
 	}
-	parsed, err := parseEpubFile(path)
+	parsed, err := parseBookFile(path)
 	if err != nil {
 		return models.EpubText{}, err
 	}
@@ -332,6 +333,19 @@ func anchorImages(images []epub.Image, kept []int) []IndexedImage {
 	return out
 }
 
+// parseBookFile opens and parses a text-side ebook from disk: an EPUB, or a
+// MOBI/AZW/AZW3 through the mobi parser. Both return the same spine
+// structure, so canonicalization — and every offset the arena stores — is
+// one code path for every ebook format.
+func parseBookFile(path string) (*epub.Document, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mobi", ".azw", ".azw3":
+		return parseMobiFile(path)
+	default:
+		return parseEpubFile(path)
+	}
+}
+
 // parseEpubFile opens and parses an EPUB from disk.
 func parseEpubFile(path string) (*epub.Document, error) {
 	f, err := os.Open(path)
@@ -344,6 +358,26 @@ func parseEpubFile(path string) (*epub.Document, error) {
 		return nil, fmt.Errorf("books: stat epub: %w", err)
 	}
 	doc, err := epub.Parse(f, info.Size())
+	if err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// parseMobiFile opens and parses a MOBI/AZW/AZW3 from disk. A DRM-protected
+// file fails with an error wrapping mobi.ErrDRM, which the caller surfaces
+// as a refused parse — never a half-parse.
+func parseMobiFile(path string) (*epub.Document, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("books: open mobi: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("books: stat mobi: %w", err)
+	}
+	doc, err := mobi.Parse(f, info.Size())
 	if err != nil {
 		return nil, err
 	}

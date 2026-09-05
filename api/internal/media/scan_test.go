@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/db"
+	"github.com/collinpendleton/backhog/api/internal/fixtures"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -66,7 +67,8 @@ const sidecarOPF = `<?xml version='1.0' encoding='utf-8'?>
 // fixtureLibrary builds a NAS-like tree: an audiobooks root and an ebooks
 // root, with supported files (including an .opus), unsupported files (.aax,
 // .pdf), a DRM-wrapped epub, a Calibre directory carrying a .mobi and a
-// metadata sidecar, and NAS housekeeping clutter.
+// metadata sidecar, Kindle files in the other text-side containers (.azw,
+// .azw3), a DRM-wrapped .mobi, a .kfx, and NAS housekeeping clutter.
 func fixtureLibrary(t *testing.T) (audioDir, booksDir string) {
 	t.Helper()
 	base := t.TempDir()
@@ -83,7 +85,11 @@ func fixtureLibrary(t *testing.T) (audioDir, booksDir string) {
 	writeFile(t, filepath.Join(booksDir, ".hidden.epub"), buildEPUB(false))
 	writeFile(t, filepath.Join(booksDir, calibreDir, "metadata.opf"), []byte(sidecarOPF))
 	writeFile(t, filepath.Join(booksDir, calibreDir, "Breakfast of Champions.epub"), buildEPUB(false))
-	writeFile(t, filepath.Join(booksDir, calibreDir, "Breakfast of Champions.mobi"), []byte("BOOKMOBI not parsed"))
+	writeFile(t, filepath.Join(booksDir, calibreDir, "Breakfast of Champions.mobi"), fixtures.MOBI6Palmdoc)
+	writeFile(t, filepath.Join(booksDir, "kindle.azw"), fixtures.MOBI6Palmdoc)
+	writeFile(t, filepath.Join(booksDir, "kindle.azw3"), fixtures.AZW3KF8)
+	writeFile(t, filepath.Join(booksDir, "locked.mobi"), fixtures.MOBI6DRM)
+	writeFile(t, filepath.Join(booksDir, "newer.kfx"), []byte("KFX bytes \xff\xf0 not a PalmDB container"))
 	writeFile(t, filepath.Join(audioDir, "@eaDir", "thumb.jpg"), []byte("synology thumbnail"))
 	return audioDir, booksDir
 }
@@ -97,10 +103,11 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan: %v (result %+v)", err, res)
 	}
-	// 5 inventoried (m4b, mp3, opus, two epubs); 5 not (aax, pdf, DRM epub,
-	// the .opf sidecar and the .mobi); 1 of those 5 parsed as a sidecar.
-	if res.Found != 5 || res.New != 5 || res.Unsupported != 5 || res.Sidecars != 1 {
-		t.Errorf("counts = found %d, new %d, unsupported %d, sidecars %d; want 5, 5, 5, 1",
+	// 8 inventoried (m4b, mp3, opus, two epubs, .mobi, .azw, .azw3); 6 not
+	// (aax, pdf, DRM epub, the .opf sidecar, the DRM .mobi and the .kfx);
+	// 1 of those 6 parsed as a sidecar.
+	if res.Found != 8 || res.New != 8 || res.Unsupported != 6 || res.Sidecars != 1 {
+		t.Errorf("counts = found %d, new %d, unsupported %d, sidecars %d; want 8, 8, 6, 1",
 			res.Found, res.New, res.Unsupported, res.Sidecars)
 	}
 	if res.Missing != 0 || res.Failed != 0 {
@@ -111,8 +118,8 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(files) != 5 {
-		t.Fatalf("got %d files, want 5: %+v", len(files), files)
+	if len(files) != 8 {
+		t.Fatalf("got %d files, want 8: %+v", len(files), files)
 	}
 
 	type fileClass struct{ kind, root string }
@@ -122,6 +129,7 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	}
 	m4bRel, mp3Rel, epubRel := "Project Hail Mary.m4b", "Disc 1/chapter 01.mp3", "novel.epub"
 	opusRel := "Enshittification.opus"
+	mobiRel := calibreDir + "/Breakfast of Champions.mobi"
 	if byPath[m4bRel].kind != "audio" || byPath[m4bRel].root != audioDir {
 		t.Errorf("m4b classified wrong: %+v", byPath[m4bRel])
 	}
@@ -133,6 +141,13 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	}
 	if byPath[opusRel].kind != "audio" || byPath[opusRel].root != audioDir {
 		t.Errorf("opus classified wrong: %+v", byPath[opusRel])
+	}
+	// The Kindle containers share the text-side kind: an .azw is a MOBI6
+	// container, an .azw3 a KF8 one, and both inventoried like an epub.
+	for _, rel := range []string{mobiRel, "kindle.azw", "kindle.azw3"} {
+		if byPath[rel].kind != "epub" {
+			t.Errorf("%s classified wrong: %+v", rel, byPath[rel])
+		}
 	}
 
 	// The m4b carries its tags and duration in the container.
@@ -195,6 +210,23 @@ func TestScanInventoriesLibrary(t *testing.T) {
 				t.Errorf("epub authors = %v; want the credited author first", tags["authors"])
 			}
 		}
+		if f.Path == mobiRel {
+			// A mobi carries no duration either, but its EXTH block says
+			// what it is — the same shape the matcher scores epubs by.
+			if f.DurationSeconds != nil {
+				t.Errorf("mobi should have no duration: %+v", f)
+			}
+			var tags map[string]any
+			if err := json.Unmarshal(f.ContainerMetadata, &tags); err != nil {
+				t.Fatalf("mobi metadata not JSON: %v", err)
+			}
+			if tags["title"] != "Synthetic PalmDOC Book" {
+				t.Errorf("mobi metadata = %v", tags)
+			}
+			if tags["isbn"] != "9780000000000" {
+				t.Errorf("mobi isbn = %v, want the normalized EXTH ISBN", tags["isbn"])
+			}
+		}
 	}
 	if m4bTags["title"] != "Project Hail Mary" || m4bTags["album_artist"] != "Andy Weir" {
 		t.Errorf("m4b tags = %v", m4bTags)
@@ -211,8 +243,8 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	for _, f := range skipped {
 		skipReason[f.Path] = f.Reason
 	}
-	if len(skipped) != 5 {
-		t.Fatalf("got %d skipped rows, want 5: %+v", len(skipped), skipped)
+	if len(skipped) != 6 {
+		t.Fatalf("got %d skipped rows, want 6: %+v", len(skipped), skipped)
 	}
 	if skipReason["locked.aax"] != "unsupported_extension" {
 		t.Errorf("locked.aax reason = %q", skipReason["locked.aax"])
@@ -223,10 +255,14 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if skipReason["wrapped.epub"] != "drm_epub" {
 		t.Errorf("wrapped.epub reason = %q", skipReason["wrapped.epub"])
 	}
-	// A Kindle file and a metadata sidecar are each named for what they are,
-	// rather than sharing the "we don't know what this is" bucket.
-	if got := skipReason[calibreDir+"/Breakfast of Champions.mobi"]; got != "format_unhandled" {
-		t.Errorf("mobi reason = %q, want format_unhandled", got)
+	// DRM'd Kindle files are refused with their own name for the lock, and
+	// the one Kindle format without a reader keeps its own label rather
+	// than sharing the "we don't know what this is" bucket.
+	if got := skipReason["locked.mobi"]; got != "drm_mobi" {
+		t.Errorf("locked.mobi reason = %q, want drm_mobi", got)
+	}
+	if got := skipReason["newer.kfx"]; got != "format_unhandled" {
+		t.Errorf("newer.kfx reason = %q, want format_unhandled", got)
 	}
 	if got := skipReason[calibreDir+"/metadata.opf"]; got != "sidecar_metadata" {
 		t.Errorf("metadata.opf reason = %q, want sidecar_metadata", got)
@@ -254,7 +290,7 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if status.Running || status.Last == nil {
 		t.Fatalf("status after scan: %+v", status)
 	}
-	if status.Last.Found != 5 || status.Last.New != 5 || status.Last.Unsupported != 5 || status.Last.Missing != 0 {
+	if status.Last.Found != 8 || status.Last.New != 8 || status.Last.Unsupported != 6 || status.Last.Missing != 0 {
 		t.Errorf("status last counts: %+v", status.Last)
 	}
 
@@ -303,8 +339,8 @@ func TestScanTwiceIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second scan: %v (result %+v)", err, res)
 	}
-	if res.Found != 5 || res.New != 0 || res.Changed != 0 || res.Failed != 0 {
-		t.Errorf("second scan counts = %+v; want found 5, nothing new/changed/failed", res)
+	if res.Found != 8 || res.New != 0 || res.Changed != 0 || res.Failed != 0 {
+		t.Errorf("second scan counts = %+v; want found 8, nothing new/changed/failed", res)
 	}
 
 	after, err := st.ListMediaFiles(context.Background(), store.MediaFileFilter{})
@@ -435,8 +471,8 @@ func TestMediaRootsAreNeverWritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan over read-only roots: %v (result %+v)", err, res)
 	}
-	if res.Found != 5 || res.Failed != 0 {
-		t.Errorf("counts over read-only roots = %+v; want found 5, failed 0", res)
+	if res.Found != 8 || res.Failed != 0 {
+		t.Errorf("counts over read-only roots = %+v; want found 8, failed 0", res)
 	}
 
 	after := treeSnapshot(t, audioDir, booksDir)
@@ -477,8 +513,8 @@ func TestAbsentRootKeepsRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(files) != 5 {
-		t.Fatalf("got %d files after absent-root scan, want 5", len(files))
+	if len(files) != 8 {
+		t.Fatalf("got %d files after absent-root scan, want 8", len(files))
 	}
 
 	// But a present root with a really deleted file does flag it.

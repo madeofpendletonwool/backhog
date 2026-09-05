@@ -45,9 +45,12 @@ func ValidMediaType(s string) bool {
 }
 
 // Media file kinds for the scanned Books arena library. Audio covers mp3,
-// m4a, m4b and opus; epub is text. Anything else (.aax, .aaxc, .mobi,
-// DRM-wrapped epub, ...) is not inventoried — it is recorded in media_skipped
-// with a reason instead.
+// m4a, m4b and opus; epub is the text side — EPUB files and, through the
+// mobi parser, MOBI/AZW/AZW3. The kind says which half of the arena a file
+// feeds, not its container: text-side files all parse into the same
+// canonical-text model. Anything else (.aax, .aaxc, .kfx, DRM-wrapped
+// files, ...) is not inventoried — it is recorded in media_skipped with a
+// reason instead.
 const (
 	MediaFileAudio = "audio"
 	MediaFileEpub  = "epub"
@@ -762,23 +765,30 @@ type MediaFile struct {
 	MissingAt *time.Time `json:"missing_at,omitempty"`
 }
 
-// Reasons a file was skipped by the scanner. DRM formats are refused, not
-// worked around — this tool is DRM-free by decision. The other two reasons
-// exist so that "not inventoried" stops meaning "we have no idea what this
-// is": a Kindle file is a format we chose not to parse, and an .opf is not a
-// book at all.
+// Reasons a file was skipped by the scanner. DRM of any form is refused,
+// not worked around — this tool is DRM-free by decision, and the reason
+// names which shape was refused. The remaining reasons exist so that "not
+// inventoried" stops meaning "we have no idea what this is": a KFX file is
+// a format we chose not to parse, and an .opf is not a book at all.
 const (
 	MediaSkipUnsupported = "unsupported_extension"
-	MediaSkipDRM         = "drm_epub"
+	// DRM refusals, named per container so the attach UI can say which
+	// lock it found: an encryption.xml-carrying EPUB, a
+	// PalmDOC-encryption Kindle file.
+	MediaSkipDRM = "drm_epub"
+	// MediaSkipDRMMobi reports a .mobi/.azw/.azw3 refused whole by the
+	// parser (mobi.ErrDRM): detected at scan and again at parse time,
+	// never half-supported.
+	MediaSkipDRMMobi = "drm_mobi"
 	// MediaSkipFormatUnhandled is a recognised ebook format this tool does
-	// not parse (.mobi, .azw, .azw3). Not a DRM refusal and not an unknown
-	// extension: reading Kindle formats means a PalmDOC/HUFF-CDIC/KF8 parser,
-	// which belongs in its own library, not bolted into the scanner.
+	// not parse (.kfx, the one Kindle format with no reader to build on —
+	// out of scope by design, not by omission). Not a DRM refusal and not
+	// an unknown extension.
 	MediaSkipFormatUnhandled = "format_unhandled"
-	// MediaSkipSidecar is a metadata sidecar (.opf) — the answer key next to
-	// the books rather than a missing one. It is parsed into media_sidecars
-	// and fed to the matcher; the skip row exists only so the file is
-	// accounted for rather than silently vanishing.
+	// MediaSkipSidecar is a metadata sidecar (.opf) — the answer key next
+	// to the books rather than a missing one. It is parsed into
+	// media_sidecars and fed to the matcher; the skip row exists only so
+	// the file is accounted for rather than silently vanishing.
 	MediaSkipSidecar = "sidecar_metadata"
 )
 

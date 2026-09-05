@@ -292,6 +292,16 @@ Yes AI helped me make this program. If you don't like it don't use it. I made th
 
 ---
 
+## License
+
+GPL-3.0-only — see [LICENSE](LICENSE). Backhog links
+[mobi-go](https://github.com/madeofpendletonwool/mobi-go), the pure-Go
+MOBI/AZW3 reader behind the Books arena's Kindle support, and mobi-go is
+GPL-3.0-only (it ports KindleUnpack's decompression code), so GPL-3.0-only
+is the licence this repo carries.
+
+---
+
 ## Project layout
 
 ```

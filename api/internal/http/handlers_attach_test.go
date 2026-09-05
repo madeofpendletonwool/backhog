@@ -15,6 +15,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
+	"github.com/collinpendleton/backhog/api/internal/fixtures"
 	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
 	"github.com/collinpendleton/backhog/api/internal/store"
@@ -43,12 +44,23 @@ func newAttachTestApp(t *testing.T) *attachTestApp {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
+	writeBytes := func(rel string, body []byte) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(p, body, 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
 	// A directory-per-book audiobook, a single-file audiobook, a real EPUB,
-	// and an Audible file the scanner must skip and explain.
+	// a DRM-free Kindle file, and an Audible file the scanner must skip and
+	// explain.
 	write("Neal Stephenson/Anathem/01 - Erasmas.m4b", "fake audio 1")
 	write("Neal Stephenson/Anathem/02 - Apert.m4b", "fake audio 2")
 	write("Andy Weir/Project Hail Mary.m4b", "fake single audio")
 	write("books/Dune.epub", string(apiEpubFixture(t)))
+	writeBytes("kindle/Synthetic PalmDOC Book.mobi", fixtures.MOBI6Palmdoc)
 	write("Audible/locked.aax", "audible DRM bytes")
 
 	database, err := db.Open(filepath.Join(t.TempDir(), "attach.db"))
@@ -189,8 +201,8 @@ func TestAttachFlow(t *testing.T) {
 		t.Fatalf("candidates: status %d: %v", status, body)
 	}
 	candidates := body["candidates"].([]any)
-	if len(candidates) != 3 {
-		t.Fatalf("got %d candidates, want 3 (two audio groups, one epub): %v", len(candidates), body)
+	if len(candidates) != 4 {
+		t.Fatalf("got %d candidates, want 4 (two audio groups, the epub, the mobi): %v", len(candidates), body)
 	}
 
 	// The Anathem directory: grouped, ordered, confidently matched to the
@@ -215,6 +227,13 @@ func TestAttachFlow(t *testing.T) {
 	epub := candidateBy(t, candidates, "books")
 	if epub["kind"] != "epub" || epub["title_guess"] != "Dune" {
 		t.Fatalf("epub candidate = %v", epub)
+	}
+
+	// The Kindle file: inventoried like any text-side book, carrying what
+	// its own EXTH metadata says it is.
+	mobi := candidateBy(t, candidates, "kindle")
+	if mobi["kind"] != "epub" || mobi["title_guess"] != "Synthetic PalmDOC Book" {
+		t.Fatalf("mobi candidate = %v", mobi)
 	}
 
 	// The skipped file is explained, not silently missing.
@@ -268,6 +287,36 @@ func TestAttachFlow(t *testing.T) {
 	}
 	if parsed != 1 {
 		t.Errorf("epub parse rows = %d, want 1 (attach must trigger the parse)", parsed)
+	}
+
+	// Attaching the Kindle file triggers the same canonical-text parse:
+	// a .mobi flows through the identical machinery — one text row, its
+	// chapters partitioning it, the same as the EPUB beside it.
+	mobiEntry := addBookEntry(t, app, "OL2W")
+	status, body = app.req(t, http.MethodGet, "/api/media/files?kind=epub&unattached=true", nil)
+	if status != http.StatusOK {
+		t.Fatalf("files: status %d: %v", status, body)
+	}
+	mobiID := fileIDByPath(t, body["files"].([]any), "kindle/Synthetic PalmDOC Book.mobi")
+	status, body = app.req(t, http.MethodPost, "/api/books/"+mobiEntry+"/files",
+		map[string]any{"file_ids": []float64{mobiID}, "kind": "epub"})
+	if status != http.StatusCreated {
+		t.Fatalf("attach mobi: status %d: %v", status, body)
+	}
+	var mobiParsed, mobiChapters int
+	if err := app.store.DB().QueryRow(
+		`SELECT COUNT(*) FROM epub_texts et JOIN media_files mf ON mf.id = et.media_file_id
+		 WHERE mf.path = 'kindle/Synthetic PalmDOC Book.mobi'`).Scan(&mobiParsed); err != nil {
+		t.Fatalf("probe mobi epub_texts: %v", err)
+	}
+	if err := app.store.DB().QueryRow(
+		`SELECT COUNT(*) FROM epub_chapters ch JOIN epub_texts et ON et.id = ch.epub_text_id
+		 JOIN media_files mf ON mf.id = et.media_file_id
+		 WHERE mf.path = 'kindle/Synthetic PalmDOC Book.mobi'`).Scan(&mobiChapters); err != nil {
+		t.Fatalf("probe mobi chapters: %v", err)
+	}
+	if mobiParsed != 1 || mobiChapters != 4 {
+		t.Errorf("mobi parse = %d rows / %d chapters; want 1 / 4", mobiParsed, mobiChapters)
 	}
 
 	// Attached files leave the review queue.
@@ -375,8 +424,8 @@ func TestAttachErrors(t *testing.T) {
 		t.Fatalf("ignore = (%d, %v)", status, body)
 	}
 	status, body = app.req(t, http.MethodGet, "/api/media/candidates", nil)
-	if got := len(body["candidates"].([]any)); got != 1 {
-		t.Fatalf("%d candidates after ignoring Project Hail Mary, want 1 (the epub): %v", got, body)
+	if got := len(body["candidates"].([]any)); got != 2 {
+		t.Fatalf("%d candidates after ignoring Project Hail Mary, want 2 (the epub and the mobi): %v", got, body)
 	}
 	for _, c := range body["candidates"].([]any) {
 		if c.(map[string]any)["dir_path"] == "Andy Weir" {
@@ -389,8 +438,8 @@ func TestAttachErrors(t *testing.T) {
 		t.Errorf("unignore status = %d", status)
 	}
 	status, body = app.req(t, http.MethodGet, "/api/media/candidates", nil)
-	if got := len(body["candidates"].([]any)); got != 2 {
-		t.Errorf("%d candidates after unignore, want 2", got)
+	if got := len(body["candidates"].([]any)); got != 3 {
+		t.Errorf("%d candidates after unignore, want 3", got)
 	}
 
 	// Anonymous access is refused.

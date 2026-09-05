@@ -11,9 +11,9 @@ sentence. Scan a page with a phone, get told where that page sits in the
 audiobook. No external database of page numbers — the map is built from
 the user's own printing, and it improves every time they use it.
 
-The files are the user's: EPUB and audiobook live on their NAS, mounted
-read-only. Backhog inventories and points; it never uploads, copies or
-writes them.
+The files are the user's: EPUBs, Kindle files and audiobooks live on
+their NAS, mounted read-only. Backhog inventories and points; it never
+uploads, copies or writes them.
 
 **If you read nothing else, read [Invariants](#invariants).**
 
@@ -39,29 +39,40 @@ text, which is why one translator serves both.
 
 ## The canonical text
 
-Every EPUB attached to a book gets parsed exactly once into a canonical
-text: the book's prose as one normalized UTF-8 string, in spine order,
-with every position in the arena measured as a **byte offset** into it
-(Go string indexing — bytes, not runes, not pages, not percentages).
+Every text-side file attached to a book — an EPUB, or a MOBI/AZW/AZW3
+through the mobi parser — is parsed exactly once into a canonical text:
+the book's prose as one normalized UTF-8 string, in reading order, with
+every position in the arena measured as a **byte offset** into it (Go
+string indexing — bytes, not runes, not pages, not percentages).
 
 The pipeline (`api/internal/books/`):
 
-1. **Extract** (`epub/`) walks the spine documents in reading order and
-   emits the book as a sequence of blocks (paragraph-ish units), carrying
-   each block's source href. The NCX/nav TOC supplies chapter titles and
-   depth.
+1. **Extract** (`epub/`, `mobi/`) walks the book in reading order — the
+   EPUB spine documents or the mobi chapters (KF8 sections; MOBI6 TOC
+   filepos ranges, else pagebreak sections) — and emits the book as a
+   sequence of blocks (paragraph-ish units), carrying each block's
+   source position. The NCX/nav TOC supplies chapter titles and depth;
+   the two parsers share one block-extraction implementation so the
+   rules cannot drift between formats.
 2. **Normalize** (`api/booktext/normalize.go`) folds every block through
    the pinned rules (below). The result contains only letters, digits
    and single spaces.
-3. **Index** — `epub_texts` gets one row per parsed EPUB (`char_count`,
-   `word_count`, `normalized_sha256`, `parser_version`); `epub_chapters`
-   records each spine document's `[char_start, char_end)` range, which
-   partitions `[0, char_count)` exactly — contiguous, no gaps, no
-   overlaps, asserted by a property test. The text itself is a plain
-   file at `{EPUB_TEXT_DIR}/{id}.txt` with a
-   `{id}.blocks.json` sidecar for the char-offset ↔ (href, block) index
-   — novels are multi-megabyte strings and SQLite would drag them
-   through the WAL on every ranged read.
+3. **Index** — `epub_texts` gets one row per parsed text
+   (`char_count`, `word_count`, `normalized_sha256`,
+   `parser_version`); `epub_chapters` records each reading-order
+   document's `[char_start, char_end)` range, which partitions
+   `[0, char_count)` exactly — contiguous, no gaps, no overlaps,
+   asserted by a property test. The text itself is a plain file at
+   `{EPUB_TEXT_DIR}/{id}.txt` with a `{id}.blocks.json` sidecar for the
+   char-offset ↔ (href, block) index — novels are multi-megabyte strings
+   and SQLite would drag them through the WAL on every ranged read.
+
+   The tables are format-agnostic in practice: they are keyed by
+   `media_file_id`, and a MOBI-sourced text lands in them exactly like
+   an EPUB-sourced one. No `format` column exists because no code path
+   needs it — the few branches that care (which parser to run, whether
+   the asset endpoint applies) dispatch on the media file's own
+   extension.
 
 ### The pinned normalizer
 
@@ -152,11 +163,12 @@ Two shapes worth internalising:
 - **Files that are not inventoried are counted and shown, not hidden**:
   `media_skipped` records each with a reason, so a user whose library is
   half Audible sees *why* those files aren't there. The reason
-  distinguishes four different statements: `drm_epub` and
-  `unsupported_extension` (which covers `.aax`/`.aaxc` and genuinely
-  unrecognised files), `format_unhandled` for Kindle formats this tool
-  recognises and chose not to parse, and `sidecar_metadata` for a `.opf`,
-  which is not a book at all.
+  distinguishes five different statements: `drm_epub` and `drm_mobi`
+  (refusals named for the lock they found), `unsupported_extension`
+  (which covers `.aax`/`.aaxc` and genuinely unrecognised files),
+  `format_unhandled` for `.kfx`, the one Kindle format this tool
+  recognises and chose not to parse, and `sidecar_metadata` for a
+  `.opf`, which is not a book at all.
 - **`.opf` sidecars are mined, not skipped**: `media_sidecars` holds the
   parsed metadata block of every `.opf` found next to the books — title,
   author, series, ISBN, work key. Rows are replaced per root on each scan
@@ -430,8 +442,9 @@ review.
 **1. `books.Normalize` is pinned and versioned.** Every stored offset
 in the arena — reader position, alignment anchor, OCR page anchor —
 assumes *this exact function* (`api/booktext/normalize.go`), on both
-the EPUB side and the transcript side; the worker imports it, never
-copies it. Changing the rules (or the EPUB block extraction) requires
+the ebook side and the transcript side; the worker imports it, never
+copies it. Changing the rules (or the block extraction the epub and
+mobi parsers share) requires
 bumping `books.ParserVersion` so `epub_texts` rows are re-parsed and
 every derived offset rebuilt together. A silent rule change rots every
 offset ever stored.
@@ -449,19 +462,24 @@ the attach flow, the audio streamer and the alignment worker only ever
 service that gets them. Backhog inventories the NAS; it does not own
 it. Path containment is re-checked on every served request.
 
-**4. Supported formats are epub / mp3 / m4a / m4b / opus, and both DRM
-and Kindle formats are out of scope by decision.** `.aax`, `.aaxc` and
-DRM-wrapped epubs are skipped and *reported* (`media_skipped`), never
+**4. Supported formats are epub / mobi / azw / azw3 / mp3 / m4a / m4b /
+opus, and both DRM and KFX are out of scope by decision.** `.aax`,
+`.aaxc`, DRM-wrapped epubs (`drm_epub`) and DRM-wrapped Kindle files
+(`drm_mobi`) are skipped and *reported* (`media_skipped`), never
 half-supported. This tool is for the DRM-free crowd; do not add "just
 one container" of DRM circumvention.
 
-`.mobi` / `.azw` / `.azw3` are a *different* refusal and are labelled as
-one (`format_unhandled`). They carry no DRM here — they are simply not
-parsed, because reading them means PalmDOC LZ77, HUFF/CDIC Huffman
-decompression and KF8 fragment reassembly, with no pure-Go reader in
-existence to build on. That is a library in its own repo, and until it
-exists the honest answer is to name the format and point at the EPUB of
-the same book. Do not half-implement it inside the scanner.
+`.mobi` / `.azw` / `.azw3` are parsed — by
+[mobi-go](https://github.com/madeofpendletonwool/mobi-go), the pure-Go
+Kindle reader built for exactly this: PalmDOC and HUFF/CDIC
+decompression, KF8 reassembly, INDX NCX tables of contents. A Kindle
+file inventories like an EPUB (same text-side kind, same EXTH-driven
+matcher evidence), parses into the same canonical text through the same
+`Canonicalize`, and its DRM'd siblings are detected at scan *and* at
+parse time and refused whole. `.kfx` is the remaining refusal and is
+labelled as one (`format_unhandled`): no open reader exists for it, and
+the honest answer is to name the format and point at the EPUB or MOBI
+of the same book. Do not half-implement it inside the scanner.
 
 Every container parser in the API is hand-rolled pure Go and stays that
 way: the image is distroless with `CGO_ENABLED=0`, so there is no

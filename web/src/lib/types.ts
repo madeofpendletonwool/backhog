@@ -669,11 +669,11 @@ export interface MediaSkipped {
   path: string;
   ext: string;
   /**
-   * Four different statements, not one shrug: DRM we refuse, a Kindle format
-   * we chose not to parse, a metadata sidecar that is not a book at all, and
-   * genuinely unrecognised files.
+   * Five different statements, not one shrug: two DRM refusals named for
+   * the lock they found, a KFX file we chose not to parse, a metadata
+   * sidecar that is not a book at all, and genuinely unrecognised files.
    */
-  reason: "unsupported_extension" | "drm_epub" | "format_unhandled" | "sidecar_metadata";
+  reason: "unsupported_extension" | "drm_epub" | "drm_mobi" | "format_unhandled" | "sidecar_metadata";
   size_bytes: number;
   seen_at: string;
 }

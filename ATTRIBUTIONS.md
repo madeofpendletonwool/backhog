@@ -185,6 +185,17 @@ Compiled into the **optional** alignment worker image (`align/`,
 behind the `align` compose profile, pinned to a release tag in
 `align/Dockerfile`). Nothing of it ships in the API or web images.
 
+### mobi-go (the Books arena's Kindle reader)
+**Collin Pendleton** ·
+<https://github.com/madeofpendletonwool/mobi-go> · **GPL-3.0-only**
+
+The pure-Go MOBI/AZW/AZW3 parser behind `.mobi`/`.azw`/`.azw3` ingest:
+it decompresses PalmDOC and HUFF/CDIC text, reassembles KF8 sections and
+reads the NCX table of contents, refusing DRM-protected files whole.
+Linked by the API (a Go dependency, not vendored bytes). It is itself a
+port with attribution of KindleUnpack (GPL-3.0) with foliate-js (MIT) as
+the structural reference — which is why backhog is GPL-3.0-only.
+
 ### Whisper speech models
 **OpenAI** · <https://github.com/openai/whisper> · **MIT**
 

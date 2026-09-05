@@ -24,26 +24,37 @@ import (
 )
 
 // supportedExtensions maps file extensions to media file kinds. Everything
-// else — .aax, .aaxc, .mobi, cover art — is not inventoried and only counted,
+// else — .aax, .aaxc, .kfx, cover art — is not inventoried and only counted,
 // but it is counted *with a reason* (see recordSkip). DRM of any form is
 // deliberately out of scope: this tool is DRM-free by decision.
+//
+// The text side carries two containers: EPUB natively, and MOBI/AZW/AZW3
+// through the pure-Go mobi-go parser. Both land in kind 'epub' — the
+// text-side slot — and parse into the same canonical-text model.
 var supportedExtensions = map[string]string{
 	".mp3":  models.MediaFileAudio,
 	".m4a":  models.MediaFileAudio,
 	".m4b":  models.MediaFileAudio,
 	".opus": models.MediaFileAudio,
 	".epub": models.MediaFileEpub,
+	".mobi": models.MediaFileEpub,
+	".azw":  models.MediaFileEpub,
+	".azw3": models.MediaFileEpub,
 }
 
 // metaVersion is the version of the metadata extraction the scanner performs:
-// embedded audio tags, and an epub's own OPF package metadata. It joins
-// (size, mtime) in the fast-path comparison, so bumping it here re-reads every
-// file's metadata exactly once on the next scan and then goes quiet. Without
-// it, improving the extractor would only ever affect files that happened to
-// change afterwards. This is books.ParserVersion's trick, applied to the
-// inventory rather than to the canonical text.
+// embedded audio tags, an epub's own OPF package metadata, and a
+// mobi/azw/azw3's EXTH block. It joins (size, mtime) in the fast-path
+// comparison, so bumping it here re-reads every file's metadata exactly once
+// on the next scan and then goes quiet. Without it, improving the extractor
+// would only ever affect files that happened to change afterwards. This is
+// books.ParserVersion's trick, applied to the inventory rather than to the
+// canonical text.
 //
-// 1: audio container tags; epub OPF title/author/series/identifiers.
+// 1: audio container tags; epub OPF title/author/series/identifiers; mobi
+// EXTH title/authors/language/date/ISBN. The mobi extractor was added in the
+// same release that first inventories those files, so no existing row holds
+// a pre-mobi read of one — no bump needed.
 const metaVersion = 1
 
 // ScanResult summarises one scan, live while it runs and frozen as the last
@@ -286,8 +297,8 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 		if !supported {
 			// Three different statements, not one shrug. An .opf is not a
 			// book at all — it is the answer key next to the books, so it is
-			// parsed for the matcher and recorded as accounted-for. A Kindle
-			// file is a format this tool chose not to parse. Everything else
+			// parsed for the matcher and recorded as accounted-for. A .kfx
+			// is a format this tool chose not to parse. Everything else
 			// (.aax/.aaxc, cover art, ...) is genuinely unrecognised. None of
 			// the three is ever inventoried, and all three are remembered so
 			// the attach UI can show *why* they are missing.
@@ -336,32 +347,48 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 		switch kind {
 		case models.MediaFileEpub:
 			// One open answers both questions: DRM, and what the book's own
-			// OPF says it is. Without the metadata an epub is matched on its
-			// filename alone, which is the weakest evidence there is.
+			// metadata says it is. Without the metadata a text-side file is
+			// matched on its filename alone, which is the weakest evidence
+			// there is.
 			//
-			// Only the DRM verdict can stop a file being inventoried. An OPF
-			// that will not parse — an exotic charset declaration, a
-			// malformed package — costs the book its metadata, never its
-			// place in the library: it falls back to filename matching,
-			// exactly as it did before any metadata was read at all.
-			encrypted, tags, err := readEpubMetadata(path)
-			if err != nil && !errors.Is(err, epub.ErrBadMetadata) {
-				// The container itself would not open, so nothing about this
-				// file could be determined — DRM included. Refusing to
-				// inventory it is the DRM-respecting answer.
-				slog.Warn("media scan epub", "path", path, "error", err)
-				s.mutate(func(l *ScanResult) { l.Failed++ })
-				return nil
-			}
-			if err != nil {
-				slog.Warn("media scan epub metadata", "path", path, "error", err)
+			// Only the DRM verdict can stop a file being inventoried. For an
+			// EPUB, metadata that will not parse — an exotic charset
+			// declaration, a malformed package — costs the book its metadata,
+			// never its place in the library. For a MOBI the library opens
+			// eagerly or refuses whole, so a book whose text will not
+			// decompress is a container we could not determine DRM status for:
+			// refusing to inventory it is the DRM-respecting answer, same as
+			// an epub container that will not open.
+			var encrypted bool
+			var tags bookTags
+			if mobiExtensions[ext] {
+				encrypted, tags, err = readMobiMetadata(path)
+				if err != nil {
+					slog.Warn("media scan mobi", "path", path, "error", err)
+					s.mutate(func(l *ScanResult) { l.Failed++ })
+					return nil
+				}
+			} else {
+				encrypted, tags, err = readEpubMetadata(path)
+				if err != nil && !errors.Is(err, epub.ErrBadMetadata) {
+					slog.Warn("media scan epub", "path", path, "error", err)
+					s.mutate(func(l *ScanResult) { l.Failed++ })
+					return nil
+				}
+				if err != nil {
+					slog.Warn("media scan epub metadata", "path", path, "error", err)
+				}
 			}
 			file.ContainerMetadata = marshalTags(tags)
 			if encrypted {
-				// DRM-wrapped epub: unsupported after all. The path stays out
+				// DRM-wrapped book: unsupported after all. The path stays out
 				// of the seen set, so an existing row is flagged missing by
 				// the end-of-scan pass instead of being deleted.
-				s.recordSkip(root, rel, ext, models.MediaSkipDRM, size, mtime)
+				reason := models.MediaSkipDRM
+				if mobiExtensions[ext] {
+					reason = models.MediaSkipDRMMobi
+				}
+				s.recordSkip(root, rel, ext, reason, size, mtime)
 				s.mutate(func(l *ScanResult) { l.Unsupported++ })
 				return nil
 			}

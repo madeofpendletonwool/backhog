@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/go-chi/chi/v5 v5.3.1
+	github.com/madeofpendletonwool/mobi-go v0.1.0
 	github.com/pressly/goose/v3 v3.27.2
 	github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300
 	golang.org/x/crypto v0.55.0

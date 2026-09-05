@@ -378,7 +378,9 @@ text and answers with offsets — and because an offset is the one stored
 position, the same translator that serves the reader hands every hit back
 already carrying its chapter, its page of *this reader's printing* (with the
 error bar), and its second of the audiobook. Enter opens the reader on the
-paragraph; ⌘↵ starts the player on the sentence.
+paragraph as a **peek** — the passage is shown but the stored position does
+not move until the reader goes on reading there or finds their own way back;
+⌘↵ starts the player on the sentence.
 
 The mechanics, in `api/internal/books/search/`:
 

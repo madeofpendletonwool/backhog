@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams, useParams } from "react-router-dom";
 
+import { SearchInBookDialog } from "@/components/SearchInBookDialog";
 import { Dialog } from "@/components/ui/Dialog";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
@@ -77,6 +78,27 @@ export function BookReaderPage() {
 
 /** How often a moving reader checkpoints its position — the player's rate. */
 const WRITE_EVERY_MS = 15_000;
+
+/**
+ * How long after a peek lands before the reader's own scrolling counts as
+ * leaving it. The landing itself is a programmatic `window.scrollTo`, which
+ * fires no user-input events, so this is not for it — it is for the
+ * trackpad: a flick that was scrolling the results list still has momentum
+ * when the hit is clicked, and that dying inertia must not end the peek it
+ * clicked, or the position the peek exists to protect gets written anyway.
+ */
+const PEEK_ARM_MS = 500;
+
+/** The keys that scroll a page, and so count as leaving a peek under steam. */
+const PEEK_SCROLL_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "PageDown",
+  "PageUp",
+  "Home",
+  "End",
+  " ",
+]);
 
 /** How far under the toolbar the "you are here" line sits, in pixels. */
 const ANCHOR_INSET = 8;
@@ -196,12 +218,14 @@ function Reader({ entry }: { entry: BookEntry }) {
   const prefs = migratePrefs(stored);
   const { theme } = useTheme();
   const [panel, setPanel] = useState<"none" | "contents" | "type">("none");
+  const [searchOpen, setSearchOpen] = useState(false);
 
-  // The player's handoff ("Continue reading" there) lands here as
-  // ?offset=N: the offset to open at instead of the stored one. Derived from
-  // the URL every render, so a handoff that arrives while the book is
-  // already open still lands; the parameter is stripped the moment it has
-  // been consumed, so a refresh restores the stored position like any other
+  // Two kinds of arrival land here as ?offset=N: the player's handoff
+  // ("Continue reading" there), which is a deliberate move, and a search
+  // hit, which also carries &peek=1 and is only a look. Derived from the
+  // URL every render, so one that arrives while the book is already open
+  // still lands; the parameters are stripped the moment they have been
+  // consumed, so a refresh reopens at the stored position like any other
   // open.
   const requestedParam = searchParams.get("offset");
   const requestedOffset =
@@ -212,6 +236,30 @@ function Reader({ entry }: { entry: BookEntry }) {
       : null;
   // The block a handoff landed on pulses once, so the eye lands with it.
   const [flash, setFlash] = useState<number | null>(null);
+
+  // --- peek ---------------------------------------------------------------
+  // A peek is a jump that never becomes "where you are": while it lasts,
+  // none of the reader's position writers run — not the interval
+  // checkpoint, not the unmount flush, not the pagehide beacon — so
+  // looking twenty pages back for a remembered line cannot overwrite the
+  // place reading has earned. It ends by choice (the banner's two ways
+  // out), by a deliberate navigation (TOC, chapter step), or by scrolling
+  // under the reader's own steam — never by the landing itself.
+  const requestedPeek = searchParams.get("peek") === "1";
+  const [peek, setPeek] = useState(false);
+  const peekRef = useRef(false);
+  // These two set the ref synchronously alongside the state, because the
+  // interval flush and the leaving beacon read the ref from closures that
+  // do not re-render when the state does — the gate must never lag a
+  // peek it was opened for.
+  const beginPeek = useCallback(() => {
+    peekRef.current = true;
+    setPeek(true);
+  }, []);
+  const endPeek = useCallback(() => {
+    peekRef.current = false;
+    setPeek(false);
+  }, []);
 
   const text = useQuery({
     queryKey: ["bookTextChapters", entry.id],
@@ -282,8 +330,19 @@ function Reader({ entry }: { entry: BookEntry }) {
     if (requestedOffset !== null) {
       setFlash(at);
       setSearchParams({}, { replace: true });
+      if (requestedPeek) beginPeek();
     }
-  }, [chapters, position.data, position.isError, requestedOffset, setSearchParams, spine, text.data]);
+  }, [
+    beginPeek,
+    chapters,
+    position.data,
+    position.isError,
+    requestedOffset,
+    requestedPeek,
+    setSearchParams,
+    spine,
+    text.data,
+  ]);
 
   useEffect(() => {
     if (flash === null) return;
@@ -309,8 +368,9 @@ function Reader({ entry }: { entry: BookEntry }) {
     return true;
   }, []);
 
-  // A handoff landing while the book is already open: jump straight to the
-  // narrated paragraph instead of waiting for a reopen.
+  // A jump landing while the book is already open — the player's handoff,
+  // or a search hit from the reader's own search — moves straight to the
+  // paragraph instead of waiting for a reopen.
   useEffect(() => {
     if (requestedOffset === null || spine === null) return;
     const clamped = Math.min(
@@ -329,7 +389,17 @@ function Reader({ entry }: { entry: BookEntry }) {
     }
     setFlash(clamped);
     setSearchParams({}, { replace: true });
-  }, [anchorTo, chapters, requestedOffset, setSearchParams, spine, text.data]);
+    if (requestedPeek) beginPeek();
+  }, [
+    anchorTo,
+    beginPeek,
+    chapters,
+    requestedOffset,
+    requestedPeek,
+    setSearchParams,
+    spine,
+    text.data,
+  ]);
 
   // Land the restore before paint, so opening a book never flashes page one.
   useLayoutEffect(() => {
@@ -463,6 +533,8 @@ function Reader({ entry }: { entry: BookEntry }) {
     // Following the tape, the reader has nothing to add — the player is
     // already checkpointing the listening position, which *is* this offset.
     if (followingRef.current) return;
+    // A peeked offset is a place being looked at, not a place being read.
+    if (peekRef.current) return;
     if (!restoredRef.current) return;
     if (offsetRef.current === writtenRef.current) return;
     save(offsetRef.current);
@@ -482,6 +554,9 @@ function Reader({ entry }: { entry: BookEntry }) {
   useEffect(() => {
     const leave = () => {
       if (followingRef.current) return;
+      // A peek leaving the page is still just a look — the stored place
+      // survives the tab close that interrupted it.
+      if (peekRef.current) return;
       if (!restoredRef.current) return;
       if (offsetRef.current === writtenRef.current) return;
       writtenRef.current = offsetRef.current;
@@ -497,6 +572,58 @@ function Reader({ entry }: { entry: BookEntry }) {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [entry.id]);
+
+  // A peek also ends the moment the page moves under the reader's own
+  // hand — wheel, touch, or a key that scrolls — because then they are
+  // reading, not looking. The landing anchor is a window.scrollTo, which
+  // fires none of those, so the jump never ends its own peek; and the
+  // arming delay lets a trackpad's momentum die first, so the flick that
+  // was scrolling the results list cannot end the peek it clicked. While
+  // the search dialog is open, its own list is what scrolls — not this
+  // page — so the listeners stand down until it closes.
+  useEffect(() => {
+    if (!peek || searchOpen) return;
+    const exit = () => endPeek();
+    const onKey = (event: KeyboardEvent) => {
+      if (!PEEK_SCROLL_KEYS.has(event.key)) return;
+      const target = event.target as HTMLElement | null;
+      // Not while somebody is typing a query.
+      if (target?.isContentEditable) return;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      exit();
+    };
+    const id = window.setTimeout(() => {
+      window.addEventListener("wheel", exit, { passive: true });
+      window.addEventListener("touchmove", exit, { passive: true });
+      window.addEventListener("keydown", onKey);
+    }, PEEK_ARM_MS);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("wheel", exit);
+      window.removeEventListener("touchmove", exit);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [endPeek, peek, searchOpen]);
+
+  // --- search -------------------------------------------------------------
+  // The reader's own way in, so read → search → back never unmounts the
+  // reader (unmounting is itself a checkpoint). "/" opens it exactly as
+  // "/" does on the book's page; Cmd+F deliberately stays the browser's
+  // find-in-page.
+  const searchable = (text.data?.char_count ?? 0) > 0;
+  useEffect(() => {
+    if (!searchable) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable) return;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      event.preventDefault();
+      setSearchOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [searchable]);
 
   // Keep the narrated paragraph on screen, gently, without stealing a
   // scroll the listener started themselves.
@@ -566,15 +693,43 @@ function Reader({ entry }: { entry: BookEntry }) {
     },
   });
 
-  const goToChapter = useCallback((target: TextChapter) => {
-    offsetRef.current = target.char_start;
-    setLiveOffset(target.char_start);
-    pendingRef.current = target.char_start;
-    // Hold the writes until the new chapter has been anchored.
-    restoredRef.current = false;
-    setSpine(target.spine_index);
-    setPanel("none");
-  }, []);
+  const goToChapter = useCallback(
+    (target: TextChapter) => {
+      // A deliberate navigation is a decision about where to read, so any
+      // peek it interrupts is over.
+      endPeek();
+      offsetRef.current = target.char_start;
+      setLiveOffset(target.char_start);
+      pendingRef.current = target.char_start;
+      // Hold the writes until the new chapter has been anchored.
+      restoredRef.current = false;
+      setSpine(target.spine_index);
+      setPanel("none");
+    },
+    [endPeek],
+  );
+
+  /**
+   * The banner's way home: re-anchor to the stored offset with the same
+   * machinery a TOC pick uses — pend, render, anchor — and end the peek
+   * as part of a deliberate move, never before it. The pulse is the same
+   * one any offset jump lands with.
+   */
+  const backToMyPlace = useCallback(() => {
+    const home = position.data?.char_offset ?? 0;
+    offsetRef.current = home;
+    setLiveOffset(home);
+    setFlash(home);
+    const target = spine === null ? null : chapterAt(chapters, home);
+    if (target && target.spine_index !== spine) {
+      pendingRef.current = home;
+      restoredRef.current = false;
+      setSpine(target.spine_index);
+    } else if (spine !== null) {
+      anchorTo(home);
+    }
+    endPeek();
+  }, [anchorTo, chapters, endPeek, position.data, spine]);
 
   // --- the states before the text --------------------------------------
   if (text.isLoading) return <ReaderSkeleton />;
@@ -589,6 +744,9 @@ function Reader({ entry }: { entry: BookEntry }) {
   const percent = percentAt(text.data, liveOffset);
   const page = position.data?.page ?? null;
   const totalPages = (work?.editions ?? []).find((edition) => edition.page_count)?.page_count ?? null;
+  // The banner speaks for the stored place, not the one on screen.
+  const storedPercent = position.data ? Math.round(position.data.percent) : null;
+  const storedPage = formatPage(page);
 
   // The flash names a character offset, but the pulse paints a block: the
   // one the offset lands inside.
@@ -654,6 +812,15 @@ function Reader({ entry }: { entry: BookEntry }) {
             {chapter ? chapterTitle(chapter) : " "}
           </span>
 
+          {searchable && (
+            <ToolbarButton
+              surface={surface}
+              active={searchOpen}
+              label="Search inside"
+              icon="search"
+              onClick={() => setSearchOpen(true)}
+            />
+          )}
           <ToolbarButton
             surface={surface}
             active={panel === "contents"}
@@ -712,6 +879,39 @@ function Reader({ entry }: { entry: BookEntry }) {
             </span>
           )}
         </div>
+
+        {/* The peek banner: what a search jump means while it lasts. Its
+            numbers are the stored place, never the one on screen, because
+            the whole point of the bar is the difference between the two. */}
+        {peek && (
+          <div
+            className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 border-t px-4 py-2 text-xs sm:px-6"
+            style={{ borderColor: surface.rule, color: surface.muted }}
+          >
+            <Gi name="search" className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              Viewing a search result · your place is{" "}
+              {storedPercent !== null ? `${storedPercent}%` : "saved"}
+              {storedPage ? ` · ${storedPage}` : ""}
+            </span>
+            <button
+              type="button"
+              onClick={backToMyPlace}
+              className="shrink-0 rounded-lg px-2.5 py-1 font-medium transition-opacity hover:opacity-70 focus-visible:focus-ring"
+              style={{ color: surface.fg, background: surface.rule }}
+            >
+              Back to my place
+            </button>
+            <button
+              type="button"
+              onClick={endPeek}
+              className="shrink-0 rounded-lg px-2.5 py-1 transition-opacity hover:opacity-70 focus-visible:focus-ring"
+              style={{ color: surface.fg }}
+            >
+              Read from here
+            </button>
+          </div>
+        )}
 
         {panel === "contents" && (
           <Contents chapters={toc} current={spine} surface={surface} onPick={goToChapter} />
@@ -796,6 +996,8 @@ function Reader({ entry }: { entry: BookEntry }) {
         onOffset={followTape}
       />
 
+      <SearchInBookDialog entry={entry} open={searchOpen} onClose={() => setSearchOpen(false)} />
+
       <Dialog open={handoff !== null} onClose={() => setHandoff(null)} label="Continue in audio">
         {handoff?.audio && (
           <>
@@ -874,7 +1076,7 @@ function ToolbarButton({
   surface: Surface;
   active: boolean;
   label: string;
-  icon: "list-tree" | "sliders";
+  icon: "list-tree" | "sliders" | "search";
   onClick: () => void;
 }) {
   return (

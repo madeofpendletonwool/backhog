@@ -76,10 +76,15 @@ export function SearchInBookDialog({
       ?.scrollIntoView({ block: "nearest" });
   }, [highlighted]);
 
-  /** Opens the reader on the paragraph the hit landed in. */
+  /**
+   * Opens the reader on the paragraph the hit landed in — as a peek. The
+   * passage is shown without becoming "where you are": the reader holds
+   * its stored position and offers the way back, because looking twenty
+   * pages behind you is not reading there.
+   */
   const read = (hit: BookSearchHit) => {
     onClose();
-    navigate(`/books/${entry.id}/read?offset=${hit.char_offset}`);
+    navigate(`/books/${entry.id}/read?offset=${hit.char_offset}&peek=1`);
   };
 
   /** Starts the audiobook at the second the hit maps to. */
@@ -159,7 +164,7 @@ export function SearchInBookDialog({
 
         <div className="flex items-center justify-between gap-4 border-t border-edge px-4 py-2.5 text-[11px] text-ink-500">
           <span>
-            <Kbd>↑</Kbd> <Kbd>↓</Kbd> navigate · <Kbd>↵</Kbd> read here
+            <Kbd>↑</Kbd> <Kbd>↓</Kbd> navigate · <Kbd>↵</Kbd> peek here
             {results[highlighted]?.audio && (
               <>
                 {" · "}

@@ -45,7 +45,9 @@ Library and read, listen, and track them on the same spine — see
 - **Books** — the same backlog spine carrying books instead of games, plus
   position translation between paper, audio and EPUB: read in the browser,
   listen at speed, stop in the car and resume on the right sentence, scan a
-  paper page with your phone to pin *your printing* into the map (see
+  paper page with your phone to pin *your printing* into the map, and search
+  the text for the line you half-remember and be told what page it is on and
+  what minute of the audiobook it is in (see
   [Books](#books) and [docs/BOOKS.md](docs/BOOKS.md))
 - **Multi-user** — real accounts, fully isolated libraries, shared metadata cache
 
@@ -105,6 +107,14 @@ the reader opens on the right sentence. Scan a paper page with your
 phone and Backhog pins that page of *your printing* into the same map —
 no external page-number database, and the map gets better every time
 you use it. How it works is [docs/BOOKS.md](docs/BOOKS.md).
+
+**Search inside the book** falls out of the same machinery. Hit `/` on a
+book and type the line you half-remember — capitals, punctuation and curly
+quotes don't matter, because the text Backhog searches has already had them
+folded out. Every hit comes back in all three coordinates at once: the
+chapter, the page of *your* printing (± its error bar), and the timestamp in
+the audiobook. Enter opens the reader on that paragraph; ⌘↵ starts the
+narrator on that sentence.
 
 ### Your files, your NAS — there is no upload
 

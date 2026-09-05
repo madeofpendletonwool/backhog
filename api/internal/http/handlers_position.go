@@ -701,6 +701,28 @@ func audioAt(p models.BookProgress, v bookViews) *audioView {
 		global = 0
 	}
 
+	return newAudioView(global, confidence, derived, distance, v)
+}
+
+// audioViewFor places an arbitrary canonical offset on the audio timeline. It
+// is audioAt's derived branch on its own, for the callers that hold an offset
+// rather than a stored position — a search hit, say — and therefore have no
+// raw-timestamp fallback to fall back to.
+func audioViewFor(charOffset int, v bookViews) *audioView {
+	if !v.hasTimeline || v.translator == nil || !v.translator.HasAudio() {
+		return nil
+	}
+	tr, ok := v.translator.CharToAudioT(charOffset)
+	if !ok {
+		return nil
+	}
+	return newAudioView(tr.Value, tr.Confidence, true, tr.AnchorDistance, v)
+}
+
+// newAudioView renders one global second on the book's timeline, resolving the
+// track it falls in. A timeline that cannot locate the second still answers —
+// the position is real, only its track label is missing.
+func newAudioView(global, confidence float64, derived bool, distance float64, v bookViews) *audioView {
 	out := &audioView{
 		Seconds:        global,
 		TotalDuration:  v.timeline.TotalDuration,
@@ -716,10 +738,15 @@ func audioAt(p models.BookProgress, v bookViews) *audioView {
 
 // pageAt derives the printed page, which exists only once a page map does.
 func pageAt(p models.BookProgress, v bookViews) *pageView {
+	return pageViewFor(p.CharOffset, v)
+}
+
+// pageViewFor is pageAt for an arbitrary offset rather than a stored position.
+func pageViewFor(charOffset int, v bookViews) *pageView {
 	if v.translator == nil || !v.translator.HasPages() {
 		return nil
 	}
-	tr, ok := v.translator.CharToPageT(p.CharOffset)
+	tr, ok := v.translator.CharToPageT(charOffset)
 	if !ok {
 		return nil
 	}

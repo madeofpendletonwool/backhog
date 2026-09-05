@@ -23,6 +23,7 @@ import type {
   NamedRef,
   PageAnchor,
   PassageResult,
+  BookSearchResults,
   PhysicalCopy,
   PlayOrder,
   PlaySession,
@@ -464,6 +465,22 @@ export const api = {
   /** Queues an alignment; idempotent while one is already in flight. */
   enqueueAlignment: (entryId: string) =>
     request<{ job: AlignmentJobView }>(`/books/${entryId}/align`, { method: "POST" }),
+
+  /**
+   * Searches inside one book's text. Every hit comes back already placed in
+   * the audiobook and the printed page, because a hit *is* a canonical
+   * offset. 422 means the query was too short to answer; a query that simply
+   * matches nothing is a 200 with an empty list.
+   *
+   * The signal is not optional in practice: this runs on a debounce while
+   * somebody types, and superseded requests must be abandoned rather than
+   * raced.
+   */
+  searchInBook: (entryId: string, q: string, signal?: AbortSignal) =>
+    request<BookSearchResults>(
+      `/books/${entryId}/search?q=${encodeURIComponent(q)}`,
+      { signal },
+    ),
 
   // --- the paper bridge ---------------------------------------------------
   /**

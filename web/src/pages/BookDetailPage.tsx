@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { BookCover } from "@/components/BookCover";
 import { PhysicalCopyPanel } from "@/components/PhysicalCopyPanel";
+import { SearchInBookDialog } from "@/components/SearchInBookDialog";
 import { ListMembership, ProjectMembership } from "@/components/EntryMembership";
 import { StatusMenu } from "@/components/StatusMenu";
 import { Dialog } from "@/components/ui/Dialog";
@@ -144,6 +145,7 @@ export function BookDetailPage() {
                 <StatusMenu entry={entry} size="md" statuses={STATUSES} />
                 <ReadButton entry={entry} />
                 <ListenButton entry={entry} />
+                <SearchButton entry={entry} />
               </div>
             </div>
           </div>
@@ -326,6 +328,57 @@ function ReadButton({ entry }: { entry: BookEntry }) {
         {into > 0 ? "Continue reading" : "Read"}
       </Button>
     </Link>
+  );
+}
+
+/**
+ * Search inside the book.
+ *
+ * Gated on the same parsed text the Read button is: without an EPUB there is
+ * nothing to search, and the chapters query is already warm from that button
+ * sitting beside this one.
+ *
+ * "/" opens it, the way it opens search in a document everywhere else. Cmd+F is
+ * deliberately left to the browser — a reader looking for a word on *this page*
+ * should get the browser's find, and stealing it to search a different text
+ * would be a worse trade than one extra key.
+ */
+function SearchButton({ entry }: { entry: BookEntry }) {
+  const [open, setOpen] = useState(false);
+  const { data: text } = useQuery({
+    queryKey: ["bookTextChapters", entry.id],
+    queryFn: () => api.bookTextChapters(entry.id),
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const searchable = Boolean(text && text.char_count > 0);
+
+  useEffect(() => {
+    if (!searchable) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      // Not while somebody is typing a note.
+      if (target?.isContentEditable) return;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      event.preventDefault();
+      setOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [searchable]);
+
+  if (!searchable) return null;
+
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>
+        <Gi name="search" className="size-3.5" />
+        Search inside
+      </Button>
+      <SearchInBookDialog entry={entry} open={open} onClose={() => setOpen(false)} />
+    </>
   );
 }
 

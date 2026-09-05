@@ -70,6 +70,7 @@ const bookNav: NavItem[] = [
   { to: "/queue?media=book", label: "Reading Queue", icon: "list-ordered", end: false },
   { to: "/debt?media=book", label: "Reading Debt", icon: "hourglass", end: false },
   { to: "/books/files", label: "Book files", icon: "full-folder", end: false },
+  { to: "/achievements?media=book", label: "Achievements", icon: "trophy", end: false },
   { to: "/lists", label: "Lists", icon: "list-tree", end: false },
   { to: "/projects", label: "Projects", icon: "target", end: false },
 ];
@@ -145,7 +146,7 @@ export function Layout() {
     <div className="flex min-h-screen">
       <aside className="f-panel fixed inset-y-2 left-2 z-20 hidden w-60 flex-col px-3 py-5 lg:flex">
         <div
-          className="flex items-center gap-3 px-2 pb-6 select-none"
+          className="flex shrink-0 items-center gap-3 px-2 pb-6 select-none"
           title="Backhog"
           onClick={onLogoClick}
         >
@@ -166,7 +167,7 @@ export function Layout() {
 
         <ArenaSwitch arena={arena} onSwitch={switchArena} className="mb-4" />
 
-        <Button variant="primary" className="mb-4 w-full" onClick={() => setAddOpen(true)}>
+        <Button variant="primary" className="mb-4 w-full shrink-0" onClick={() => setAddOpen(true)}>
           <Gi name="plus" className="size-3.5" />
           {arena === "books" ? "Add book" : "Add game"}
           <kbd
@@ -183,42 +184,44 @@ export function Layout() {
             arena only decides which length the picks reason about. */}
         <Button
           variant="secondary"
-          className="mb-6 w-full"
+          className="mb-5 w-full shrink-0"
           onClick={() => (arena === "books" ? setReadOpen(true) : setPickOpen(true))}
         >
           <Gi name="dices" className="size-3.5" />
           {arena === "books" ? "What should I read?" : "What should I play?"}
         </Button>
 
-        <nav className="space-y-1">
-          {navItems.map(({ to, label, icon, end }) => (
-            <NavLink key={to} to={to} end={end} className={navLinkClass}>
-              <Gi name={icon} className="size-4" />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
+        <NavScroller>
+          <nav className="space-y-1">
+            {navItems.map(({ to, label, icon, end }) => (
+              <NavLink key={to} to={to} end={end} className={navLinkClass}>
+                <Gi name={icon} className="size-4" />
+                {label}
+              </NavLink>
+            ))}
+          </nav>
 
-        {smartLists.length > 0 && (
-          <div className="mt-7">
-            <p className="px-2 pb-2 font-display text-[9px] font-bold uppercase tracking-widest text-ink-400">
-              Smart lists
-            </p>
-            <div className="space-y-1">
-              {smartLists.map((list) => (
-                <NavLink key={list.id} to={`/lists/${list.id}`} className={navLinkClass}>
-                  <Gi name="sparkles" className="size-3.5 shrink-0 text-hl-bright" />
-                  <span className="truncate">{list.name}</span>
-                  <span className="ml-auto shrink-0 font-display text-[10px] tabular-nums text-ink-400">
-                    {list.count}
-                  </span>
-                </NavLink>
-              ))}
+          {smartLists.length > 0 && (
+            <div className="mt-6 pb-1">
+              <p className="px-2 pb-2 font-display text-[9px] font-bold uppercase tracking-widest text-ink-400">
+                Smart lists
+              </p>
+              <div className="space-y-1">
+                {smartLists.map((list) => (
+                  <NavLink key={list.id} to={`/lists/${list.id}`} className={navLinkClass}>
+                    <Gi name="sparkles" className="size-3.5 shrink-0 text-hl-bright" />
+                    <span className="truncate">{list.name}</span>
+                    <span className="ml-auto shrink-0 font-display text-[10px] tabular-nums text-ink-400">
+                      {list.count}
+                    </span>
+                  </NavLink>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </NavScroller>
 
-        <div className="mt-auto space-y-1 border-t-2 border-line pt-3">
+        <div className="mt-3 shrink-0 space-y-1 border-t-2 border-line pt-3">
           {arena === "games" && (
             <button onClick={() => setImportOpen(true)} className={actionLinkClass}>
               <Gi name="download" className="size-4" />
@@ -293,6 +296,65 @@ export function Layout() {
       {chrome}
       <AudioPlayer />
     </AudioPlayerProvider>
+  );
+}
+
+/**
+ * The sidebar's middle: the only part that is allowed to grow.
+ *
+ * The panel is a fixed-height column, so before this existed every child
+ * competed for the same pixels — a short window or a handful of smart lists
+ * squeezed the nav, the two big buttons and the wordmark all at once, and the
+ * bottom of the list simply fell off the panel. Now the head and the foot
+ * hold their size (`shrink-0`) and everything between them scrolls.
+ *
+ * The edge fade is a mask rather than a gradient overlay, because Midnight's
+ * sidebar is translucent over a blurred backdrop: an overlay would have to
+ * know what colour to fade to, and would smear the blur. A mask fades the
+ * content's own alpha and needs to know nothing about the surface under it,
+ * which is what makes one rule work in all three families.
+ */
+function NavScroller({ children }: { children: React.ReactNode }) {
+  const viewport = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ top: false, bottom: false });
+
+  useEffect(() => {
+    const el = viewport.current;
+    if (!el) return;
+
+    const measure = () => {
+      // A pixel of slack: fractional scroll positions and zoomed layouts
+      // otherwise leave the bottom fade on forever at the end of the list.
+      const scrollable = el.scrollHeight - el.clientHeight;
+      const next = { top: el.scrollTop > 1, bottom: scrollable > 1 && el.scrollTop < scrollable - 1 };
+      setEdges((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next));
+    };
+
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    // Two things change what is scrollable without a scroll event: the window
+    // resizing (the viewport) and the smart lists arriving (the content).
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    if (content.current) observer.observe(content.current);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div
+      ref={viewport}
+      // Negative margin against the aside's padding so the scrollbar rides
+      // the panel edge instead of cutting through the labels.
+      className="scroll-fade -mr-2 min-h-0 flex-1 overflow-y-auto pr-2"
+      data-fade-top={edges.top || undefined}
+      data-fade-bottom={edges.bottom || undefined}
+    >
+      <div ref={content}>{children}</div>
+    </div>
   );
 }
 

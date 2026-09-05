@@ -155,8 +155,14 @@ export function readableChapters(chapters: TextChapter[]): TextChapter[] {
   return chapters.filter((chapter) => chapter.char_end > chapter.char_start);
 }
 
-/** A chapter's display name; spine documents often have no TOC entry. */
-export function chapterTitle(chapter: TextChapter): string {
+/**
+ * A chapter's display name; spine documents often have no TOC entry.
+ *
+ * Narrowed to the two fields it reads so it serves both shapes the API returns
+ * a chapter in — the reader's TextChapter and the position/search endpoints'
+ * lighter PositionChapter.
+ */
+export function chapterTitle(chapter: Pick<TextChapter, "title" | "spine_index">): string {
   return chapter.title.trim() || `Section ${chapter.spine_index + 1}`;
 }
 

@@ -245,6 +245,34 @@ body {
   background-color: var(--c-500);
 }
 
+/* A column that scrolls inside a fixed-height panel and fades whichever edge
+   still has content beyond it — the sidebar's nav, above all. The fade is a
+   mask on the content's own alpha, not a gradient laid over it: Midnight's
+   panel is translucent over a blurred backdrop, so an overlay would need a
+   colour to fade to and would smear the blur. This way one rule serves all
+   three families. The edges are set from JS (see Layout's NavScroller),
+   because only the element knows how far it has been scrolled. */
+.scroll-fade {
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  --scroll-fade: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  -webkit-mask-image: var(--scroll-fade);
+  mask-image: var(--scroll-fade);
+  overscroll-behavior: contain;
+}
+.scroll-fade[data-fade-top] {
+  --fade-top: 1.5rem;
+}
+.scroll-fade[data-fade-bottom] {
+  --fade-bottom: 1.5rem;
+}
+
 /* One focus treatment for every theme: an outline in the highlight ramp,
    which each family has already tuned to sit clear of its own accent. */
 /* ---------- Meaning-bearing colour on any ground ----------

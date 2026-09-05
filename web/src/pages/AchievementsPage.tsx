@@ -1,15 +1,17 @@
 import { Link } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { BookCover } from "@/components/BookCover";
+import { useMediaFilter } from "@/components/MediaFilter";
 import { GameCover } from "@/components/GameCover";
 import { achievementIcon } from "@/components/achievementIcons";
 import { Gi } from "@/components/ui/Gi";
 import { EmptyState, Panel, Skeleton } from "@/components/ui/primitives";
 import { useAchievements, useEggUnlock } from "@/hooks/useAchievements";
+import type { MediaFilterValue } from "@/lib/entry";
 import { formatDate } from "@/lib/format";
 import { isBookEntry } from "@/lib/types";
-import { ACHIEVEMENT_TIERS, type AchievementDomain, type AchievementStatus, type AchievementTier } from "@/lib/types";
+import { ACHIEVEMENT_TIERS, type AchievementStatus, type AchievementTier } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 /** The medal each tier section is headlined with. */
@@ -42,14 +44,19 @@ const tierStyle = (tier: AchievementTier) =>
 /**
  * The gallery's domain tabs. "any" achievements (the eggs) are about the app
  * itself, so they answer every tab.
+ *
+ * The keys are the media filter's own values, because the tab lives in the
+ * URL like every other cross-arena filter: that is what lets the books nav
+ * point at ?media=book and land on the books half of a wall both arenas
+ * share, without a second copy of this page under /books.
  */
-const DOMAIN_TABS: { key: AchievementDomain | "all"; label: string }[] = [
+const DOMAIN_TABS: { key: MediaFilterValue; label: string }[] = [
   { key: "all", label: "All" },
   { key: "game", label: "Games" },
   { key: "book", label: "Books" },
 ];
 
-function inDomain(a: AchievementStatus, tab: AchievementDomain | "all"): boolean {
+function inDomain(a: AchievementStatus, tab: MediaFilterValue): boolean {
   return tab === "all" || a.domain === "any" || a.domain === tab;
 }
 
@@ -66,7 +73,9 @@ const KONAMI = ["arrowup", "arrowup", "arrowdown", "arrowdown",
 export function AchievementsPage() {
   const { data, isLoading } = useAchievements();
   const fireEgg = useEggUnlock();
-  const [tab, setTab] = useState<AchievementDomain | "all">("all");
+  // "all" is the fallback: arriving from the games nav, or from a bare
+  // /achievements link, still opens on the whole wall the way it always has.
+  const [tab, setTab] = useMediaFilter("all");
 
   // Old habits: typing the Konami code anywhere on the gallery hatches
   // the Old Habits egg. Progress resets on any wrong key — as it should.

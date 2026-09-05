@@ -17,6 +17,7 @@ import (
 	bookaudio "github.com/collinpendleton/backhog/api/internal/books/audio"
 	"github.com/collinpendleton/backhog/api/internal/books/passage"
 	"github.com/collinpendleton/backhog/api/internal/books/position"
+	"github.com/collinpendleton/backhog/api/internal/books/search"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/media"
 	"github.com/collinpendleton/backhog/api/internal/metadata"
@@ -48,6 +49,14 @@ type Server struct {
 	// same companion files the ingester writes and is nil exactly when
 	// the ingester is.
 	passage *passage.Matcher
+	// search finds a phrase in the canonical text. It reads the same
+	// companion files as the passage matcher and follows the ingester into
+	// nil alongside it.
+	search *search.Searcher
+	// searchViews caches the derivation inputs a search result is rendered
+	// through, because searching is a keystroke path and the database runs
+	// on one connection.
+	searchViews *viewsCache
 	// anchors supplies the alignment and page-map data the position
 	// translator interpolates over: alignment anchors arrive through the
 	// worker queue, page anchors from the physical copies' scans.
@@ -68,24 +77,29 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 	// The passage matcher shares the ingester's directory, so it follows
 	// it into nil on the same failure.
 	var match *passage.Matcher
+	var find *search.Searcher
 	if epubs != nil {
 		ing := epubs
-		match = passage.New(func(_ context.Context, textID string) (string, error) {
+		load := func(_ context.Context, textID string) (string, error) {
 			data, err := os.ReadFile(ing.TextPath(textID))
 			if err != nil {
 				return "", fmt.Errorf("read canonical text: %w", err)
 			}
 			return string(data), nil
-		})
+		}
+		match = passage.New(load)
+		find = search.New(load)
 	}
 	return &Server{
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
-		passage:    match,
-		matcher:    media.NewMatcher(st, books),
-		anchors:    alignmentAnchors{store: st},
-		audio:      bookaudio.NewService(st, cfg.MediaDirs),
-		eggLimiter: newEggLimiter(eggRateLimit, time.Minute),
+		passage:     match,
+		search:      find,
+		searchViews: newViewsCache(searchViewsTTL),
+		matcher:     media.NewMatcher(st, books),
+		anchors:     alignmentAnchors{store: st},
+		audio:       bookaudio.NewService(st, cfg.MediaDirs),
+		eggLimiter:  newEggLimiter(eggRateLimit, time.Minute),
 	}
 }
 
@@ -183,6 +197,12 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/books/{entryID}/align", s.handleBookAlignEnqueue)
 			r.Get("/books/{entryID}/align", s.handleBookAlignStatus)
 			r.Delete("/books/{entryID}/align", s.handleBookAlignDelete)
+
+			// Search inside one book's text. It is the passage matcher's
+			// query profile inverted — a few remembered words instead of a
+			// scanned page — and it answers in offsets, so every hit comes
+			// back already placed in the audiobook and the printed page.
+			r.Get("/books/{entryID}/search", s.handleSearchInBook)
 
 			// The physical-copy bridge: place text read off a paper page
 			// in the canonical text, register printings of a book the

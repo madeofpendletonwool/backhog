@@ -370,6 +370,56 @@ The mechanics that matter:
 
 ---
 
+## Searching the text
+
+The cheapest feature in the arena, and the one that shows what the arena is
+for. `GET /api/books/{entryID}/search?q=` finds a phrase in the canonical
+text and answers with offsets — and because an offset is the one stored
+position, the same translator that serves the reader hands every hit back
+already carrying its chapter, its page of *this reader's printing* (with the
+error bar), and its second of the audiobook. Enter opens the reader on the
+paragraph; ⌘↵ starts the player on the sentence.
+
+The mechanics, in `api/internal/books/search/`:
+
+- **The corpus is the canonical text, not `transcript_segments`.** Both
+  describe the same book, but one is the author's words and the other is
+  Whisper's guess at a narrator reading them — and a transcript only exists
+  for a book that already has an EPUB, because alignment needs one. The
+  worse text is never the better index.
+- **Punctuation is already solved.** The canonical text has had case,
+  quotes, dashes and apostrophes folded out of it, so folding the query
+  through the same `booktext.Normalize` makes `“Don’t,” he said—finally.`
+  and `dont he said finally` the same string, and finding one inside the
+  other is `strings.Index` over well under a megabyte.
+- **Two tiers, named in the response.** *Phrase* is a substring scan at
+  token boundaries; the last word is allowed to match as a prefix only when
+  the book contains no whole-word hit, which is what makes the box feel live
+  without burying "the door" under every "theatre". *Loose* is the fallback
+  when the phrase is nowhere: a token-window scan that forgives one
+  misremembered word and any word order, driven from the rarest terms. The
+  UI says which one it is showing rather than letting a fallback pass for a
+  hit.
+- **Snippets are prose, not the address space.** A hit is mapped through the
+  block index onto `{id}.display.txt` and highlighted in place by
+  `booktext.SpanInDisplay`, which reconstructs each display field's canonical
+  range by re-folding it. The answer is word-aligned — half of "well-known"
+  widens to the whole word — because the fold is not byte-for-byte inside a
+  word and a highlight that ended mid-word would claim a precision the
+  crossing does not survive.
+- **The index is in memory, and that is deliberate.** Same reason the
+  canonical text is a file: the database runs on one connection and this is a
+  keystroke path. An FTS5 table would put every character typed into a search
+  box in line behind whatever else wants to write. A novel's token index
+  builds in milliseconds and lives in a four-entry LRU keyed by text id *and*
+  normalized SHA, so a re-parse that reuses an id cannot serve offsets into a
+  book that no longer exists. The derivation inputs behind the page and
+  timecode — chapters, timeline, a few thousand anchors — sit behind a 30-second
+  TTL cache for the same reason; every endpoint that reads or writes a real
+  position still loads them fresh.
+
+---
+
 ## Invariants
 
 Break these and the arena degrades in ways that are easy to miss in
@@ -456,6 +506,7 @@ handoff degrades, by asking the user to say where they were.
 | `GET/PUT /api/books/{entryID}/position`, `GET/POST …/sessions` | the one position, and reading sessions |
 | `POST/GET/DELETE /api/books/{entryID}/align` | alignment enqueue / status / delete |
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
+| `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode |
 | `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages` | physical copies (owned + borrowed) + page anchors |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |
 

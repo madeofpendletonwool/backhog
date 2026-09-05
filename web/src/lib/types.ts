@@ -1002,6 +1002,46 @@ export interface PositionTranslation {
   alignment: AlignmentSummary | null;
 }
 
+/**
+ * One place in a book that a search found, in every space the arena can put
+ * it. The offset is the answer; `audio` and `page` are the same answer said
+ * in the other two coordinate systems, and are null when the book has no
+ * alignment or no page map to say it in.
+ */
+export interface BookSearchHit {
+  char_offset: number;
+  char_end: number;
+  percent: number;
+  /**
+   * The match as the book prints it — the display text, with its own
+   * capitals and punctuation, split for highlighting. Same shape as
+   * PassageResult.context, so the same rendering serves both.
+   */
+  context: { before: string; passage: string; after: string };
+  chapter: PositionChapter | null;
+  audio: PositionAudio | null;
+  page: PositionPage | null;
+}
+
+/**
+ * GET /api/books/{entryId}/search?q= — the passages of one book matching a
+ * query.
+ *
+ * `mode` is the honesty: "phrase" means the book contains what was typed,
+ * "loose" means it does not and these are the closest passages instead. A
+ * client must say which, rather than letting a fallback pass for a hit.
+ */
+export interface BookSearchResults {
+  query: string;
+  mode: "phrase" | "loose";
+  /** Every match found, which may exceed the results returned. */
+  total: number;
+  truncated: boolean;
+  results: BookSearchHit[];
+  /** Grades the map every timestamp above was derived through. */
+  alignment: AlignmentSummary | null;
+}
+
 /** How much of a book an alignment covers, and how much it believed itself. */
 export interface AlignmentSummary {
   state: "ready" | "low_confidence";

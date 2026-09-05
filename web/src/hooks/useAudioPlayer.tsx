@@ -82,7 +82,8 @@ export interface AudioPlayerState {
   error: string | null;
   rate: number;
   sleep: SleepTimer;
-  expanded: boolean;
+  /** The full-screen "now playing" view is up over the whole viewport. */
+  fullscreen: boolean;
 }
 
 export interface AudioPlayerActions {
@@ -102,7 +103,7 @@ export interface AudioPlayerActions {
   reload: () => void;
   setRate: (rate: number) => void;
   setSleep: (sleep: SleepTimer) => void;
-  setExpanded: (expanded: boolean) => void;
+  setFullscreen: (fullscreen: boolean) => void;
 }
 
 const StateContext = createContext<(AudioPlayerState & AudioPlayerActions) | null>(null);
@@ -118,7 +119,7 @@ const EMPTY_STATE: AudioPlayerState = {
   error: null,
   rate: 1,
   sleep: null,
-  expanded: false,
+  fullscreen: false,
 };
 
 /**
@@ -422,9 +423,9 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
     [patch],
   );
 
-  const setExpanded = useCallback(
-    (expanded: boolean) => {
-      patch({ expanded });
+  const setFullscreen = useCallback(
+    (fullscreen: boolean) => {
+      patch({ fullscreen });
     },
     [patch],
   );
@@ -455,9 +456,13 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
     (entry: BookEntry, options: { autoplay?: boolean; startAt?: number } = {}) => {
       const autoplay = options.autoplay ?? true;
 
-      // Already loaded: this is the "open the player" gesture, not a reload.
+      /* Already loaded: this is the "open the player" gesture, not a reload.
+         It deliberately does not raise the full-screen view — pressing Listen
+         from the book page should start the tape, not throw an overlay over
+         the page you are standing on. Expanding is always an explicit tap on
+         the bar, on both this path and the fresh-open one below. */
       if (entryIdRef.current === entry.id) {
-        patch({ entry, expanded: true });
+        patch({ entry });
         if (autoplay && (audioRef.current?.paused ?? true)) play();
         return;
       }
@@ -477,7 +482,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
         entry,
         rate,
         loading: true,
-        expanded: false,
+        fullscreen: false,
       });
 
       /* When the page that offered the button has already fetched the
@@ -780,7 +785,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
       reload,
       setRate,
       setSleep,
-      setExpanded,
+      setFullscreen,
     }),
     [
       close,
@@ -792,7 +797,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
       previousTrack,
       reload,
       seek,
-      setExpanded,
+      setFullscreen,
       setRate,
       setSleep,
       skip,

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
-import { useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useOutletContext, useSearchParams } from "react-router-dom";
 
 import { BookCard, BookCardSkeleton } from "@/components/BookCard";
 import { BookStatsStrip } from "@/components/BookStatsStrip";
@@ -38,6 +38,29 @@ export function BookLibraryPage() {
   const [view, setView] = usePersistentState<"grid" | "table">("backhog:books:view", "grid");
   const [search, setSearch] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  /* Deep links into the shelf — the author and subject links in the
+     full-screen player, above all. The filters themselves stay where they
+     are, in localStorage: they are a personal preference that should survive
+     leaving the page, not a location. So an incoming ?author= is *adopted*
+     into that state and then stripped from the URL, which does mean the
+     address bar reads a bare /books once you have landed. Making every filter
+     URL-driven instead would mean rewriting the same model in LibraryPage to
+     keep the two arenas' shelves identical, which is the whole reason they
+     share these controls. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (![...searchParams.keys()].length) return;
+    // The whole filter set is replaced, not merged: "every book by this
+    // author" has to mean that, and a subject left over from last week's
+    // browsing would quietly hand back an empty shelf instead.
+    setAuthor(searchParams.get("author") ?? "");
+    setSubject(searchParams.get("subject") ?? "");
+    setLanguage(searchParams.get("language") ?? "");
+    setStatus(searchParams.get("status") ?? "");
+    setSearch(searchParams.get("q") ?? "");
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setAuthor, setLanguage, setSearchParams, setStatus, setSubject]);
 
   const debouncedSearch = useDebounced(search, 250);
   const { data: facets } = useBookFacets();

@@ -5,7 +5,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { AchievementToasts } from "./AchievementToasts";
 import { AddBookDialog } from "./AddBookDialog";
 import { AddGameDialog } from "./AddGameDialog";
-import { AudioPlayer } from "./AudioPlayer";
+import { AudioPlayer } from "./player/AudioPlayer";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PickDialog } from "./PickDialog";
 import { ReadDialog } from "./ReadDialog";

@@ -12,16 +12,13 @@ import (
 )
 
 // bookAchievementSizing is the per-entry projection the book snapshots read:
-// the canonical text length of any attached EPUB, the printing's page count
+// the canonical text length of the book's designated text file, the page count
 // (the entry's own edition, else the work's earliest one with a count), and
 // the three format flags — paper (a physical copy), ebook (an attached EPUB),
 // audio (an attached audiobook). The same sizing facts the reading debt
 // reasons about, reduced to what the predicates need.
 const bookAchievementSizing = `
-	COALESCE((SELECT et.char_count FROM epub_texts et
-	          JOIN media_files mf ON mf.id = et.media_file_id
-	          WHERE mf.book_id = e.book_id AND mf.kind = 'epub'
-	          ORDER BY mf.id LIMIT 1), 0),
+	COALESCE(` + primaryTextCharCount + `, 0),
 	COALESCE(ed.page_count,
 		(SELECT ed2.page_count FROM book_editions ed2
 		 WHERE ed2.book_id = e.book_id AND ed2.page_count IS NOT NULL

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -990,5 +991,125 @@ func TestOwnedBooksBeyondOnePageAreRecognised(t *testing.T) {
 	}
 	if top.Source != SourceLibrary {
 		t.Errorf("source = %q, want %q", top.Source, SourceLibrary)
+	}
+}
+
+// An .epub and the .mobi of the same title in the same folder are one book
+// in two containers, and the queue must ask about them once. Presenting them
+// separately produced two candidates for one book, each confidently naming
+// the same title, with nothing on screen to say they were the same thing.
+func TestTextFormatsOfOneBookAreOneCandidate(t *testing.T) {
+	candidates := matchCandidates(t, &fakeProvider{}, testLibrary, []models.MediaFile{
+		epubFile("Neal Stephenson/Anathem.mobi"),
+		epubFile("Neal Stephenson/Anathem.epub"),
+	})
+
+	text := 0
+	for _, c := range candidates {
+		if c.Kind != models.MediaFileEpub {
+			continue
+		}
+		text++
+		if len(c.Files) != 2 {
+			t.Fatalf("candidate %q holds %d files, want both formats", c.Key, len(c.Files))
+		}
+		// The best container speaks for the group: its metadata produced the
+		// title guess, so it is the file listed first.
+		if got := c.Files[0].Path; got != "Neal Stephenson/Anathem.epub" {
+			t.Fatalf("first file = %q, want the epub", got)
+		}
+		if c.AlternateFormat {
+			t.Fatal("a pair with nothing attached is not an alternate of anything")
+		}
+	}
+	if text != 1 {
+		t.Fatalf("text candidates = %d, want the pair collapsed into 1", text)
+	}
+}
+
+// Different books in one directory stay different candidates: the stem is
+// the whole of the match, and two titles never share one.
+func TestTextFilesWithDifferentStemsStaySeparate(t *testing.T) {
+	candidates := matchCandidates(t, &fakeProvider{}, testLibrary, []models.MediaFile{
+		epubFile("Neal Stephenson/Anathem.epub"),
+		epubFile("Neal Stephenson/Seveneves.epub"),
+	})
+	text := 0
+	for _, c := range candidates {
+		if c.Kind == models.MediaFileEpub {
+			text++
+		}
+	}
+	if text != 2 {
+		t.Fatalf("text candidates = %d, want 2 separate books", text)
+	}
+}
+
+// The case that started this: the .epub was confirmed weeks ago and the
+// .mobi shows up in a later scan. It is not a new book and it is not a
+// guess — the file it matches is in the same folder under the same name —
+// so it resolves straight to that book, named as the alternate it is.
+func TestUnattachedSiblingResolvesToTheAttachedBook(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	userID := testUser(t, st)
+	for _, b := range testLibrary {
+		if err := st.UpsertBook(ctx, b, ""); err != nil {
+			t.Fatalf("seed book: %v", err)
+		}
+	}
+	entry, err := st.AddBookEntry(ctx, userID, "OL1W", nil, models.StatusBacklog)
+	if err != nil {
+		t.Fatalf("add entry: %v", err)
+	}
+	if err := st.InsertMediaFiles(ctx, []models.MediaFile{
+		epubFile("Neal Stephenson/Anathem.epub"),
+		epubFile("Neal Stephenson/Anathem.mobi"),
+	}); err != nil {
+		t.Fatalf("insert files: %v", err)
+	}
+	inventory, err := st.ListMediaFiles(ctx, store.MediaFileFilter{})
+	if err != nil {
+		t.Fatalf("list files: %v", err)
+	}
+	var epubID int64
+	for _, f := range inventory {
+		if strings.HasSuffix(f.Path, ".epub") {
+			epubID = f.ID
+		}
+	}
+	if _, err := st.AttachMediaFiles(ctx, userID, entry.ID, []int64{epubID}, models.MediaFileEpub); err != nil {
+		t.Fatalf("attach epub: %v", err)
+	}
+
+	// A provider that counts, to prove it is never asked: the answer was
+	// already on disk.
+	provider := &countingProvider{}
+	m := NewMatcher(st, provider)
+	candidates, err := m.Candidates(ctx, userID)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %d, want just the unattached mobi", len(candidates))
+	}
+	c := candidates[0]
+	if !c.AlternateFormat {
+		t.Fatal("the mobi is not flagged as an alternate format")
+	}
+	if c.AlternateOf != "Neal Stephenson/Anathem.epub" {
+		t.Fatalf("alternate_of = %q, want the attached epub", c.AlternateOf)
+	}
+	if len(c.Suggestions) != 1 || c.Suggestions[0].Book.ID != "OL1W" {
+		t.Fatalf("suggestions = %+v, want exactly the book its sibling is attached to", c.Suggestions)
+	}
+	if c.Suggestions[0].Confidence != 1 || c.Suggestions[0].Source != SourceLibrary {
+		t.Fatalf("suggestion = %+v, want library confidence 1", c.Suggestions[0])
+	}
+	if !c.Suggestions[0].InLibrary || c.Suggestions[0].EntryID != entry.ID {
+		t.Fatalf("suggestion = %+v, want it pointed at the existing entry", c.Suggestions[0])
+	}
+	if n := provider.searches.Load(); n != 0 {
+		t.Fatalf("provider searched %d times for a file whose answer was already on disk", n)
 	}
 }

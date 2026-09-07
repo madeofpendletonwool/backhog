@@ -35,6 +35,10 @@ type MediaFileFilter struct {
 	// its root. By default only present files come back — those are the ones
 	// the attach UI can actually open.
 	IncludeMissing bool
+	// Attached is the complement of Unattached: rows that already point at a
+	// book. The matcher needs them to recognise an unattached file as
+	// another format of a book already in the library.
+	Attached bool
 }
 
 // MediaFileIndex loads every media file keyed by root, then by path, so one
@@ -163,13 +167,14 @@ func (s *Store) ListMediaFiles(ctx context.Context, f MediaFileFilter) ([]models
 	if f.Unattached {
 		where = append(where, `book_id IS NULL`)
 	}
+	if f.Attached {
+		where = append(where, `book_id IS NOT NULL`)
+	}
 	if !f.IncludeMissing {
 		where = append(where, `missing_at IS NULL`)
 	}
 
-	query := `SELECT id, root, path, kind, size_bytes, mtime, sha256, duration_seconds,
-	                 container_metadata, book_id, scanned_at, missing_at
-	          FROM media_files`
+	query := `SELECT ` + mediaFileColumns + ` FROM media_files`
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
@@ -183,22 +188,9 @@ func (s *Store) ListMediaFiles(ctx context.Context, f MediaFileFilter) ([]models
 
 	files := []models.MediaFile{}
 	for rows.Next() {
-		var f models.MediaFile
-		var sha256 sql.NullString
-		var metadata sql.NullString
-		var bookID sql.NullString
-		if err := rows.Scan(&f.ID, &f.Root, &f.Path, &f.Kind, &f.SizeBytes, &f.Mtime,
-			&sha256, &f.DurationSeconds, &metadata, &bookID, &f.ScannedAt, &f.MissingAt); err != nil {
+		f, err := scanMediaFile(rows)
+		if err != nil {
 			return nil, err
-		}
-		if sha256.Valid {
-			f.SHA256 = &sha256.String
-		}
-		if metadata.Valid {
-			f.ContainerMetadata = json.RawMessage(metadata.String)
-		}
-		if bookID.Valid {
-			f.BookID = &bookID.String
 		}
 		files = append(files, f)
 	}

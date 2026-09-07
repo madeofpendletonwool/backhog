@@ -39,11 +39,41 @@ text, which is why one translator serves both.
 
 ## The canonical text
 
-Every text-side file attached to a book — an EPUB, or a MOBI/AZW/AZW3
-through the mobi parser — is parsed exactly once into a canonical text:
-the book's prose as one normalized UTF-8 string, in reading order, with
-every position in the arena measured as a **byte offset** into it (Go
-string indexing — bytes, not runes, not pages, not percentages).
+A book's **designated text file** — an EPUB, or a MOBI/AZW/AZW3 through
+the mobi parser — is parsed exactly once into a canonical text: the
+book's prose as one normalized UTF-8 string, in reading order, with every
+position in the arena measured as a **byte offset** into it (Go string
+indexing — bytes, not runes, not pages, not percentages).
+
+*Designated*, because a book can have several text files attached and
+only one of them can be the coordinate system. Owning the same title as
+`X.epub` and `X.mobi` is ordinary — every Calibre export produces the
+pair — but two parses of one book do not agree on where byte 161,929
+falls, so `media_files.is_primary_text` names the one that counts (one
+per book, enforced by a partial unique index). The rest are formats the
+user owns: recorded, never parsed, never read from. Everything that
+resolves "the book's text" — the reader, the page-anchor seed, the
+achievement and insight sizing, the alignment lookup — goes through the
+same predicate, because the failure mode of four subtly different
+versions is not an error anyone sees, it is a percentage computed
+against one text and an offset measured in another.
+
+The designation only moves when someone moves it (`PUT
+/books/{entry}/files/{id}/primary`), or when the current primary is
+detached. Both paths migrate what was measured against the old text:
+nothing at all when the two canonicalize to the same
+`normalized_sha256` (the common case for a converted pair — the
+coordinates are literally identical), otherwise the reader's position is
+recomputed from its stored percentage, page anchors are scaled by the
+length ratio, and any alignment is **deleted** rather than reinterpreted.
+An alignment stretched onto a different text still answers every query,
+just wrongly, and a plausible wrong answer is worse than none.
+
+A missing primary does not fall back to a sibling. Serving the other
+container's text while the NAS is unmounted would silently move the
+reader's position, their percentage and their anchors onto coordinates
+that mean something else; "the text is unavailable right now" is the
+honest answer, and it heals on the next scan.
 
 The pipeline (`api/internal/books/`):
 
@@ -128,9 +158,9 @@ The book-specific hierarchy, one table per concept:
 | `book_editions` | **Edition / Printing** | OL edition key (`OL12345M`) | ISBN10/13, publisher, page count, binding. Page numbers belong *here*, not to the work |
 | `library_entries` | your copy of the work | + `media_type`, `book_id`, nullable `edition_id` | The spine. `edition_id` is the printing the entry is anchored to, recorded at add time |
 | `physical_copies` | the lump of paper | `(user, entry, edition)` UNIQUE | A printing the user holds, owned or borrowed (`acquisition`, `due_at`, `returned_at`). The thing page anchors attach to — a second printing is a second row with its own map |
-| `media_files` | EPUB & audiobook files | `(root, path)` UNIQUE | The NAS inventory — pointed-at, never uploaded |
+| `media_files` | EPUB & audiobook files | `(root, path)` UNIQUE | The NAS inventory — pointed-at, never uploaded. `is_primary_text` names the one text file a book is read from, one per book |
 | `media_sidecars` | parsed `.opf` metadata | `(root, path)` UNIQUE | Replaced per root each scan; the matcher's best evidence |
-| `epub_texts` / `epub_chapters` | parsed canonical text | per media file | See above |
+| `epub_texts` / `epub_chapters` | parsed canonical text | per media file | Only the designated primary is parsed. See above |
 | `book_progress` | position | entry PK | One row per entry: `char_offset` is the truth |
 | `reading_sessions` | consumption log | per user, per entry | `mode` ∈ read/listen; `chars_advanced` |
 | `alignment_jobs` / `alignments` / `alignment_anchors` | audio↔text map | per entry | See [alignment](#the-alignment-pipeline) |
@@ -183,12 +213,23 @@ Two shapes worth internalising:
   quiet — `books.ParserVersion`'s trick, applied to the inventory.
 - `media_ignores` is the per-user "stop asking me about this file".
 - The attach matcher (`match.go`) groups audio directories into ordered
-  candidates and proposes (book, confidence) suggestions. Evidence is a
+  candidates, and text files by directory-plus-filename-stem, and
+  proposes (book, confidence) suggestions. Evidence is a
   ladder, expressed as ordering rather than arithmetic — the first source
   that yields a title wins: an OPF metadata block (a `.opf` beside the
   files, or an epub's own package document), then ID3/MP4/Vorbis tags,
   then directory layout, then the bare filename. Above 0.72 the UI offers
   them for bulk confirmation; nothing auto-attaches.
+- **A sibling is an answer already given.** A text file whose stem is
+  already attached to a book — `Carrie.mobi` beside the `Carrie.epub`
+  confirmed last month — resolves to that book directly: confidence 1,
+  sourced from the library, no identifier lookup and no Open Library
+  search. It is not a fuzzy title match; two files are siblings only when
+  someone named them identically in the same folder, which is a statement
+  of intent. The candidate is flagged `alternate_format` so the UI says
+  "another format of a book you have" rather than presenting a fresh
+  find, and confirming it records the format without disturbing the text
+  the book is read from.
 - **An identifier is an identity, not a resemblance.** When that metadata
   carries an ISBN or an Open Library work key, the matcher resolves it
   through `GetByISBN`/`GetByWorkKey` and suggests the result outright

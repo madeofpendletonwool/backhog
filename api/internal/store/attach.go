@@ -108,9 +108,8 @@ func (s *Store) AttachMediaFiles(ctx context.Context, userID, entryID string, fi
 
 	attached := make([]models.MediaFile, 0, len(fileIDs))
 	for i, id := range fileIDs {
-		f, err := scanMediaFileTx(ctx, tx, `SELECT id, root, path, kind, size_bytes, mtime, sha256,
-			       duration_seconds, container_metadata, book_id, scanned_at, missing_at
-			  FROM media_files WHERE id = ?`, id)
+		f, err := scanMediaFileTx(ctx, tx,
+			`SELECT `+mediaFileColumns+` FROM media_files WHERE id = ?`, id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -140,10 +139,54 @@ func (s *Store) AttachMediaFiles(ctx context.Context, userID, entryID string, fi
 		attached = append(attached, f)
 	}
 
+	if kind == models.MediaFileEpub {
+		if err := ensurePrimaryTextTx(ctx, tx, bookID); err != nil {
+			return nil, err
+		}
+		for i := range attached {
+			var primary bool
+			if err := tx.QueryRowContext(ctx,
+				`SELECT is_primary_text FROM media_files WHERE id = ?`,
+				attached[i].ID).Scan(&primary); err != nil {
+				return nil, err
+			}
+			attached[i].PrimaryText = primary
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return attached, nil
+}
+
+// ensurePrimaryTextTx guarantees a book with any text-side file attached has
+// exactly one designated primary. A book that already has one keeps it — this
+// is the reason attaching a second format is a safe, boring operation: the
+// text every stored offset refers to does not move because a .mobi showed up
+// beside the .epub. Only a book with no primary at all gets one, chosen by
+// container fidelity (TextFormatRank) and then by id.
+//
+// Present files are preferred over missing ones so that a first attachment
+// made while the NAS is half-mounted still designates something readable.
+func ensurePrimaryTextTx(ctx context.Context, tx *sql.Tx, bookID string) error {
+	var existing int
+	err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM media_files
+		WHERE book_id = ? AND kind = 'epub' AND is_primary_text = 1`, bookID).Scan(&existing)
+	if err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE media_files SET is_primary_text = 1
+		WHERE id = (SELECT mf.id FROM media_files mf
+		            WHERE mf.book_id = ? AND mf.kind = 'epub'
+		            ORDER BY (mf.missing_at IS NOT NULL), `+TextFormatRank+`, mf.id
+		            LIMIT 1)`, bookID)
+	return err
 }
 
 // DetachMediaFile clears one file's attachment. It is scoped through the
@@ -167,8 +210,26 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 		return err
 	}
 
+	// Read the file's coordinate system while the row still says it is the
+	// book's canonical text: after the UPDATE below there is no way back to
+	// "what were the stored offsets measured against".
+	var before textIdentity
+	var wasPrimary bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT is_primary_text FROM media_files WHERE id = ? AND book_id = ?`,
+		fileID, bookID).Scan(&wasPrimary); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if wasPrimary {
+		if before, err = textIdentityTx(ctx, tx, fileID); err != nil {
+			return err
+		}
+	}
+
 	res, err := tx.ExecContext(ctx,
-		`UPDATE media_files SET book_id = NULL, track_number = NULL WHERE id = ? AND book_id = ?`,
+		`UPDATE media_files
+		 SET book_id = NULL, track_number = NULL, is_primary_text = 0
+		 WHERE id = ? AND book_id = ?`,
 		fileID, bookID)
 	if err != nil {
 		return err
@@ -176,11 +237,51 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	// Detaching the primary leaves the book's remaining formats with no
+	// canonical text at all, which would read as "no ebook" even though one
+	// is still attached. Promote the best survivor, migrating the offsets
+	// off the text that just left exactly as an explicit switch would.
+	if err := promoteAfterDetachTx(ctx, tx, bookID, before); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-// MediaFilesForEntry lists the files attached to a user's book entry — the
-// epub first (there is at most one that parses), then audio in track order.
+// promoteAfterDetachTx designates a new primary when the detached file was
+// the old one. A book left with no text files is a no-op: nothing to
+// promote, and the offsets stay put for whenever a file is attached again.
+func promoteAfterDetachTx(ctx context.Context, tx *sql.Tx, bookID string, before textIdentity) error {
+	if before.sha == "" {
+		// The detached file was not the canonical text (or was never
+		// parsed), so nothing that is stored refers to it.
+		var existing int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM media_files
+			WHERE book_id = ? AND kind = 'epub' AND is_primary_text = 1`, bookID).Scan(&existing); err != nil {
+			return err
+		}
+		if existing > 0 {
+			return nil
+		}
+	}
+	var newID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT mf.id FROM media_files mf
+		WHERE mf.book_id = ? AND mf.kind = 'epub'
+		ORDER BY (mf.missing_at IS NOT NULL), `+TextFormatRank+`, mf.id
+		LIMIT 1`, bookID).Scan(&newID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return designatePrimaryTx(ctx, tx, bookID, newID, before)
+}
+
+// MediaFilesForEntry lists the files attached to a user's book entry — text
+// files first, the book's designated canonical text at their head, then audio
+// in track order.
 func (s *Store) MediaFilesForEntry(ctx context.Context, userID, entryID string) ([]models.MediaFile, error) {
 	var bookID string
 	err := s.db.QueryRowContext(ctx, `
@@ -195,15 +296,15 @@ func (s *Store) MediaFilesForEntry(ctx context.Context, userID, entryID string) 
 	return s.MediaFilesForBook(ctx, bookID)
 }
 
-// MediaFilesForBook lists a book's attached files, epubs first then audio in
-// track order. Book-level, not user-level: the inventory is shared.
+// MediaFilesForBook lists a book's attached files: text files first with the
+// designated canonical text at their head, then audio in track order.
+// Book-level, not user-level: the inventory is shared.
 func (s *Store) MediaFilesForBook(ctx context.Context, bookID string) ([]models.MediaFile, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, root, path, kind, size_bytes, mtime, sha256,
-		       duration_seconds, container_metadata, book_id, scanned_at, missing_at
+		SELECT `+mediaFileColumns+`
 		FROM media_files
 		WHERE book_id = ?
-		ORDER BY kind DESC, track_number, path`, bookID)
+		ORDER BY kind DESC, is_primary_text DESC, track_number, path`, bookID)
 	if err != nil {
 		return nil, err
 	}
@@ -220,12 +321,32 @@ func (s *Store) MediaFilesForBook(ctx context.Context, bookID string) ([]models.
 	return out, rows.Err()
 }
 
+// mediaFileColumns is the one column list every media_files row read shares,
+// in the order scanMediaFile expects. track_number is deliberately absent:
+// it is the audio timeline's ordering key, applied by the query, not a fact
+// the model carries.
+const mediaFileColumns = `id, root, path, kind, size_bytes, mtime, sha256,
+	       duration_seconds, container_metadata, book_id, is_primary_text,
+	       scanned_at, missing_at`
+
+// qualify prefixes every column in a list with a table alias, for the queries
+// that join media_files against something else and would otherwise have to
+// keep a second, hand-aliased copy of mediaFileColumns in sync with this one.
+func qualify(columns, alias string) string {
+	parts := strings.Split(columns, ",")
+	for i, c := range parts {
+		parts[i] = strings.Replace(c, strings.TrimSpace(c), alias+"."+strings.TrimSpace(c), 1)
+	}
+	return strings.Join(parts, ",")
+}
+
 // scanMediaFile reads a media_files row (without track_number) from a Rows.
 func scanMediaFile(rows interface{ Scan(dest ...any) error }) (models.MediaFile, error) {
 	var f models.MediaFile
 	var sha256, metadata, attachedBook sql.NullString
 	if err := rows.Scan(&f.ID, &f.Root, &f.Path, &f.Kind, &f.SizeBytes, &f.Mtime,
-		&sha256, &f.DurationSeconds, &metadata, &attachedBook, &f.ScannedAt, &f.MissingAt); err != nil {
+		&sha256, &f.DurationSeconds, &metadata, &attachedBook, &f.PrimaryText,
+		&f.ScannedAt, &f.MissingAt); err != nil {
 		return f, err
 	}
 	if sha256.Valid {

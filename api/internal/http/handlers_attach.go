@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"path"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -86,8 +87,17 @@ func (s *Server) handleAttachFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Exactly one text file per book is parsed: the designated primary.
+	// Attaching a second format records that the user owns it, and that is
+	// all it should cost — parsing every container of the same book would
+	// write a second multi-megabyte canonical text nothing ever reads, and
+	// leave two different char counts lying around for the sizing queries
+	// to disagree over.
 	if body.Kind == models.MediaFileEpub && s.epubs != nil {
 		for _, f := range files {
+			if !f.PrimaryText {
+				continue
+			}
 			if _, perr := s.epubs.EnsureForMediaFile(r.Context(), f); perr != nil {
 				// The attachment holds — the text endpoints parse lazily —
 				// but the failure is worth a log line, not silence.
@@ -126,8 +136,81 @@ func (s *Server) handleDetachFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"detached": true})
 }
 
+// handlePrimaryTextFile switches which of a book's text-side files is its
+// canonical text — the one the reader opens and the one every stored offset
+// is measured against.
+//
+// The parse happens before the switch, deliberately. Promoting onto a text
+// nobody has read means promoting onto a length nobody knows, and the store
+// refuses that rather than migrating positions blind; parsing here turns
+// "not parsed yet" into a normal first switch instead of an error the user
+// has to decode. A container that will not parse fails the request with the
+// primary untouched, which is the right outcome: nothing was switched to.
+func (s *Server) handlePrimaryTextFile(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+
+	fileID, err := strconv.ParseInt(chi.URLParam(r, "fileID"), 10, 64)
+	if err != nil || fileID <= 0 {
+		fail(w, errorf(http.StatusBadRequest, "invalid file id"))
+		return
+	}
+	entryID := chi.URLParam(r, "entryID")
+
+	files, err := s.store.MediaFilesForEntry(r.Context(), userID, entryID)
+	if errors.Is(err, store.ErrNotFound) {
+		fail(w, errNotFound)
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	var target *models.MediaFile
+	for i := range files {
+		if files[i].ID == fileID && files[i].Kind == models.MediaFileEpub {
+			target = &files[i]
+			break
+		}
+	}
+	if target == nil {
+		fail(w, errNotFound)
+		return
+	}
+	if s.epubs != nil && !target.PrimaryText {
+		if _, perr := s.epubs.EnsureForMediaFile(r.Context(), *target); perr != nil {
+			slog.WarnContext(r.Context(), "epub parse on promote", "file", target.Path, "error", perr)
+			fail(w, errorf(http.StatusUnprocessableEntity,
+				"could not read "+path.Base(target.Path)+" as a book, so it cannot become the canonical text"))
+			return
+		}
+	}
+
+	file, err := s.store.SetPrimaryTextFile(r.Context(), userID, entryID, fileID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, errNotFound)
+		return
+	case errors.Is(err, store.ErrTextNotParsed):
+		fail(w, errorf(http.StatusUnprocessableEntity,
+			"this file has no parsed text yet; try again once it has been read"))
+		return
+	case errors.Is(err, store.ErrAttach):
+		fail(w, errorf(http.StatusBadRequest, err.Error()))
+		return
+	case err != nil:
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"file": file})
+}
+
 // handleBookFiles lists the files attached to one of the user's book
-// entries: the epub first, then audio in track order.
+// entries: text files first with the canonical one at their head (each
+// carrying primary_text so the UI can say which), then audio in track order.
 func (s *Server) handleBookFiles(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {

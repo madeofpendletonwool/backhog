@@ -165,7 +165,13 @@ export function BookFilesPage() {
   const allCandidates = queue.data?.candidates ?? [];
   const candidates = kind ? allCandidates.filter((c) => c.kind === kind) : allCandidates;
   const skipped = queue.data?.skipped ?? [];
-  const bulkableCount = candidates.filter((c) => c.high_confidence && c.suggestions?.[0]).length;
+  const bulkable = candidates.filter((c) => c.high_confidence && c.suggestions?.[0]);
+  const bulkableCount = bulkable.length;
+  // Counted separately because it is the reassuring half of a big number: a
+  // shelf of ebook packs turns up dozens of these at once, and they are the
+  // safest thing in the queue — formats of books already confirmed, which
+  // attach without touching what any of those books is read from.
+  const alternateCount = bulkable.filter((c) => c.alternate_format).length;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -264,6 +270,13 @@ export function BookFilesPage() {
                   {bulkableCount} high-confidence match{bulkableCount === 1 ? "" : "es"}
                 </span>{" "}
                 — confirm them all in one go?
+                {alternateCount > 0 && (
+                  <span className="mt-1 block text-xs text-ink-500">
+                    {alternateCount} {alternateCount === 1 ? "is another format" : "are other formats"} of
+                    books you already have. Adding {alternateCount === 1 ? "it" : "them"} records the
+                    format without changing what those books are read from.
+                  </span>
+                )}
               </p>
               <Button variant="primary" onClick={bulkConfirm}>
                 <Gi name="check" className="size-4" />
@@ -362,6 +375,13 @@ function CandidateRow({
 }) {
   const top = candidate.suggestions?.[0];
   const isAudio = candidate.kind === "audio";
+  // An alternate format is not a match the matcher made — it is a file named
+  // exactly like one the user already attached, sitting in the same folder.
+  // The card says that instead of showing a confidence score, because "100%
+  // from filename" reads like a lucky guess rather than an answer already
+  // given.
+  const alternate = candidate.alternate_format === true;
+  const alternateName = candidate.alternate_of?.split("/").pop() ?? "";
 
   return (
     <li>
@@ -372,10 +392,16 @@ function CandidateRow({
               <span className="f-chip px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-300">
                 {isAudio ? "Audio" : "Ebook"}
               </span>
-              {candidate.high_confidence && (
-                <span className="f-chip-active px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-100">
-                  High confidence
+              {alternate ? (
+                <span className="f-chip px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-300">
+                  Alternate format
                 </span>
+              ) : (
+                candidate.high_confidence && (
+                  <span className="f-chip-active px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-100">
+                    High confidence
+                  </span>
+                )
               )}
             </div>
             <h3 className="mt-2 truncate text-sm font-semibold text-ink-100">
@@ -405,7 +431,7 @@ function CandidateRow({
                 ))}
                 {candidate.files.length > 5 && (
                   <li className="text-xs text-ink-500">
-                    and {candidate.files.length - 5} more, in track order
+                    and {candidate.files.length - 5} more{isAudio ? ", in track order" : ""}
                   </li>
                 )}
               </ol>
@@ -423,9 +449,21 @@ function CandidateRow({
                     {byline(top.book)}
                   </p>
                   <p className="mt-0.5 font-display text-[10px] uppercase tracking-wider text-ink-500">
-                    {Math.round(top.confidence * 100)}% · from {top.signal} ·{" "}
-                    {top.in_library ? "in your library" : "Open Library"}
+                    {alternate ? (
+                      <>already attached as {alternateName}</>
+                    ) : (
+                      <>
+                        {Math.round(top.confidence * 100)}% · from {top.signal} ·{" "}
+                        {top.in_library ? "in your library" : "Open Library"}
+                      </>
+                    )}
                   </p>
+                  {alternate && (
+                    <p className="mt-1 max-w-56 text-right text-xs text-ink-500">
+                      Adding it records the format you own. The book keeps reading from{" "}
+                      {alternateName}.
+                    </p>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -436,7 +474,7 @@ function CandidateRow({
                     onClick={() => onConfirm(top)}
                   >
                     <Gi name="check" className="size-4" />
-                    Confirm
+                    {alternate ? "Add format" : "Confirm"}
                   </Button>
                   <Button size="sm" disabled={busy || ignoring} onClick={onPick}>
                     <Gi name="search" className="size-4" />

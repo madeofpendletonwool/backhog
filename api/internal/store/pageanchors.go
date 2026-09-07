@@ -409,17 +409,15 @@ func (s *Store) PageMapSeedForEntry(ctx context.Context, entryID string) (models
 	seed.PageCount = int(pageCount.Int64)
 
 	// The other half is the canonical text's length, which lives behind
-	// the entry's book and its parsed EPUB. Neither absence is an error:
-	// a book with no EPUB attached has no text for pages to divide.
+	// the entry's book and its designated text file — the same one the
+	// reader measures offsets against, because these page anchors map onto
+	// those offsets. Neither absence is an error: a book with no text
+	// attached has no text for pages to divide.
 	var charCount sql.NullInt64
 	err = s.db.QueryRowContext(ctx, `
-		SELECT et.char_count
+		SELECT `+primaryTextCharCount+`
 		FROM library_entries e
-		JOIN media_files mf ON mf.book_id = e.book_id AND mf.kind = ? AND mf.missing_at IS NULL
-		JOIN epub_texts et ON et.media_file_id = mf.id
-		WHERE e.id = ?
-		ORDER BY mf.id
-		LIMIT 1`, models.MediaFileEpub, entryID).Scan(&charCount)
+		WHERE e.id = ?`, entryID).Scan(&charCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return seed, nil
 	}

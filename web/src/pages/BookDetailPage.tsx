@@ -219,6 +219,8 @@ export function BookDetailPage() {
             </dl>
           </Panel>
 
+          <AttachedFormats entryId={entry.id} />
+
           <UnattachedFiles entryId={entry.id} />
 
           <AlignmentPanel entryId={entry.id} />
@@ -481,6 +483,108 @@ function Editions({ editions }: { editions: BookEdition[] }) {
  * this book but nothing is attached yet, say so and link straight to the
  * review page rather than leaving the match sitting unnoticed.
  */
+/**
+ * The book's text formats, and which of them it is actually read from.
+ *
+ * Owning the same book as .epub and .mobi is ordinary — every Calibre export
+ * produces the pair — but only one of them can be the canonical text: reading
+ * position, percent complete and the audio alignment are all offsets into one
+ * parsed text, and two parses of the same book do not agree on where byte
+ * 161,929 falls. So the panel names the one in use rather than listing files
+ * neutrally, and switching is a deliberate act with a stated consequence.
+ *
+ * It renders only for books with a choice to make. One format is not a
+ * decision anyone needs to see.
+ */
+function AttachedFormats({ entryId }: { entryId: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const { data } = useQuery({
+    queryKey: ["bookFiles", entryId],
+    queryFn: () => api.bookFiles(entryId),
+  });
+
+  const promote = useMutation({
+    mutationFn: (fileId: number) => api.setPrimaryTextFile(entryId, fileId),
+    onSuccess: () => {
+      setError(null);
+      // The switch can move the stored position and drops any alignment, so
+      // everything downstream of the canonical text is stale, not just this
+      // panel.
+      const stale = [
+        ["bookFiles", entryId],
+        ["entry", entryId],
+        ["bookTextChapters", entryId],
+        ["bookTextDisplay", entryId],
+        ["bookAlign", entryId],
+        ["bookPosition", entryId],
+        ["bookPagePosition", entryId],
+      ];
+      for (const queryKey of stale) queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const texts = (data?.files ?? []).filter((file) => file.kind === "epub");
+  if (texts.length < 2) return null;
+
+  const current = texts.find((file) => file.primary_text);
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">Ebook formats</h2>
+      <p className="mb-3 text-xs leading-relaxed text-ink-500">
+        You own this book in {texts.length} formats. One of them is the text everything is measured
+        against — your place in the book, your percentage, and the audio alignment.
+      </p>
+      <ul className="space-y-2">
+        {texts.map((file) => {
+          const name = file.path.split("/").pop() ?? file.path;
+          return (
+            <li key={file.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span className="min-w-0">
+                <span className="block truncate font-mono text-xs text-ink-400" title={file.path}>
+                  {name}
+                </span>
+                {file.missing_at && (
+                  <span className="text-[11px] text-amber-400">missing from the NAS right now</span>
+                )}
+              </span>
+              {file.primary_text ? (
+                <span className="f-chip-active shrink-0 px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-100">
+                  Reading this
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0 text-ink-400 hover:text-ink-200"
+                  disabled={!!file.missing_at}
+                  loading={promote.isPending && promote.variables === file.id}
+                  onClick={() => promote.mutate(file.id)}
+                >
+                  Read this instead
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-3 text-xs leading-relaxed text-ink-500">
+        Switching keeps your percentage through the book and recomputes the exact spot in the new
+        text. Any audio alignment is dropped, because it was built against{" "}
+        {current ? (current.path.split("/").pop() ?? "the other file") : "the other file"} and would
+        point at the wrong words.
+      </p>
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-red-300">
+          {error}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
 function UnattachedFiles({ entryId }: { entryId: string }) {
   const { data } = useQuery({ queryKey: ["media", "candidates"], queryFn: api.mediaCandidates });
 

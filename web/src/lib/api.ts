@@ -401,6 +401,17 @@ export const api = {
       method: "DELETE",
     }),
 
+  /**
+   * Makes one of a book's attached text files its canonical text. The server
+   * parses it first, then migrates the stored position onto the new text —
+   * exactly, when both containers canonicalize to the same bytes, and by
+   * percentage when they do not.
+   */
+  setPrimaryTextFile: (entryId: string, fileId: number) =>
+    request<{ file: MediaFile }>(`/books/${entryId}/files/${fileId}/primary`, {
+      method: "PUT",
+    }),
+
   bookFiles: (entryId: string) =>
     request<{ files: MediaFile[] }>(`/books/${entryId}/files`),
 

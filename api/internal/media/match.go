@@ -3,7 +3,6 @@ package media
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"path"
 	"regexp"
@@ -77,6 +76,16 @@ type Candidate struct {
 	TotalDurationSeconds float64      `json:"total_duration_seconds"`
 	Suggestions          []Suggestion `json:"suggestions"`
 	HighConfidence       bool         `json:"high_confidence"`
+	// AlternateFormat marks a text candidate that is another container of a
+	// book already attached: "Carrie.mobi" sitting beside the "Carrie.epub"
+	// the user confirmed last week. It is not a new book and it is not a
+	// guess — the file it matches is in the same directory under the same
+	// name — so the UI says so rather than presenting it as a fresh find,
+	// and attaching it records a format the user owns without disturbing
+	// the canonical text the book is already read from.
+	AlternateFormat bool `json:"alternate_format"`
+	// AlternateOf names the file that made the match, relative to the root.
+	AlternateOf string `json:"alternate_of,omitempty"`
 }
 
 // Matcher proposes books for unattached media files. It scores against the
@@ -216,7 +225,23 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 		return nil, err
 	}
 
-	groups := groupCandidates(files, ignored, sidecarsByDir(sidecars))
+	// The text files already attached to something. Missing ones count: a
+	// book whose .epub is off an unmounted NAS is still the book its .mobi
+	// is another format of, and forgetting that for one scan would put 70
+	// already-answered questions back in the queue.
+	attachedFiles, err := m.store.ListMediaFiles(ctx, store.MediaFileFilter{
+		Kind: models.MediaFileEpub, Attached: true, IncludeMissing: true})
+	if err != nil {
+		return nil, err
+	}
+
+	groups := groupCandidates(files, ignored, sidecarsByDir(sidecars), attachedStems(attachedFiles))
+
+	// Siblings first, and then they are done. A file whose stem is already
+	// attached to a book needs no identifier lookup, no title search and no
+	// scoring: the answer is the book its sibling is attached to, and every
+	// other source can only be less certain than that.
+	resolveSiblings(groups, owned, entryIDs)
 
 	// Exact identifiers first: a group whose metadata carries an ISBN or a
 	// work key does not need to be guessed at, and resolving it also spares
@@ -228,6 +253,9 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 		inline := inlineSearchBudget
 		for i := range groups {
 			g := &groups[i]
+			if g.sibling != nil {
+				continue
+			}
 			isbn, workKey := g.identity()
 			for _, key := range identityKeys(isbn, workKey) {
 				if cached, ok := m.lookupSearch(key); ok {
@@ -245,6 +273,9 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 	}
 
 	for i := range groups {
+		if groups[i].sibling != nil {
+			continue
+		}
 		scoreAgainst(&groups[i], owned, ownedIDs, entryIDs)
 	}
 
@@ -260,7 +291,7 @@ func (m *Matcher) Candidates(ctx context.Context, userID string) ([]Candidate, e
 		inline := inlineSearchBudget
 		for i := range groups {
 			g := &groups[i]
-			if len(g.exact) > 0 || topClearsLibrary(*g) {
+			if g.sibling != nil || len(g.exact) > 0 || topClearsLibrary(*g) {
 				// Already identified, by an identifier or by the user's own
 				// library: a title search cannot improve on either.
 				continue
@@ -471,6 +502,11 @@ type group struct {
 	// resemblance, so they bypass scoring entirely.
 	exact       []models.Book
 	suggestions []Suggestion
+
+	// sibling is the already-attached text file this group is another
+	// format of, when there is one. It short-circuits every other source:
+	// there is nothing to search for and nothing to score.
+	sibling *models.MediaFile
 }
 
 // signal is what the files say about themselves: a title/author extraction
@@ -528,15 +564,57 @@ func sidecarsByDir(cars []models.MediaSidecar) map[sidecarKey]models.MediaSideca
 	return byDir
 }
 
+// textStem addresses a text-side file the way a NAS shelf actually names
+// one: the directory it sits in plus its filename without the extension.
+// "Stephen King/… - Carrie.epub" and "Stephen King/… - Carrie.mobi" share a
+// stem and are the same book in two containers — the layout every Calibre
+// export and every ebook pack produces.
+//
+// It is deliberately not a fuzzy title match. Two files are siblings only
+// when someone named them identically in the same folder, which is a
+// statement of intent, not a resemblance the matcher inferred.
+type textStem struct{ root, stem string }
+
+func stemOf(f models.MediaFile) textStem {
+	return textStem{root: f.Root, stem: strings.TrimSuffix(f.Path, path.Ext(f.Path))}
+}
+
+// attachedStems indexes the text files already attached to a book by their
+// stem, so an unattached sibling can be resolved to that book directly. The
+// designated primary wins a stem shared by several attached files: it is the
+// one the book is actually read from, so it is the one worth naming in
+// "you already have this as ...".
+func attachedStems(files []models.MediaFile) map[textStem]models.MediaFile {
+	out := map[textStem]models.MediaFile{}
+	for _, f := range files {
+		if f.Kind != models.MediaFileEpub || f.BookID == nil {
+			continue
+		}
+		k := stemOf(f)
+		held, ok := out[k]
+		if !ok || (f.PrimaryText && !held.PrimaryText) || (f.PrimaryText == held.PrimaryText && f.ID < held.ID) {
+			out[k] = f
+		}
+	}
+	return out
+}
+
 // groupCandidates splits unattached files into candidates: audio files
-// sharing a directory become one ordered audiobook; every EPUB stands
-// alone. Ignored files drop out before grouping, so a fully-ignored
-// directory disappears. Groups come back in a deterministic order.
+// sharing a directory become one ordered audiobook; text files sharing a
+// directory and a filename stem become one multi-format book. Ignored files
+// drop out before grouping, so a fully-ignored directory disappears. Groups
+// come back in a deterministic order.
+//
+// Grouping the text side by stem is the same move the audio side already
+// makes by directory, and it exists for the same reason: an .epub and its
+// .mobi are one decision, not two. Presenting them separately produced two
+// candidates for one book, each confidently suggesting the same title, with
+// nothing on screen to say they were the same thing twice.
 func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
-	sidecars map[sidecarKey]models.MediaSidecar) []group {
+	sidecars map[sidecarKey]models.MediaSidecar, attached map[textStem]models.MediaFile) []group {
 	type key struct{ root, dir string }
 	audioDirs := map[key][]models.MediaFile{}
-	var epubs []models.MediaFile
+	textStems := map[textStem][]models.MediaFile{}
 
 	for _, f := range files {
 		if ignored[f.ID] {
@@ -546,7 +624,8 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
 			k := key{f.Root, groupDir(path.Dir(f.Path))}
 			audioDirs[k] = append(audioDirs[k], f)
 		} else {
-			epubs = append(epubs, f)
+			k := stemOf(f)
+			textStems[k] = append(textStems[k], f)
 		}
 	}
 
@@ -560,36 +639,76 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
 		}
 		return dirs[i].dir < dirs[j].dir
 	})
-	sort.Slice(epubs, func(i, j int) bool {
-		if epubs[i].Root != epubs[j].Root {
-			return epubs[i].Root < epubs[j].Root
+	stems := make([]textStem, 0, len(textStems))
+	for k := range textStems {
+		stems = append(stems, k)
+	}
+	sort.Slice(stems, func(i, j int) bool {
+		if stems[i].root != stems[j].root {
+			return stems[i].root < stems[j].root
 		}
-		return epubs[i].Path < epubs[j].Path
+		return stems[i].stem < stems[j].stem
 	})
 
-	groups := make([]group, 0, len(dirs)+len(epubs))
+	groups := make([]group, 0, len(dirs)+len(stems))
 	for _, k := range dirs {
 		groups = append(groups, group{
 			key: "audio:" + k.root + ":" + k.dir, kind: models.MediaFileAudio,
 			root: k.root, dirPath: k.dir, files: audioDirs[k],
 		})
 	}
-	for _, f := range epubs {
-		groups = append(groups, group{
-			key: fmt.Sprintf("epub:%d", f.ID), kind: models.MediaFileEpub,
-			root: f.Root, dirPath: path.Dir(f.Path), files: []models.MediaFile{f},
-		})
+	for _, k := range stems {
+		g := group{
+			key: "text:" + k.root + ":" + k.stem, kind: models.MediaFileEpub,
+			root: k.root, dirPath: path.Dir(k.stem), files: textStems[k],
+		}
+		sortTextFormats(g.files)
+		if sib, ok := attached[k]; ok {
+			g.sibling = &sib
+		}
+		groups = append(groups, g)
 	}
 
 	for i := range groups {
 		g := &groups[i]
-		orderTracks(g.files)
+		if g.kind == models.MediaFileAudio {
+			orderTracks(g.files)
+		}
 		if car, ok := sidecars[sidecarKey{g.root, groupDir(g.dirPath)}]; ok {
 			g.sidecar = &car
 		}
 		g.signal = extractSignal(g)
 	}
 	return groups
+}
+
+// textFormatRank mirrors the store's ordering of text containers by how much
+// of the book survives canonicalization. Here it decides which file of a
+// group speaks for it — the metadata read for the title guess, and the file
+// listed first — so the guess comes from the best copy present rather than
+// from whichever extension sorts first alphabetically.
+func textFormatRank(p string) int {
+	switch strings.ToLower(path.Ext(p)) {
+	case ".epub":
+		return 0
+	case ".azw3":
+		return 1
+	case ".azw":
+		return 2
+	case ".mobi":
+		return 3
+	}
+	return 4
+}
+
+func sortTextFormats(files []models.MediaFile) {
+	sort.Slice(files, func(i, j int) bool {
+		ri, rj := textFormatRank(files[i].Path), textFormatRank(files[j].Path)
+		if ri != rj {
+			return ri < rj
+		}
+		return files[i].Path < files[j].Path
+	})
 }
 
 // identity returns the exact identifiers this group's OPF metadata declares:
@@ -1274,6 +1393,43 @@ func scoreBook(sig signal, b models.Book) float64 {
 // the owned library plus any provider results collected so far. Library
 // matches carry a small ownership bonus: the user already owning the exact
 // book is evidence.
+// resolveSiblings answers every group whose stem is already attached, and
+// takes it out of the matcher's hands entirely.
+//
+// The suggestion is the book the sibling hangs off, at confidence 1, sourced
+// from the library — not because the title resembled anything, but because
+// the user already answered this question for a file of the same name in the
+// same folder. That makes it the strongest evidence in the system and the
+// cheapest: no Open Library round trip, no scoring, no rate limit.
+//
+// A sibling whose book is somehow not in the user's own library leaves the
+// group unresolved rather than proposing a book with no entry to attach to;
+// the ordinary matching path then treats it as any other file.
+func resolveSiblings(groups []group, owned []models.Book, entryIDs map[string]string) {
+	if len(groups) == 0 {
+		return
+	}
+	byID := make(map[string]models.Book, len(owned))
+	for _, b := range owned {
+		byID[b.ID] = b
+	}
+	for i := range groups {
+		g := &groups[i]
+		if g.sibling == nil || g.sibling.BookID == nil {
+			continue
+		}
+		book, ok := byID[*g.sibling.BookID]
+		if !ok {
+			g.sibling = nil
+			continue
+		}
+		g.suggestions = []Suggestion{{
+			Book: book, Confidence: 1, Source: SourceLibrary,
+			Signal: SourceSignalFile, InLibrary: true, EntryID: entryIDs[book.ID],
+		}}
+	}
+}
+
 func scoreAgainst(g *group, owned []models.Book, ownedIDs map[string]bool, entryIDs map[string]string) {
 	byID := map[string]*Suggestion{}
 	add := func(b models.Book, source string, bonus float64) {
@@ -1376,6 +1532,10 @@ func groupsToCandidates(groups []group) []Candidate {
 			}
 		}
 		c.HighConfidence = len(suggestions) > 0 && suggestions[0].Confidence >= HighConfidence
+		if g.sibling != nil {
+			c.AlternateFormat = true
+			c.AlternateOf = g.sibling.Path
+		}
 		out = append(out, c)
 	}
 	return out

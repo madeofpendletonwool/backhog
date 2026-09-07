@@ -8,9 +8,6 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
 
-const audioFileColumns = `id, root, path, kind, size_bytes, mtime, sha256,
-	       duration_seconds, container_metadata, book_id, scanned_at, missing_at`
-
 // AudioMediaFilesForBook lists a book's attached audio files in timeline
 // order: the explicit track_number the attach flow recorded, with path as the
 // tiebreak for rows that predate one. Missing files are included — they still
@@ -18,7 +15,7 @@ const audioFileColumns = `id, root, path, kind, size_bytes, mtime, sha256,
 // renumber every later track while a NAS is unmounted.
 func (s *Store) AudioMediaFilesForBook(ctx context.Context, bookID string) ([]models.MediaFile, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+audioFileColumns+`
+		SELECT `+mediaFileColumns+`
 		FROM media_files
 		WHERE book_id = ? AND kind = 'audio'
 		ORDER BY track_number, path`, bookID)
@@ -45,7 +42,7 @@ func (s *Store) AudioMediaFilesForBook(ctx context.Context, bookID string) ([]mo
 // file exists.
 func (s *Store) AudioMediaFileForBook(ctx context.Context, bookID string, fileID int64) (models.MediaFile, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT `+audioFileColumns+`
+		SELECT `+mediaFileColumns+`
 		FROM media_files
 		WHERE id = ? AND book_id = ? AND kind = 'audio'`, fileID, bookID)
 	f, err := scanMediaFile(row)

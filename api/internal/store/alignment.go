@@ -556,12 +556,25 @@ func (s *Store) ClearAlignment(ctx context.Context, userID, entryID string) erro
 // AlignmentForEntry returns the entry's newest usable alignment
 // ('ready' or 'low_confidence'), or nil when there is none. A failed
 // alignment never feeds the translator.
+//
+// The epub_text_id check is not redundant with the entry scope. An alignment
+// is a map from char offsets *of one canonical text* to audio seconds, so it
+// is only meaningful while that text is still the book's primary. Promoting
+// a different format deletes the entry's alignments for exactly this reason;
+// the join makes the guarantee structural rather than a promise the write
+// path has to keep, because an alignment read against the wrong text does
+// not fail — it answers, confidently and wrongly.
 func (s *Store) AlignmentForEntry(ctx context.Context, entryID string) (models.Alignment, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, entry_id, epub_text_id, state, coverage, mean_confidence, model, created_at
-		FROM alignments
-		WHERE entry_id = ? AND state IN ('ready','low_confidence')
-		ORDER BY created_at DESC, id DESC LIMIT 1`, entryID)
+		SELECT a.id, a.entry_id, a.epub_text_id, a.state, a.coverage,
+		       a.mean_confidence, a.model, a.created_at
+		FROM alignments a
+		JOIN epub_texts et ON et.id = a.epub_text_id
+		JOIN media_files mf ON mf.id = et.media_file_id
+		JOIN library_entries e ON e.id = a.entry_id AND e.book_id = mf.book_id
+		  AND `+primaryTextIs+`
+		WHERE a.entry_id = ? AND a.state IN ('ready','low_confidence')
+		ORDER BY a.created_at DESC, a.id DESC LIMIT 1`, entryID)
 	align, err := scanAlignment(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Alignment{}, nil

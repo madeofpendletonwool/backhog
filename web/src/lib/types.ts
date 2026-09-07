@@ -659,6 +659,13 @@ export interface MediaFile {
   duration_seconds?: number | null;
   container_metadata?: Record<string, unknown> | null;
   book_id?: string | null;
+  /**
+   * The one text file a book's canonical text is made from — the one the
+   * reader opens and every stored position is measured against. A book with
+   * several text formats attached has exactly one; the rest are formats the
+   * user owns and nothing reads. Always false for audio.
+   */
+  primary_text?: boolean;
   missing_at?: string | null;
 }
 
@@ -712,6 +719,16 @@ export interface MediaCandidate {
   /** Null from older API builds when nothing matched; always treat as []. */
   suggestions: MediaSuggestion[] | null;
   high_confidence: boolean;
+  /**
+   * Another container of a book already attached — the ".mobi" beside the
+   * ".epub" confirmed weeks ago. Not a guess: the match is the same filename
+   * in the same folder, so the suggestion is the book itself rather than a
+   * search result, and confirming records a format owned without touching
+   * the text the book is read from.
+   */
+  alternate_format?: boolean;
+  /** The already-attached file that made the match, relative to the root. */
+  alternate_of?: string;
 }
 
 /** GET /api/media/candidates. */

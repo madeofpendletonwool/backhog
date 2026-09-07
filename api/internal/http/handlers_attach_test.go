@@ -452,3 +452,126 @@ func TestAttachErrors(t *testing.T) {
 		t.Errorf("anonymous candidates status = %d, want 401", resp.StatusCode)
 	}
 }
+
+// TestAlternateFormatFlow walks the case a NAS full of ebook packs produces:
+// the same book as .epub and .mobi in one folder, confirmed weeks apart.
+//
+// Three things have to hold. The pair is one question, not two. The .mobi
+// arriving after the .epub was confirmed resolves to that same book by its
+// filename rather than by a fresh guess, and attaching it does not write a
+// second canonical text. And switching which format the book is read from is
+// available, deliberate, and takes the reader's position with it.
+func TestAlternateFormatFlow(t *testing.T) {
+	app := newAttachTestApp(t)
+	pair := filepath.Join(app.root, "pair")
+	if err := os.MkdirAll(pair, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pair, "Dune.epub"), apiEpubFixture(t), 0o644); err != nil {
+		t.Fatalf("write epub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pair, "Dune.mobi"), fixtures.MOBI6Palmdoc, 0o644); err != nil {
+		t.Fatalf("write mobi: %v", err)
+	}
+	app.scanAndWait(t)
+	entry := addBookEntry(t, app, "OL3W")
+
+	// One candidate for the pair, holding both files, the epub speaking for
+	// it. Two candidates here is the bug: one book, asked about twice.
+	status, body := app.req(t, http.MethodGet, "/api/media/candidates", nil)
+	if status != http.StatusOK {
+		t.Fatalf("candidates: status %d: %v", status, body)
+	}
+	c := candidateBy(t, body["candidates"].([]any), "pair")
+	if files := c["files"].([]any); len(files) != 2 ||
+		files[0].(map[string]any)["path"] != "pair/Dune.epub" {
+		t.Fatalf("pair candidate files = %v, want both formats with the epub first", c["files"])
+	}
+	if c["alternate_format"] == true {
+		t.Error("a pair with nothing attached is an alternate of nothing")
+	}
+
+	// Attach only the epub, the way a user confirming last month would have.
+	status, body = app.req(t, http.MethodGet, "/api/media/files?kind=epub&unattached=true", nil)
+	if status != http.StatusOK {
+		t.Fatalf("files: status %d: %v", status, body)
+	}
+	inventory := body["files"].([]any)
+	epubID := fileIDByPath(t, inventory, "pair/Dune.epub")
+	mobiID := fileIDByPath(t, inventory, "pair/Dune.mobi")
+	status, body = app.req(t, http.MethodPost, "/api/books/"+entry+"/files",
+		map[string]any{"file_ids": []float64{epubID}, "kind": "epub"})
+	if status != http.StatusCreated {
+		t.Fatalf("attach epub: status %d: %v", status, body)
+	}
+
+	// The mobi now comes back as what it is: another format of a book
+	// already attached, matched on its own filename, pointed at the entry.
+	status, body = app.req(t, http.MethodGet, "/api/media/candidates", nil)
+	if status != http.StatusOK {
+		t.Fatalf("candidates: status %d: %v", status, body)
+	}
+	c = candidateBy(t, body["candidates"].([]any), "pair")
+	if c["alternate_format"] != true || c["alternate_of"] != "pair/Dune.epub" {
+		t.Fatalf("mobi candidate = %v, want an alternate of the attached epub", c)
+	}
+	top := c["suggestions"].([]any)[0].(map[string]any)
+	if top["confidence"] != float64(1) || top["entry_id"] != entry ||
+		top["book"].(map[string]any)["id"] != "OL3W" {
+		t.Fatalf("suggestion = %v, want the sibling's own book at confidence 1", top)
+	}
+
+	// Attaching it records the format and nothing else: still one parsed
+	// canonical text, still the epub.
+	status, body = app.req(t, http.MethodPost, "/api/books/"+entry+"/files",
+		map[string]any{"file_ids": []float64{mobiID}, "kind": "epub"})
+	if status != http.StatusCreated {
+		t.Fatalf("attach mobi: status %d: %v", status, body)
+	}
+	var texts int
+	if err := app.store.DB().QueryRow(
+		`SELECT COUNT(*) FROM epub_texts et JOIN media_files mf ON mf.id = et.media_file_id
+		 WHERE mf.path LIKE 'pair/%'`).Scan(&texts); err != nil {
+		t.Fatalf("probe epub_texts: %v", err)
+	}
+	if texts != 1 {
+		t.Errorf("parsed texts = %d, want 1 — a second format is owned, not a second text", texts)
+	}
+
+	status, body = app.req(t, http.MethodGet, "/api/books/"+entry+"/files", nil)
+	if status != http.StatusOK {
+		t.Fatalf("entry files: status %d: %v", status, body)
+	}
+	primary := map[string]bool{}
+	for _, f := range body["files"].([]any) {
+		fm := f.(map[string]any)
+		primary[fm["path"].(string)] = fm["primary_text"] == true
+	}
+	if !primary["pair/Dune.epub"] || primary["pair/Dune.mobi"] {
+		t.Fatalf("primary flags = %v, want the epub reading and the mobi merely owned", primary)
+	}
+
+	// Switching parses the target first, so a format that has never been
+	// read can still be promoted in one request.
+	status, body = app.req(t, http.MethodPut,
+		fmt.Sprintf("/api/books/%s/files/%d/primary", entry, int64(mobiID)), nil)
+	if status != http.StatusOK {
+		t.Fatalf("promote: status %d: %v", status, body)
+	}
+	if body["file"].(map[string]any)["primary_text"] != true {
+		t.Fatalf("promoted file = %v, want primary_text true", body["file"])
+	}
+
+	status, body = app.req(t, http.MethodGet, "/api/books/"+entry+"/files", nil)
+	if status != http.StatusOK {
+		t.Fatalf("entry files: status %d: %v", status, body)
+	}
+	primary = map[string]bool{}
+	for _, f := range body["files"].([]any) {
+		fm := f.(map[string]any)
+		primary[fm["path"].(string)] = fm["primary_text"] == true
+	}
+	if primary["pair/Dune.epub"] || !primary["pair/Dune.mobi"] {
+		t.Fatalf("primary flags after the switch = %v, want the mobi reading", primary)
+	}
+}

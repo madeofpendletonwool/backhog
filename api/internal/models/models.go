@@ -759,7 +759,13 @@ type MediaFile struct {
 	// table arrives in migration 00011 and the FK is added once it is
 	// guaranteed present. NULL means not attached yet.
 	BookID    *string   `json:"book_id,omitempty"`
-	ScannedAt time.Time `json:"scanned_at"`
+	// PrimaryText marks the one text-side file whose canonical text this
+	// book's offsets are measured against. Always false for audio. A book
+	// with several text files — the same title as both .epub and .mobi —
+	// has exactly one primary (enforced by a partial unique index); the
+	// others are owned formats that are never parsed and never read from.
+	PrimaryText bool      `json:"primary_text"`
+	ScannedAt   time.Time `json:"scanned_at"`
 	// MissingAt is set when the path disappeared from its root; the row is
 	// kept so the BookID association survives a temporarily-unmounted NAS.
 	MissingAt *time.Time `json:"missing_at,omitempty"`

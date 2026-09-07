@@ -189,6 +189,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/books/{entryID}/files", s.handleBookFiles)
 			r.Post("/books/{entryID}/files", s.handleAttachFiles)
 			r.Delete("/books/{entryID}/files/{fileID}", s.handleDetachFile)
+			r.Put("/books/{entryID}/files/{fileID}/primary", s.handlePrimaryTextFile)
 
 			// Alignment: queue the text↔audio mapping, watch it run,
 			// clear it. The job is worked by an optional container

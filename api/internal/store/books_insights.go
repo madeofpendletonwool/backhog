@@ -217,17 +217,14 @@ const unreadBooksWhere = `e.user_id = ? AND e.media_type = 'book' AND e.status I
 
 // bookSizeSelect is the shared sizing projection: the entry's own printing
 // falling back to the work's earliest one with a page count, the canonical
-// text length of any attached EPUB, the summed duration of any attached
-// audiobook, and the stored reading position.
+// text length of the book's designated text file, the summed duration of any
+// attached audiobook, and the stored reading position.
 const bookSizeSelect = `
 	COALESCE(ed.page_count,
 		(SELECT ed2.page_count FROM book_editions ed2
 		 WHERE ed2.book_id = e.book_id AND ed2.page_count IS NOT NULL
 		 ORDER BY ed2.published_year, ed2.id LIMIT 1), 0),
-	COALESCE((SELECT et.char_count FROM epub_texts et
-	          JOIN media_files mf ON mf.id = et.media_file_id
-	          WHERE mf.book_id = e.book_id AND mf.kind = 'epub'
-	          ORDER BY mf.id LIMIT 1), 0),
+	COALESCE(` + primaryTextCharCount + `, 0),
 	COALESCE((SELECT SUM(mf2.duration_seconds) FROM media_files mf2
 	          WHERE mf2.book_id = e.book_id AND mf2.kind = 'audio'
 	            AND mf2.duration_seconds IS NOT NULL), 0),

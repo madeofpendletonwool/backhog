@@ -856,19 +856,38 @@ type EpubText struct {
 	NormalizedSHA256 string    `json:"normalized_sha256"`
 	ParsedAt         time.Time `json:"parsed_at"`
 	ParserVersion    string    `json:"parser_version"`
+	// TOCSource, TOCEntries and TOCError record what became of the book's
+	// own table of contents: which navigation document was read, how many
+	// entries it yielded, and why it could not be read at all. A book whose
+	// TOC is empty or broken is still readable — the spine defines the text
+	// — but its chapter titles had to be inferred, and the reader says so
+	// rather than presenting a wall of numbered sections with no
+	// explanation.
+	TOCSource  string `json:"toc_source"`
+	TOCEntries int    `json:"toc_entries"`
+	TOCError   string `json:"toc_error"`
 }
 
-// EpubChapter is one spine document of a canonical text, in reading order.
-// [CharStart, CharEnd) partitions [0, CharCount) with no gaps or overlaps;
-// empty (image-only) documents have CharStart == CharEnd.
+// EpubChapter is one chapter of a canonical text, in reading order: a run
+// of one or more consecutive spine documents. [CharStart, CharEnd)
+// partitions [0, CharCount) with no gaps or overlaps.
+//
+// A chapter spans several documents when the book splits one — calibre
+// emits the heading and the body as separate files — so the row is not one
+// per spine document. SpineIndex is the run's first document, which is what
+// the reader routes on and what the block index keys on.
 type EpubChapter struct {
 	ID         string `json:"id"`
 	EpubTextID string `json:"epub_text_id"`
 	SpineIndex int    `json:"spine_index"`
 	Href       string `json:"href"`
 	Title      string `json:"title"`
-	CharStart  int    `json:"char_start"`
-	CharEnd    int    `json:"char_end"`
+	// TitleSource says who named this chapter: the book's TOC, a heading in
+	// its markup, the shape of its opening line, or nothing at all. The
+	// reader shows inferred titles differently from asserted ones.
+	TitleSource string `json:"title_source"`
+	CharStart   int    `json:"char_start"`
+	CharEnd     int    `json:"char_end"`
 	// Depth is the TOC nesting of the entry targeting this document.
 	Depth int `json:"depth"`
 }

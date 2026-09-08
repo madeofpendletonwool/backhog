@@ -18,17 +18,31 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
 
-// bookTextChapter is one spine document of the chapters payload, with the
+// bookTextChapter is one chapter of the chapters payload, with the
 // block-level offsets from the sidecar merged in so the reader can map
 // charOffset → (href, blockIndex) and back without another round trip.
+//
+// A chapter may span several spine documents; SpineIndex names the first,
+// which is what the display endpoint is keyed on.
 type bookTextChapter struct {
 	SpineIndex int    `json:"spine_index"`
 	Href       string `json:"href"`
 	Title      string `json:"title"`
-	CharStart  int    `json:"char_start"`
-	CharEnd    int    `json:"char_end"`
-	Depth      int    `json:"depth"`
-	Blocks     []int  `json:"blocks"`
+	// TitleSource is who named this chapter: "toc" (the book's own table of
+	// contents), "heading" (a heading in its markup), "text" (inferred from
+	// the shape of its opening line) or "none". The reader marks the
+	// inferred ones rather than passing a guess off as the book's word.
+	TitleSource string `json:"title_source"`
+	// Number is the chapter's 1-based position among the chapters that hold
+	// text — what an unnamed chapter is called after. SpineIndex cannot
+	// serve: a chapter spanning three spine documents leaves two indexes
+	// unused, so numbering by it produced the "5, 6, 7, 8, 9, 11" the reader
+	// used to show.
+	Number    int   `json:"number"`
+	CharStart int   `json:"char_start"`
+	CharEnd   int   `json:"char_end"`
+	Depth     int   `json:"depth"`
+	Blocks    []int `json:"blocks"`
 	// Images are the document's internal illustrations, anchored to the
 	// blocks above. Every href is a path inside the EPUB — the parser
 	// dropped the remote ones — and is only fetchable through the asset
@@ -91,9 +105,14 @@ func (s *Server) handleBookTextChapters(w http.ResponseWriter, r *http.Request) 
 	}
 
 	out := make([]bookTextChapter, 0, len(chapters))
+	number := 0
 	for _, ch := range chapters {
+		if ch.CharEnd > ch.CharStart {
+			number++
+		}
 		c := bookTextChapter{
 			SpineIndex: ch.SpineIndex, Href: ch.Href, Title: ch.Title,
+			TitleSource: ch.TitleSource, Number: number,
 			CharStart: ch.CharStart, CharEnd: ch.CharEnd, Depth: ch.Depth,
 		}
 		if index != nil {
@@ -115,6 +134,14 @@ func (s *Server) handleBookTextChapters(w http.ResponseWriter, r *http.Request) 
 		"char_count":     et.CharCount,
 		"parser_version": et.ParserVersion,
 		"chapters":       out,
+		// How good the book's own table of contents was. The reader uses it
+		// to explain inferred chapter names rather than presenting them as
+		// the book's word.
+		"toc": map[string]any{
+			"source":  et.TOCSource,
+			"entries": et.TOCEntries,
+			"error":   et.TOCError,
+		},
 	})
 }
 

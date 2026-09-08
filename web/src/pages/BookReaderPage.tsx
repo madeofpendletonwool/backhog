@@ -18,13 +18,21 @@ import {
   explainPage,
   formatPage,
   percentAt,
+  describeTOC,
+  isInferredTitle,
   readableChapters,
   readerBlocks,
   sentenceSpanAt,
 } from "@/lib/booktext";
 import { cn } from "@/lib/cn";
 import { formatTimecode } from "@/lib/format";
-import type { BookEntry, BookPosition, PositionTranslation, TextChapter } from "@/lib/types";
+import type {
+  BookEntry,
+  BookPosition,
+  PositionTranslation,
+  TextChapter,
+  TOCReport,
+} from "@/lib/types";
 
 /**
  * The in-app EPUB reader — the other half of the reading/listening handoff.
@@ -914,7 +922,13 @@ function Reader({ entry }: { entry: BookEntry }) {
         )}
 
         {panel === "contents" && (
-          <Contents chapters={toc} current={spine} surface={surface} onPick={goToChapter} />
+          <Contents
+            chapters={toc}
+            tocReport={text.data?.toc}
+            current={spine}
+            surface={surface}
+            onPick={goToChapter}
+          />
         )}
         {panel === "type" && <TypeControls prefs={prefs} onChange={setPrefs} surface={surface} />}
       </div>
@@ -1021,8 +1035,7 @@ function Reader({ entry }: { entry: BookEntry }) {
               {handoff.chapter && (
                 <span className="text-ink-500">
                   ·{" "}
-                  {handoff.chapter.title.trim() ||
-                    `Section ${handoff.chapter.spine_index + 1}`}
+                  {chapterTitle(handoff.chapter)}
                 </span>
               )}
             </div>
@@ -1097,18 +1110,30 @@ function ToolbarButton({
   );
 }
 
-/** The TOC, indented by the depth the book's own nav document declared. */
+/**
+ * The TOC, indented by the depth the book's own nav document declared.
+ *
+ * Where a title was inferred rather than read from the book's table of
+ * contents it is marked, and where the table of contents itself was thin or
+ * broken the panel says so once at the top. A reader looking at "Section 12"
+ * deserves to know whether the book is badly made or the parser gave up.
+ */
 function Contents({
   chapters,
+  tocReport,
   current,
   surface,
   onPick,
 }: {
   chapters: TextChapter[];
+  tocReport?: TOCReport;
   current: number | null;
   surface: Surface;
   onPick: (chapter: TextChapter) => void;
 }) {
+  const inferred = chapters.filter(isInferredTitle).length;
+  const note = describeTOC(tocReport, inferred);
+
   if (chapters.length === 0) {
     return (
       <p className="mx-auto max-w-5xl px-4 pb-4 text-sm sm:px-6" style={{ color: surface.muted }}>
@@ -1122,13 +1147,18 @@ function Contents({
       className="mx-auto max-h-[60vh] max-w-5xl overflow-y-auto border-t px-4 py-2 sm:px-6"
       style={{ borderColor: surface.rule }}
     >
+      {note && (
+        <p className="px-1 pb-2 pt-1 text-xs leading-relaxed" style={{ color: surface.muted }}>
+          {note}
+        </p>
+      )}
       {chapters.map((chapter) => (
         <button
           key={chapter.spine_index}
           type="button"
           onClick={() => onPick(chapter)}
           className={cn(
-            "block w-full truncate rounded-lg py-1.5 text-left text-sm transition-opacity hover:opacity-70 focus-visible:focus-ring",
+            "flex w-full items-baseline gap-1.5 rounded-lg py-1.5 text-left text-sm transition-opacity hover:opacity-70 focus-visible:focus-ring",
             chapter.spine_index === current && "font-semibold",
           )}
           style={{
@@ -1136,7 +1166,16 @@ function Contents({
             color: chapter.spine_index === current ? surface.fg : surface.muted,
           }}
         >
-          {chapterTitle(chapter)}
+          <span className="min-w-0 truncate">{chapterTitle(chapter)}</span>
+          {isInferredTitle(chapter) && (
+            <span
+              aria-hidden
+              title="This name was read out of the book's text, not its table of contents."
+              className="shrink-0 text-[0.65rem] uppercase tracking-wider opacity-50"
+            >
+              inferred
+            </span>
+          )}
         </button>
       ))}
     </nav>

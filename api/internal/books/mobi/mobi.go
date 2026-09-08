@@ -60,7 +60,7 @@ func Parse(r io.ReaderAt, size int64) (*epub.Document, error) {
 func parseKF8(b *mobigo.Book) (*epub.Document, error) {
 	// A broken TOC is not a broken book: sections still define the
 	// canonical text, only titles are lost (the epub parser's rule).
-	toc, _ := b.TOC()
+	toc, tocErr := b.TOC()
 
 	type title struct {
 		label string
@@ -80,18 +80,25 @@ func parseKF8(b *mobigo.Book) (*epub.Document, error) {
 	}
 	walk(toc, 0)
 
+	report := epub.TOCReport{Source: "kf8-ncx", Entries: len(titles)}
+	if tocErr != nil {
+		report.Err = tocErr.Error()
+	}
+
 	secs := b.KF8Sections()
-	doc := &epub.Document{Docs: make([]epub.Doc, 0, len(secs))}
+	doc := &epub.Document{Docs: make([]epub.Doc, 0, len(secs)), TOC: report}
 	for i, sec := range secs {
 		// A skeleton with zero fragments holds only structural markup —
 		// linear="no" in the EPUB spine's terms — and owns no chapter.
 		if !sec.Linear {
 			continue
 		}
+		blocks, headings := epub.ExtractBlocksHTML(sec.XHTML())
 		d := epub.Doc{
 			SpineIndex: len(doc.Docs),
 			Href:       fmt.Sprintf("mobi:section:%d", i),
-			Blocks:     epub.ExtractBlocksHTML(sec.XHTML()),
+			Blocks:     blocks,
+			Headings:   headings,
 		}
 		if t, ok := titles[i]; ok {
 			d.Title, d.Depth = t.label, t.depth
@@ -126,7 +133,12 @@ func parseMOBI6(b *mobigo.Book) (*epub.Document, error) {
 	// below — the same consortium mapping the library decodes with.
 	utf8 := len(b.Text()) == len(raw)
 
-	anchors := tocAnchors(b)
+	anchors, tocErr := tocAnchors(b)
+	report := epub.TOCReport{Source: "mobi-toc", Entries: len(anchors)}
+	if tocErr != nil {
+		report.Err = tocErr.Error()
+	}
+
 	starts := chapterStarts(anchors, len(raw))
 	if len(starts) <= 1 {
 		// No TOC (or none of its entries carried a usable position): the
@@ -141,6 +153,11 @@ func parseMOBI6(b *mobigo.Book) (*epub.Document, error) {
 		sort.Ints(starts)
 		starts = append([]int{0}, dedupe(starts)...)
 		anchors = nil
+		// The pagebreak fallback names nothing: every chapter it produces
+		// arrives untitled, which is exactly the state the chapter rules
+		// downstream exist to rescue.
+		report.Source = "mobi-pagebreak"
+		report.Entries = 0
 	}
 
 	docs := make([]epub.Doc, 0, len(starts))
@@ -159,10 +176,12 @@ func parseMOBI6(b *mobigo.Book) (*epub.Document, error) {
 		// A filepos may land mid-tag; html.Parse recovers by dropping the
 		// broken fragment, exactly as it does for EPUB documents that open
 		// mid-markup. The chapters partition the raw text regardless.
+		blocks, headings := epub.ExtractBlocksHTML(chapterHTML)
 		docs = append(docs, epub.Doc{
 			SpineIndex: i,
 			Href:       fmt.Sprintf("mobi:chapter:%d", i),
-			Blocks:     epub.ExtractBlocksHTML(chapterHTML),
+			Blocks:     blocks,
+			Headings:   headings,
 		})
 	}
 
@@ -186,17 +205,17 @@ func parseMOBI6(b *mobigo.Book) (*epub.Document, error) {
 			}
 		}
 	}
-	return &epub.Document{Docs: docs}, nil
+	return &epub.Document{Docs: docs, TOC: report}, nil
 }
 
 // tocAnchors flattens the TOC tree into document-order anchors, keeping
 // every entry whose StartByte addresses the raw text. The library owns the
 // INDX-NCX-versus-legacy-<toc> fallback; a TOC that fails to parse yields
 // no anchors and the pagebreak fallback takes over.
-func tocAnchors(b *mobigo.Book) []anchor {
+func tocAnchors(b *mobigo.Book) ([]anchor, error) {
 	items, err := b.TOC()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []anchor
 	var walk func(items []mobigo.TOCItem, depth int)
@@ -210,7 +229,7 @@ func tocAnchors(b *mobigo.Book) []anchor {
 	}
 	walk(items, 0)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].start < out[j].start })
-	return out
+	return out, nil
 }
 
 // chapterStarts turns TOC anchors into chapter boundaries: sorted, deduped

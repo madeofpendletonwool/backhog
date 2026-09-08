@@ -805,15 +805,28 @@ export interface ChapterImage {
   before_block: number;
 }
 
+/** Who named a chapter, in descending order of authority. */
+export type TitleSource = "toc" | "heading" | "text" | "none";
+
 /**
- * One spine document of a book's canonical text. `blocks` holds the absolute
- * byte offset of every block-level element in this document, ascending — the
- * mapping the reader turns a scroll position into a stored offset with.
+ * One chapter of a book's canonical text — a run of one or more spine
+ * documents. `blocks` holds the absolute byte offset of every block-level
+ * element in it, ascending: the mapping the reader turns a scroll position
+ * into a stored offset with.
  */
 export interface TextChapter {
+  /** The chapter's first spine document, which the display endpoint keys on. */
   spine_index: number;
   href: string;
   title: string;
+  /**
+   * Where the title came from. `toc` is the book's own table of contents;
+   * `heading` is a heading in its markup; `text` was inferred from the shape
+   * of the opening line and may be wrong; `none` means nothing named it.
+   */
+  title_source: TitleSource;
+  /** 1-based position among the chapters that hold text. */
+  number: number;
   char_start: number;
   char_end: number;
   depth: number;
@@ -822,11 +835,25 @@ export interface TextChapter {
   images: ChapterImage[];
 }
 
-/** GET /api/books/{entryId}/text/chapters — the spine, with block offsets. */
+/**
+ * What became of the book's own table of contents. A book whose TOC is
+ * missing or broken still reads fine — the spine defines the text — but its
+ * chapter names had to be inferred, and the reader says so.
+ */
+export interface TOCReport {
+  /** "nav", "ncx", "kf8-ncx", "mobi-toc", "mobi-pagebreak", or "". */
+  source: string;
+  entries: number;
+  /** Why the navigation document could not be read; empty when it could. */
+  error: string;
+}
+
+/** GET /api/books/{entryId}/text/chapters — the chapters, with block offsets. */
 export interface BookTextChapters {
   char_count: number;
   parser_version: string;
   chapters: TextChapter[];
+  toc: TOCReport;
 }
 
 /**
@@ -867,10 +894,13 @@ export interface PositionAudio {
   anchor_distance: number;
 }
 
-/** Which spine document an offset falls in. */
+/** Which chapter an offset falls in. */
 export interface PositionChapter {
   spine_index: number;
   title: string;
+  title_source: TitleSource;
+  /** 1-based position among the chapters that hold text. */
+  number: number;
   href: string;
   char_start: number;
   char_end: number;

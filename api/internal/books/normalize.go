@@ -17,7 +17,12 @@ import "github.com/collinpendleton/backhog/api/booktext"
 // text was produced with. Bump it whenever booktext.Normalize or the EPUB
 // block extraction changes: rows parsed under an older version are
 // re-parsed on next access, rebuilding every derived offset.
-const ParserVersion = "2"
+//
+// Also bump it when the chapter *grouping* changes, as version 3 did. That
+// leaves the canonical text byte-for-byte identical — the same blocks in the
+// same order — so stored reading positions stay valid across the re-parse;
+// what it rebuilds is which chapter rows those offsets fall in.
+const ParserVersion = "3"
 
 // Normalize is booktext.Normalize, re-exported so the arena's own code
 // keeps reading books.Normalize. It is a call, not a copy: the alignment

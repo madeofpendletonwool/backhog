@@ -2,7 +2,7 @@ package epub
 
 import (
 	"archive/zip"
-	"encoding/xml"
+	"bytes"
 	"fmt"
 	"path"
 	"strings"
@@ -117,7 +117,7 @@ func parseNCX(zr *zip.Reader, ncxHref string) ([]tocEntry, error) {
 			Points []ncxPoint `xml:"navPoint"`
 		} `xml:"navMap"`
 	}
-	if err := xml.Unmarshal(data, &raw); err != nil {
+	if err := decodeXML(bytes.NewReader(data), &raw); err != nil {
 		return nil, fmt.Errorf("epub: parse NCX %s: %w", ncxHref, err)
 	}
 

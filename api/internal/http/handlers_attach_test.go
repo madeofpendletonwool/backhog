@@ -315,8 +315,11 @@ func TestAttachFlow(t *testing.T) {
 		 WHERE mf.path = 'kindle/Synthetic PalmDOC Book.mobi'`).Scan(&mobiChapters); err != nil {
 		t.Fatalf("probe mobi chapters: %v", err)
 	}
-	if mobiParsed != 1 || mobiChapters != 4 {
-		t.Errorf("mobi parse = %d rows / %d chapters; want 1 / 4", mobiParsed, mobiChapters)
+	// Three chapters, not four: the fixture's NCX opens with a "Begin
+	// Reading" guide anchor at the same byte as the first real chapter, so
+	// it owns no text and no longer becomes a zero-length row of its own.
+	if mobiParsed != 1 || mobiChapters != 3 {
+		t.Errorf("mobi parse = %d rows / %d chapters; want 1 / 3", mobiParsed, mobiChapters)
 	}
 
 	// Attached files leave the review queue.

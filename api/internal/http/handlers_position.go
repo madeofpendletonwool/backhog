@@ -47,9 +47,17 @@ type positionResponse struct {
 type chapterView struct {
 	SpineIndex int    `json:"spine_index"`
 	Title      string `json:"title"`
-	Href       string `json:"href"`
-	CharStart  int    `json:"char_start"`
-	CharEnd    int    `json:"char_end"`
+	// TitleSource is who named the chapter: "toc", "heading", "text" or
+	// "none". See bookTextChapter.
+	TitleSource string `json:"title_source"`
+	// Number is the chapter's 1-based position among the chapters that hold
+	// text, which is what an unnamed one is called after ("Section 7").
+	// SpineIndex cannot serve: chapters skip indexes wherever one spans
+	// several spine documents, which is most books.
+	Number    int    `json:"number"`
+	Href      string `json:"href"`
+	CharStart int    `json:"char_start"`
+	CharEnd   int    `json:"char_end"`
 }
 
 // audioView is where the player should start. Seconds is global across the
@@ -758,24 +766,27 @@ func pageViewFor(charOffset int, v bookViews) *pageView {
 // document that holds any text rather than to nothing.
 func chapterAt(chapters []models.EpubChapter, offset int) *chapterView {
 	var last *models.EpubChapter
+	lastNumber, number := 0, 0
 	for i := range chapters {
 		ch := chapters[i]
 		if ch.CharEnd > ch.CharStart {
-			last = &chapters[i]
+			number++
+			last, lastNumber = &chapters[i], number
 		}
 		if offset >= ch.CharStart && offset < ch.CharEnd {
-			return newChapterView(ch)
+			return newChapterView(ch, number)
 		}
 	}
 	if last != nil && offset >= last.CharEnd {
-		return newChapterView(*last)
+		return newChapterView(*last, lastNumber)
 	}
 	return nil
 }
 
-func newChapterView(ch models.EpubChapter) *chapterView {
+func newChapterView(ch models.EpubChapter, number int) *chapterView {
 	return &chapterView{
-		SpineIndex: ch.SpineIndex, Title: ch.Title, Href: ch.Href,
+		SpineIndex: ch.SpineIndex, Title: ch.Title, TitleSource: ch.TitleSource,
+		Number: number, Href: ch.Href,
 		CharStart: ch.CharStart, CharEnd: ch.CharEnd,
 	}
 }

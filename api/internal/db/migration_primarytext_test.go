@@ -100,7 +100,10 @@ func TestPrimaryTextMigration(t *testing.T) {
 		t.Fatal("a second primary for OL1W was accepted, want the unique index to refuse it")
 	}
 
-	if err := goose.Down(database, "migrations"); err != nil {
+	// DownTo, not Down: Down reverts one migration, so a plain Down would
+	// only undo whichever migration happens to be newest. This test is
+	// about 00024, so it names the version to roll back past.
+	if err := goose.DownTo(database, "migrations", 23); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
 	if _, err := database.Exec(`SELECT is_primary_text FROM media_files LIMIT 1`); err == nil {

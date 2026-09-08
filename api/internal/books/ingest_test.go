@@ -208,17 +208,25 @@ func TestEnsureForMediaFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chapters: %v", err)
 	}
-	if len(chapters) != 3 {
-		t.Fatalf("got %d chapters, want 3 (cover included)", len(chapters))
+	// Two chapters, not three: the image-only cover owns no text and is no
+	// longer a chapter of its own — it is swallowed by the first real one,
+	// which is what keeps its art reachable without listing a nameless
+	// zero-length "Section 1" above chapter one.
+	if len(chapters) != 2 {
+		t.Fatalf("got %d chapters, want 2: %+v", len(chapters), chapters)
 	}
-	if chapters[0].Title != "" || chapters[1].Title != "One" || chapters[2].Title != "Two" {
-		t.Errorf("titles = %q %q %q", chapters[0].Title, chapters[1].Title, chapters[2].Title)
+	if chapters[0].Title != "One" || chapters[1].Title != "Two" {
+		t.Errorf("titles = %q %q, want \"One\" \"Two\"", chapters[0].Title, chapters[1].Title)
+	}
+	if chapters[0].TitleSource != TitleSourceTOC {
+		t.Errorf("title source = %q, want %q", chapters[0].TitleSource, TitleSourceTOC)
+	}
+	// The cover is inside the first chapter's span, so its illustration is
+	// still addressable.
+	if chapters[0].SpineIndex != 0 {
+		t.Errorf("first chapter spine index = %d, want 0 (the cover)", chapters[0].SpineIndex)
 	}
 	assertContiguous(t, chapters, et.CharCount)
-	if chapters[0].CharStart != chapters[0].CharEnd {
-		t.Errorf("image-only cover should be empty, got [%d,%d)",
-			chapters[0].CharStart, chapters[0].CharEnd)
-	}
 
 	// A second ensure with the same parser version must not re-parse.
 	before, err := st.GetEpubText(context.Background(), file.ID)
@@ -305,12 +313,10 @@ func TestEnsureForMediaFileVersionStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chapters: %v", err)
 	}
-	if len(chapters) != 3 {
-		t.Fatalf("got %d chapters, want 3", len(chapters))
-	}
-	if chapters[1].CharStart != chapters[1].CharEnd {
-		t.Errorf("all-noise document should be empty, got [%d,%d)",
-			chapters[1].CharStart, chapters[1].CharEnd)
+	// The middle document normalizes to nothing, so it joins the chapter it
+	// sits inside rather than standing as an empty one.
+	if len(chapters) != 2 {
+		t.Fatalf("got %d chapters, want 2: %+v", len(chapters), chapters)
 	}
 	assertContiguous(t, chapters, et.CharCount)
 
@@ -618,10 +624,13 @@ func TestEnsureForMediaFileMOBI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chapters: %v", err)
 	}
-	if len(chapters) != 4 {
-		t.Fatalf("got %d chapters, want 4: %+v", len(chapters), chapters)
+	// Three chapters, not four: the NCX's "Begin Reading" guide anchor sits
+	// at the same byte as the first real chapter and owns no text, so it no
+	// longer appears as a zero-length row above it.
+	if len(chapters) != 3 {
+		t.Fatalf("got %d chapters, want 3: %+v", len(chapters), chapters)
 	}
-	wantTitles := []string{"Begin Reading", "Synthetic PalmDOC", "Second Chapter", "Third Chapter"}
+	wantTitles := []string{"Synthetic PalmDOC", "Second Chapter", "Third Chapter"}
 	for i, want := range wantTitles {
 		if chapters[i].Title != want {
 			t.Errorf("chapter %d title = %q, want %q", i, chapters[i].Title, want)
@@ -660,12 +669,13 @@ func TestEnsureForMediaFileMOBI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load index: %v", err)
 	}
-	loc, ok := index.Resolve(chapters[3].CharStart)
+	last := chapters[len(chapters)-1]
+	loc, ok := index.Resolve(last.CharStart)
 	if !ok {
-		t.Fatal("resolve chapter 3 start")
+		t.Fatal("resolve last chapter start")
 	}
-	if loc.SpineIndex != 3 {
-		t.Errorf("resolved spine index = %d, want 3", loc.SpineIndex)
+	if loc.SpineIndex != last.SpineIndex {
+		t.Errorf("resolved spine index = %d, want %d", loc.SpineIndex, last.SpineIndex)
 	}
 
 	// Re-ensure with a current parse must not re-parse (the companion files
@@ -709,20 +719,18 @@ func TestEnsureForMediaFileKF8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chapters: %v", err)
 	}
-	if len(chapters) != 3 {
-		t.Fatalf("got %d chapters, want 3: %+v", len(chapters), chapters)
+	// The image-only cover section holds no text, so it folds into the first
+	// chapter instead of listing as an empty one.
+	if len(chapters) != 2 {
+		t.Fatalf("got %d chapters, want 2: %+v", len(chapters), chapters)
 	}
-	wantTitles := []string{"Cover", "Chapter 1", "Chapter 2"}
+	wantTitles := []string{"Chapter 1", "Chapter 2"}
 	for i, want := range wantTitles {
 		if chapters[i].Title != want {
 			t.Errorf("chapter %d title = %q, want %q", i, chapters[i].Title, want)
 		}
 	}
 	assertContiguous(t, chapters, et.CharCount)
-	if chapters[0].CharStart != chapters[0].CharEnd {
-		t.Errorf("image-only cover should be empty, got [%d,%d)",
-			chapters[0].CharStart, chapters[0].CharEnd)
-	}
 
 	// The exact canonical text: the same pinned Normalize over KF8 blocks.
 	data, err := os.ReadFile(ing.TextPath(et.ID))

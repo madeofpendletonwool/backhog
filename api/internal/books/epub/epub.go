@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/charset"
 )
 
 // ErrDRM reports an EPUB carrying META-INF/encryption.xml, which is how DRM
@@ -42,6 +43,14 @@ type Doc struct {
 	// heading, list item, ...) in document order. Raw means pre-normalized;
 	// blank entries are possible and are dropped by the canonicalizer.
 	Blocks []string
+	// Headings indexes the entries of Blocks that came from a heading
+	// element — <h1>-<h6>, a block carrying epub:type="title"/"chapter", or
+	// one of the handful of class names publishers use for chapter titles.
+	// It is *structural* evidence of a title, which is what separates a
+	// real heading from a line of dialogue that happens to be shouted:
+	// Pratchett writes DEATH in capitals, and a title rule that trusted
+	// letter case alone would find four hundred chapters in Reaper Man.
+	Headings []int
 	// Images holds the document's internal illustrations in document
 	// order. Only references that resolve to a file actually inside this
 	// EPUB survive; see extractor.resolveAsset.
@@ -67,9 +76,30 @@ type Image struct {
 	BeforeBlock int
 }
 
-// Document is the parse result: the spine in reading order.
+// Document is the parse result: the spine in reading order, plus an
+// account of where its titles came from.
 type Document struct {
 	Docs []Doc
+	// TOC records which navigation document was read and what it yielded.
+	// A book whose TOC failed to parse is still a readable book — the spine
+	// defines the text — but it is not a book with a working table of
+	// contents, and the difference used to vanish silently. It is reported
+	// so the ingester can store it and the UI can say so.
+	TOC TOCReport
+}
+
+// TOCReport is what became of the book's table of contents.
+type TOCReport struct {
+	// Source is "nav" (EPUB 3), "ncx" (EPUB 2) or "" when the manifest
+	// declared neither.
+	Source string
+	// Href is the navigation document that was read, if any.
+	Href string
+	// Entries is how many usable TOC records it yielded.
+	Entries int
+	// Err is why the TOC could not be read, empty when it could. A book
+	// with Entries == 0 and no Err simply has an empty TOC.
+	Err string
 }
 
 // Parse reads an EPUB held in r (an io.ReaderAt of the whole file, as
@@ -94,14 +124,18 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 		return nil, err
 	}
 
-	entries, err := readTOC(zr, container.RootfilePath, pkg)
+	entries, report, err := readTOC(zr, container.RootfilePath, pkg)
 	if err != nil {
 		// A broken TOC is not a broken book: spine order still defines the
-		// canonical text, only titles are lost.
+		// canonical text, only titles are lost. It *is* worth saying out
+		// loud, though — a silent nil here is why a single "&hellip;" in
+		// one NCX left a whole novel with ninety-one unnamed chapters.
 		entries = nil
+		report.Err = err.Error()
 	}
+	report.Entries = len(entries)
 
-	doc := &Document{Docs: make([]Doc, 0, len(pkg.Spine.ItemRefs))}
+	doc := &Document{Docs: make([]Doc, 0, len(pkg.Spine.ItemRefs)), TOC: report}
 	for _, ref := range pkg.Spine.ItemRefs {
 		if ref.Linear == "no" {
 			continue
@@ -111,7 +145,7 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 			continue
 		}
 		href := joinZipPath(path.Dir(container.RootfilePath), item.Href)
-		blocks, images, err := extractBlocks(zr, href)
+		blocks, headings, images, err := extractBlocks(zr, href)
 		if err != nil {
 			return nil, err
 		}
@@ -121,6 +155,7 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 			Title:      matchingTitle(entries, href),
 			Depth:      matchingDepth(entries, href),
 			Blocks:     blocks,
+			Headings:   headings,
 			Images:     images,
 		})
 	}
@@ -149,7 +184,7 @@ func readContainer(zr *zip.Reader) (*container, error) {
 			MediaType string `xml:"media-type,attr"`
 		} `xml:"rootfiles>rootfile"`
 	}
-	if err := xml.NewDecoder(rc).Decode(&raw); err != nil {
+	if err := decodeXML(rc, &raw); err != nil {
 		return nil, fmt.Errorf("epub: parse container.xml: %w", err)
 	}
 	for _, rf := range raw.Rootfiles {
@@ -210,7 +245,7 @@ func readOPF(zr *zip.Reader, opfPath string) (*packageXML, error) {
 			} `xml:"itemref"`
 		} `xml:"spine"`
 	}
-	if err := xml.NewDecoder(rc).Decode(&raw); err != nil {
+	if err := decodeXML(rc, &raw); err != nil {
 		return nil, fmt.Errorf("epub: parse %s: %w", opfPath, err)
 	}
 
@@ -233,25 +268,55 @@ type tocEntry struct {
 
 // readTOC finds the EPUB 3 nav document (manifest item with a "nav"
 // property) or the EPUB 2 NCX (spine@toc idref, else any NCX media-type
-// item) and parses its entries. Hrefs are resolved to zip paths.
-func readTOC(zr *zip.Reader, opfPath string, pkg *packageXML) ([]tocEntry, error) {
+// item) and parses its entries. Hrefs are resolved to zip paths. The report
+// names which one was read, so a failure can be attributed rather than
+// silently becoming "this book has no chapter titles".
+func readTOC(zr *zip.Reader, opfPath string, pkg *packageXML) ([]tocEntry, TOCReport, error) {
 	opfDir := path.Dir(opfPath)
 
 	for _, item := range pkg.Manifest {
 		if hasProperty(item.Properties, "nav") {
-			return parseNav(zr, joinZipPath(opfDir, item.Href))
+			href := joinZipPath(opfDir, item.Href)
+			entries, err := parseNav(zr, href)
+			return entries, TOCReport{Source: "nav", Href: href}, err
 		}
 	}
 
+	// The spine@toc idref names the NCX regardless of its media type: real
+	// books declare it as text/xml, application/xml and worse, so trusting
+	// the declared type alone loses TOCs that are sitting right there.
 	if it, ok := pkg.Manifest[pkg.ncxID()]; ok {
-		return parseNCX(zr, joinZipPath(opfDir, it.Href))
+		href := joinZipPath(opfDir, it.Href)
+		entries, err := parseNCX(zr, href)
+		return entries, TOCReport{Source: "ncx", Href: href}, err
 	}
 	for _, it := range pkg.Manifest {
 		if it.MediaType == "application/x-dtbncx+xml" {
-			return parseNCX(zr, joinZipPath(opfDir, it.Href))
+			href := joinZipPath(opfDir, it.Href)
+			entries, err := parseNCX(zr, href)
+			return entries, TOCReport{Source: "ncx", Href: href}, err
 		}
 	}
-	return nil, errors.New("epub: no nav document and no NCX in manifest")
+	return nil, TOCReport{}, errors.New("epub: no nav document and no NCX in manifest")
+}
+
+// decodeXML decodes an XML document the way ebooks in the wild are actually
+// written, rather than the way the spec says they should be.
+//
+// Two concessions, both earned from real files in this library:
+//
+//   - CharsetReader: an OPF that declares encoding="iso-8859-1" is legal
+//     XML, and Go's decoder refuses it outright unless told how to convert.
+//     Five books here (four Steinbeck, one Sinclair) failed to open at all
+//     for want of this line.
+//   - Entity: XML defines five named entities and NCX files routinely use
+//     HTML's two hundred. One "&hellip;" in a navMap used to fail the whole
+//     document, and with it every chapter title in the book.
+func decodeXML(r io.Reader, v any) error {
+	d := xml.NewDecoder(r)
+	d.CharsetReader = charset.NewReaderLabel
+	d.Entity = xml.HTMLEntity
+	return d.Decode(v)
 }
 
 // ncxID returns the spine@toc idref, if any.

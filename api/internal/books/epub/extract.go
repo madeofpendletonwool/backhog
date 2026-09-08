@@ -8,6 +8,29 @@ import (
 	"golang.org/x/net/html"
 )
 
+// headingTags are the block elements that are headings by construction.
+var headingTags = map[string]bool{
+	"h1": true, "h2": true, "h3": true,
+	"h4": true, "h5": true, "h6": true,
+}
+
+// headingClasses are class tokens publishers give a chapter title when they
+// mark it up as a paragraph instead of a heading — which most of them do.
+// The Stand's every chapter title is a <p class="ct">, and without this the
+// book has no recoverable structure at all.
+//
+// The list is deliberately short and checked as whole space-separated
+// tokens, never as substrings: "chapter" must not match "chapterbody", and
+// the styling soup calibre emits ("calibre1", "block_2") must not match
+// anything. A false positive here costs one wrong chapter title, so the
+// bar is "publishers really use this for titles", not "might be a title".
+var headingClasses = map[string]bool{
+	"ct": true, "chapter": true, "chaptertitle": true, "chapter-title": true,
+	"chapterhead": true, "chapter_title": true, "chap": true,
+	"title": true, "booktitle": true, "parttitle": true,
+	"head": true, "heading": true, "subtitle": true, "sectiontitle": true,
+}
+
 // blockTags are the elements that start a new block: their inline content
 // becomes one entry of Doc.Blocks. Containers (div, section, ...) recurse
 // so their block children become blocks of their own; text sitting directly
@@ -35,8 +58,12 @@ var skipTags = map[string]bool{
 // anchored to the block they precede.
 type extractor struct {
 	blocks []string
-	images []Image
-	buf    strings.Builder
+	// headings indexes the entries of blocks that came from a heading
+	// element; heading tracks whether the walk is currently inside one.
+	headings []int
+	heading  bool
+	images   []Image
+	buf      strings.Builder
 	// baseDir is the directory of the document being walked, which image
 	// references resolve against; exists reports whether a resolved zip
 	// path is really in this EPUB.
@@ -55,24 +82,24 @@ type extractor struct {
 // of rules and one implementation covers both formats and cannot drift.
 // Images are not resolved here (there is no container to resolve against);
 // a MOBI chapter owns no images by design.
-func ExtractBlocksHTML(src string) []string {
+func ExtractBlocksHTML(src string) ([]string, []int) {
 	root, err := html.Parse(strings.NewReader(src))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	ex := &extractor{}
 	ex.walk(root)
 	ex.flush()
-	return ex.blocks
+	return ex.blocks, ex.headings
 }
 
 // extractBlocks returns the raw text of every block-level element in the
 // spine document at href, in document order, together with the internal
 // images it references.
-func extractBlocks(zr *zip.Reader, href string) ([]string, []Image, error) {
+func extractBlocks(zr *zip.Reader, href string) ([]string, []int, []Image, error) {
 	root, err := parseHTML(zr, href)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	ex := &extractor{
 		baseDir: path.Dir(href),
@@ -80,7 +107,7 @@ func extractBlocks(zr *zip.Reader, href string) ([]string, []Image, error) {
 	}
 	ex.walk(root)
 	ex.flush()
-	return ex.blocks, ex.images, nil
+	return ex.blocks, ex.headings, ex.images, nil
 }
 
 // walk descends the node tree. Inline content accumulates in the buffer; a
@@ -107,11 +134,17 @@ func (ex *extractor) walk(n *html.Node) {
 			return
 		}
 		if blockTags[n.Data] {
+			// The opening flush emits what came *before* this element, so
+			// it must run while the outer heading state still applies; the
+			// closing one emits this element's own content, under its own.
 			ex.flush()
+			outer := ex.heading
+			ex.heading = outer || isHeading(n)
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
 				ex.walk(c)
 			}
 			ex.flush()
+			ex.heading = outer
 			return
 		}
 	}
@@ -180,7 +213,37 @@ func (ex *extractor) resolveAsset(src string) (string, bool) {
 // whitespace (the canonicalizer collapses it); only the edges are trimmed.
 func (ex *extractor) flush() {
 	if s := strings.TrimSpace(ex.buf.String()); s != "" {
+		if ex.heading {
+			ex.headings = append(ex.headings, len(ex.blocks))
+		}
 		ex.blocks = append(ex.blocks, s)
 	}
 	ex.buf.Reset()
+}
+
+// isHeading reports whether a block element is marked up as a heading: an
+// <h1>-<h6>, an epub:type naming a title, or one of the class tokens in
+// headingClasses. This is structure the book itself asserts, which is the
+// only heading signal safe to act on inside a document.
+func isHeading(n *html.Node) bool {
+	if headingTags[n.Data] {
+		return true
+	}
+	for _, a := range n.Attr {
+		switch a.Key {
+		case "epub:type":
+			for _, f := range strings.Fields(a.Val) {
+				if f == "title" || f == "chapter" || f == "part" {
+					return true
+				}
+			}
+		case "class":
+			for _, f := range strings.Fields(a.Val) {
+				if headingClasses[strings.ToLower(f)] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

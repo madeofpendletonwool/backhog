@@ -1,4 +1,10 @@
-import type { BookTextChapters, ChapterImage, PositionPage, TextChapter } from "./types";
+import type {
+  BookTextChapters,
+  ChapterImage,
+  PositionPage,
+  TextChapter,
+  TOCReport,
+} from "./types";
 
 /**
  * The reader's coordinate maths, kept out of the component because it is the
@@ -156,14 +162,60 @@ export function readableChapters(chapters: TextChapter[]): TextChapter[] {
 }
 
 /**
- * A chapter's display name; spine documents often have no TOC entry.
+ * A chapter's display name, falling back to its number when nothing named it.
  *
- * Narrowed to the two fields it reads so it serves both shapes the API returns
- * a chapter in — the reader's TextChapter and the position/search endpoints'
+ * The number is the server's `number` — the chapter's position among the
+ * chapters that hold text — and not its spine index. Numbering by spine index
+ * is what produced the reader's old "2, 5, 6, 7, 8, 9, 11": covers and title
+ * pages own a spine slot but no text and were filtered out of the list, and a
+ * chapter that spans three files leaves two more indexes unused, so the
+ * printed numbers skipped in two different ways at once.
+ *
+ * Narrowed to the fields it reads so it serves both shapes the API returns a
+ * chapter in — the reader's TextChapter and the position/search endpoints'
  * lighter PositionChapter.
  */
-export function chapterTitle(chapter: Pick<TextChapter, "title" | "spine_index">): string {
-  return chapter.title.trim() || `Section ${chapter.spine_index + 1}`;
+export function chapterTitle(chapter: Pick<TextChapter, "title" | "number">): string {
+  return chapter.title.trim() || `Section ${chapter.number}`;
+}
+
+/**
+ * Whether a chapter's name was inferred by us rather than asserted by the
+ * book. Titles read out of the markup are still the book's own words, but
+ * they are not what its table of contents said, and one guessed from the
+ * shape of an opening line may simply be wrong — so the reader marks both
+ * rather than passing them off as the book's answer.
+ */
+export function isInferredTitle(
+  chapter: Pick<TextChapter, "title" | "title_source">,
+): boolean {
+  return chapter.title.trim() !== "" && chapter.title_source !== "toc";
+}
+
+/**
+ * How a book's table of contents came out, in one sentence, or null when it
+ * was fine. This is the difference between "this book has 94 numbered
+ * sections" and "this book's table of contents contains a single entry, so
+ * its chapter names were read out of the text".
+ */
+export function describeTOC(toc: TOCReport | undefined, inferred: number): string | null {
+  if (!toc) return null;
+  if (toc.error) {
+    return `This book's table of contents could not be read (${toc.error}), so its chapter names were taken from the text itself.`;
+  }
+  if (toc.source === "mobi-pagebreak") {
+    return "This file carries no usable table of contents, so it was divided at its page breaks and the chapter names were taken from the text itself.";
+  }
+  if (toc.entries === 0) {
+    return "This book has no table of contents, so its chapter names were taken from the text itself.";
+  }
+  if (toc.entries <= 1) {
+    return "This book's table of contents has a single entry, so its chapter names were taken from the text itself.";
+  }
+  if (inferred > 0) {
+    return `This book's table of contents does not cover ${inferred} of its chapters, so those names were taken from the text itself.`;
+  }
+  return null;
 }
 
 /** How far through the whole book an offset is, 0–100. */

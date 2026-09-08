@@ -218,17 +218,26 @@ func TestBookTextEndpoints(t *testing.T) {
 	if body["parser_version"] != booktext.ParserVersion {
 		t.Errorf("parser_version = %v", body["parser_version"])
 	}
+	// Two chapters, not three: the image-only cover holds no text and is
+	// folded into the chapter that follows it, so it no longer lists as a
+	// nameless zero-length section of its own.
 	chapters, ok := body["chapters"].([]any)
-	if !ok || len(chapters) != 3 {
+	if !ok || len(chapters) != 2 {
 		t.Fatalf("chapters = %#v", body["chapters"])
 	}
-	first := chapters[1].(map[string]any)
+	first := chapters[0].(map[string]any)
 	if first["title"] != "Alpha" {
-		t.Errorf("chapter 1 title = %v", first["title"])
+		t.Errorf("chapter 0 title = %v", first["title"])
+	}
+	if first["title_source"] != booktext.TitleSourceTOC {
+		t.Errorf("chapter 0 title_source = %v, want %q", first["title_source"], booktext.TitleSourceTOC)
+	}
+	if first["spine_index"].(float64) != 0 {
+		t.Errorf("chapter 0 spine_index = %v, want 0 (it starts at the cover)", first["spine_index"])
 	}
 	blocks, ok := first["blocks"].([]any)
 	if !ok || len(blocks) != 3 {
-		t.Fatalf("chapter 1 blocks = %#v (want h1 + 2 paragraphs)", first["blocks"])
+		t.Fatalf("chapter 0 blocks = %#v (want h1 + 2 paragraphs)", first["blocks"])
 	}
 	// Partition holds end to end.
 	prevEnd := 0.0
@@ -410,19 +419,20 @@ func TestBookTextIsInert(t *testing.T) {
 	}
 
 	chapters := body["chapters"].([]any)
-	// The image-only cover document keeps its illustration...
-	cover := chapters[0].(map[string]any)["images"].([]any)
-	if len(cover) != 1 || cover[0].(map[string]any)["href"] != "OEBPS/cover.png" {
-		t.Errorf("cover images = %#v", cover)
+	// The cover document folds into the first chapter, so that chapter
+	// carries both illustrations: the cover ahead of everything, and the
+	// hostile chapter's one real image anchored ahead of the first
+	// paragraph (block 1, after the h1) rather than at the top. Every
+	// off-origin reference the fixture tries is gone.
+	images := chapters[0].(map[string]any)["images"].([]any)
+	if len(images) != 2 {
+		t.Fatalf("chapter 0 images = %#v, want the cover and the one internal image", images)
 	}
-	// ...and the hostile chapter keeps exactly the one that is really in
-	// the book, anchored ahead of the first paragraph (block 1, after the
-	// h1) rather than at the top.
-	images := chapters[1].(map[string]any)["images"].([]any)
-	if len(images) != 1 {
-		t.Fatalf("chapter 1 images = %#v, want only the internal one", images)
+	if cover := images[0].(map[string]any); cover["href"] != "OEBPS/cover.png" ||
+		cover["before_block"].(float64) != 0 {
+		t.Errorf("cover image = %#v", cover)
 	}
-	img := images[0].(map[string]any)
+	img := images[1].(map[string]any)
 	if img["href"] != "OEBPS/art.png" || img["alt"] != "A hog" {
 		t.Errorf("image = %#v", img)
 	}
@@ -511,10 +521,10 @@ func TestBookTextDisplay(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("chapters status = %d: %v", status, body)
 	}
-	chapter := body["chapters"].([]any)[1].(map[string]any)
+	chapter := body["chapters"].([]any)[0].(map[string]any)
 	offsets := chapter["blocks"].([]any)
 
-	status, body = app.get(t, "/api/books/"+epubFixtureEntry+"/text/display?spine=1")
+	status, body = app.get(t, "/api/books/"+epubFixtureEntry+"/text/display?spine=0")
 	if status != http.StatusOK {
 		t.Fatalf("display status = %d: %v", status, body)
 	}
@@ -536,13 +546,12 @@ func TestBookTextDisplay(t *testing.T) {
 		}
 	}
 
-	// The image-only cover document has no prose, and says so rather than
-	// erroring or borrowing its neighbour's.
-	if status, body = app.get(t, "/api/books/"+epubFixtureEntry+"/text/display?spine=0"); status != http.StatusOK {
-		t.Fatalf("cover display status = %d: %v", status, body)
-	}
-	if got := body["blocks"].([]any); len(got) != 0 {
-		t.Errorf("cover blocks = %#v, want none", got)
+	// A spine index that no chapter starts at is refused rather than
+	// silently serving a neighbour's prose. The cover is spine 0 and *is* a
+	// chapter start (it opens chapter one), but spine 1 sits inside that
+	// chapter and is not addressable on its own.
+	if status, _ := app.get(t, "/api/books/"+epubFixtureEntry+"/text/display?spine=1"); status == http.StatusOK {
+		t.Error("display of a mid-chapter spine document was accepted, want a refusal")
 	}
 
 	for _, q := range []string{"spine=99", "spine=-1", "spine=abc", ""} {

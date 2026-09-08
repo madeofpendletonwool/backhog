@@ -110,6 +110,9 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 		NormalizedSHA256: sha256Hex(canonical),
 		ParsedAt:         time.Now().UTC(),
 		ParserVersion:    ParserVersion,
+		TOCSource:        parsed.TOC.Source,
+		TOCEntries:       parsed.TOC.Entries,
+		TOCError:         parsed.TOC.Err,
 	}
 	if err := ing.store.ReplaceEpubText(ctx, et, chapters); err != nil {
 		return models.EpubText{}, err
@@ -200,11 +203,12 @@ func (ing *Ingester) LoadIndex(ctx context.Context, et models.EpubText) (*BlockI
 // every offset the reader reports lands on the wrong paragraph.
 func Canonicalize(doc *epub.Document) (string, string, []models.EpubChapter, *BlockIndex) {
 	var canonical, display strings.Builder
-	chapters := make([]models.EpubChapter, len(doc.Docs))
-	index := &BlockIndex{
-		Version:   indexVersion,
-		Documents: make([]IndexedDoc, len(doc.Docs)),
-	}
+	// perDoc holds one entry per spine document while the text is built.
+	// Chapters are folded out of it afterwards, because a chapter may span
+	// several documents and the folding needs every document's size to
+	// decide where the runs break.
+	perDoc := make([]IndexedDoc, len(doc.Docs))
+	index := &BlockIndex{Version: indexVersion}
 
 	// span records where a document's own text sits; hasText is false for
 	// image-only documents, which own no bytes.
@@ -253,13 +257,7 @@ func Canonicalize(doc *epub.Document) (string, string, []models.EpubChapter, *Bl
 			spans[i].first = starts[0]
 			spans[i].last = canonical.Len()
 		}
-		chapters[i] = models.EpubChapter{
-			SpineIndex: i,
-			Href:       d.Href,
-			Title:      d.Title,
-			Depth:      d.Depth,
-		}
-		index.Documents[i] = IndexedDoc{
+		perDoc[i] = IndexedDoc{
 			Href:         d.Href,
 			SpineIndex:   i,
 			Blocks:       starts,
@@ -278,27 +276,77 @@ func Canonicalize(doc *epub.Document) (string, string, []models.EpubChapter, *Bl
 		}
 	}
 	boundary := 0
+	textLen := make([]int, len(doc.Docs))
 	for i := range spans {
 		switch {
 		case spans[i].hasText:
-			chapters[i].CharStart = spans[i].first
-			chapters[i].CharEnd = spans[i].last
+			perDoc[i].CharStart = spans[i].first
+			perDoc[i].CharEnd = spans[i].last
 			if i != lastNonEmpty {
-				chapters[i].CharEnd++
+				perDoc[i].CharEnd++
 			}
-			index.Documents[i].CharStart = chapters[i].CharStart
-			index.Documents[i].CharEnd = chapters[i].CharEnd
-			boundary = chapters[i].CharEnd
+			boundary = perDoc[i].CharEnd
+			textLen[i] = perDoc[i].CharEnd - perDoc[i].CharStart
 		default:
-			chapters[i].CharStart = boundary
-			chapters[i].CharEnd = boundary
-			index.Documents[i].CharStart = boundary
-			index.Documents[i].CharEnd = boundary
+			perDoc[i].CharStart = boundary
+			perDoc[i].CharEnd = boundary
 		}
 	}
 
+	chapters, docs := foldChapters(doc, perDoc, textLen)
+	index.Documents = docs
 	index.CharCount = canonical.Len()
 	return canonical.String(), display.String(), chapters, index
+}
+
+// foldChapters folds the per-document index into one entry per chapter,
+// and builds the matching chapter rows.
+//
+// A chapter's block offsets are the concatenation of its documents' — the
+// offsets are absolute canonical positions, so concatenating them is exact
+// and nothing is recomputed. Its display range spans from the first
+// document's start to the last one's end, which is contiguous because the
+// display text was written in this same order, one newline between blocks.
+//
+// The result is that a chapter is still one addressable unit for the reader
+// (one row, one block list, one display range) even when the book stored it
+// as three files.
+func foldChapters(doc *epub.Document, perDoc []IndexedDoc, textLen []int) ([]models.EpubChapter, []IndexedDoc) {
+	groups := GroupChapters(doc, textLen)
+	chapters := make([]models.EpubChapter, 0, len(groups))
+	docs := make([]IndexedDoc, 0, len(groups))
+
+	for _, g := range groups {
+		row := g.chapterRow(doc)
+		merged := IndexedDoc{
+			Href:         perDoc[g.first].Href,
+			SpineIndex:   g.first,
+			CharStart:    perDoc[g.first].CharStart,
+			CharEnd:      perDoc[g.last].CharEnd,
+			DisplayStart: perDoc[g.first].DisplayStart,
+			DisplayEnd:   perDoc[g.last].DisplayEnd,
+		}
+		for i := g.first; i <= g.last; i++ {
+			// Images are anchored to a block index within their own
+			// document, so they shift by however many blocks the chapter
+			// already holds.
+			base := len(merged.Blocks)
+			for _, img := range perDoc[i].Images {
+				img.BeforeBlock += base
+				merged.Images = append(merged.Images, img)
+			}
+			merged.Blocks = append(merged.Blocks, perDoc[i].Blocks...)
+			// An empty document contributes no display bytes and collapses
+			// onto the boundary, so it must not drag the range backwards.
+			if perDoc[i].DisplayEnd > merged.DisplayEnd {
+				merged.DisplayEnd = perDoc[i].DisplayEnd
+			}
+		}
+		row.CharStart, row.CharEnd = merged.CharStart, merged.CharEnd
+		chapters = append(chapters, row)
+		docs = append(docs, merged)
+	}
+	return chapters, docs
 }
 
 // displayText prepares one block for reading: the book's own characters,

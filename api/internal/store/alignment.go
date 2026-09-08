@@ -50,7 +50,7 @@ const activeJobStates = `'queued','claimed','transcribing','aligning'`
 // and was returned as-is: enqueueing is idempotent while a job is in
 // flight, so a user hammering the button cannot stack duplicates.
 func (s *Store) EnqueueAlignment(ctx context.Context, userID, entryID string) (models.AlignmentJob, bool, error) {
-	if _, err := s.BookIDForEntry(ctx, userID, entryID); err != nil {
+	if _, err := s.BookFilesForEntry(ctx, userID, entryID); err != nil {
 		return models.AlignmentJob{}, false, err
 	}
 	text, audio, err := s.alignmentInputs(ctx, entryID)
@@ -153,7 +153,7 @@ func (s *Store) AlignmentJob(ctx context.Context, jobID string) (models.Alignmen
 // state, or nil when the entry has never been aligned. User-scoped:
 // someone else's entry is indistinguishable from an unknown one.
 func (s *Store) AlignmentJobForEntry(ctx context.Context, userID, entryID string) (models.AlignmentJob, error) {
-	if _, err := s.BookIDForEntry(ctx, userID, entryID); err != nil {
+	if _, err := s.BookFilesForEntry(ctx, userID, entryID); err != nil {
 		return models.AlignmentJob{}, err
 	}
 	row := s.db.QueryRowContext(ctx, `
@@ -534,7 +534,7 @@ func reclaimStaleJobs(ctx context.Context, tx *sql.Tx) (int, error) {
 // entries and deletes the entry's alignments — anchors, segments and
 // job history with them. This is the user-facing "stop / start over".
 func (s *Store) ClearAlignment(ctx context.Context, userID, entryID string) error {
-	if _, err := s.BookIDForEntry(ctx, userID, entryID); err != nil {
+	if _, err := s.BookFilesForEntry(ctx, userID, entryID); err != nil {
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

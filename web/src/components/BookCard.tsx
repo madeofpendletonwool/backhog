@@ -60,6 +60,20 @@ export function BookCard({ entry }: { entry: BookEntry }) {
             </div>
           )}
 
+          {/* A borrowed copy: read through somebody else's files, and worth
+              saying so — it is the difference between a book that will still
+              be readable next month and one that will not. Sits under the
+              status chip, which owns the top-left corner. */}
+          {entry.shared_by && (
+            <div
+              className="absolute left-2 top-9 inline-flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-lg bg-scrim/80 px-1.5 py-1 text-[11px] font-medium text-ink-300 backdrop-blur-sm"
+              title={`Shared with you by ${entry.shared_by}`}
+            >
+              <Gi name="gift" className="size-3 shrink-0" />
+              <span className="truncate">{entry.shared_by}</span>
+            </div>
+          )}
+
           <div className="absolute left-2 top-2">
             <StatusBadge
               status={entry.status}

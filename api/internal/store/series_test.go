@@ -25,7 +25,7 @@ func newTestStore(t *testing.T) *Store {
 
 func newTestUser(t *testing.T, s *Store, email, username string) string {
 	t.Helper()
-	u, err := s.CreateUser(context.Background(), email, username, "hash")
+	u, err := s.CreateUser(context.Background(), email, username, "hash", models.RoleMember)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}

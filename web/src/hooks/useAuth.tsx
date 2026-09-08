@@ -2,13 +2,28 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, type ReactNode } from "react";
 
 import { ApiError, api } from "@/lib/api";
-import type { User } from "@/lib/types";
+import { canManageMedia, isAdmin, type User } from "@/lib/types";
 
 interface AuthValue {
   user: User | null;
   loading: boolean;
+  /** Administers accounts, invites and server settings. */
+  isAdmin: boolean;
+  /**
+   * May touch the file layer: the attach flow, the NAS scan, primary-text
+   * promotion, alignment runs. False only for readers. Gating the UI on
+   * this is a courtesy — every one of those routes enforces it server-side
+   * too — but showing someone a button that always answers 403 is worse
+   * than not showing it.
+   */
+  canManageMedia: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, username: string, password: string) => Promise<void>;
+  register: (
+    email: string,
+    username: string,
+    password: string,
+    invite?: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -39,8 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    async (email: string, username: string, password: string) =>
-      setUser(await api.register(email, username, password)),
+    async (email: string, username: string, password: string, invite?: string) =>
+      setUser(await api.register(email, username, password, invite)),
     [setUser],
   );
 
@@ -51,9 +66,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.setQueryData(["me"], null);
   }, [queryClient]);
 
+  const user = data ?? null;
+
   return (
     <AuthContext.Provider
-      value={{ user: data ?? null, loading: isLoading, login, register, logout }}
+      value={{
+        user,
+        loading: isLoading,
+        isAdmin: isAdmin(user),
+        canManageMedia: canManageMedia(user),
+        login,
+        register,
+        logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

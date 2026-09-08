@@ -212,13 +212,13 @@ func (s *Server) handlePrimaryTextFile(w http.ResponseWriter, r *http.Request) {
 // entries: text files first with the canonical one at their head (each
 // carrying primary_text so the UI can say which), then audio in track order.
 func (s *Server) handleBookFiles(w http.ResponseWriter, r *http.Request) {
-	userID, err := auth.MustUserID(r.Context())
-	if err != nil {
+	user, ok := auth.UserFrom(r.Context())
+	if !ok {
 		fail(w, errUnauthorized)
 		return
 	}
 
-	files, err := s.store.MediaFilesForEntry(r.Context(), userID, chi.URLParam(r, "entryID"))
+	files, err := s.store.MediaFilesForEntry(r.Context(), user.ID, chi.URLParam(r, "entryID"))
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, errNotFound)
 		return
@@ -227,7 +227,28 @@ func (s *Server) handleBookFiles(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+	writeJSON(w, http.StatusOK, map[string]any{"files": redactPaths(files, user)})
+}
+
+// redactPaths blanks the NAS root and path on the way out to someone who may
+// not manage files. A reader still needs this list — it is how the book
+// detail page knows there is an audiobook to play and a text to read, and
+// how the player labels its tracks — but the directory layout of somebody
+// else's server is not part of that, and the file name is often the only
+// thing in the payload that was never meant to be read aloud.
+//
+// The rest of the row survives untouched: id, kind, duration, primary-text
+// flag, container metadata. Nothing downstream keys on path.
+func redactPaths(files []models.MediaFile, user models.User) []models.MediaFile {
+	if user.CanManageMedia() {
+		return files
+	}
+	out := make([]models.MediaFile, len(files))
+	for i, f := range files {
+		f.Root, f.Path = "", path.Base(f.Path)
+		out[i] = f
+	}
+	return out
 }
 
 type ignoreRequest struct {

@@ -125,6 +125,11 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/healthz", s.handleHealth)
 
 		r.Route("/auth", func(r chi.Router) {
+			// Unauthenticated on purpose: it is what the login page reads
+			// before anyone has an account, to know whether to offer a
+			// sign-up link and to resolve an invite token into the offer
+			// it represents.
+			r.Get("/config", s.handleAuthConfig)
 			r.Post("/register", s.handleRegister)
 			r.Post("/login", s.handleLogin)
 			r.Post("/logout", s.handleLogout)
@@ -185,19 +190,35 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/books/{entryID}/sessions", s.handleAddReadingSession)
 
 			// The attach flow: files on the NAS become this book's audio
-			// timeline and canonical text.
+			// timeline and canonical text. Reading the list is open to
+			// anyone who may read the book — it is how the detail page
+			// knows there is an audiobook at all, and the handler blanks
+			// the NAS paths for a reader — but every mutation is the file
+			// layer, and the file layer belongs to managers.
 			r.Get("/books/{entryID}/files", s.handleBookFiles)
-			r.Post("/books/{entryID}/files", s.handleAttachFiles)
-			r.Delete("/books/{entryID}/files/{fileID}", s.handleDetachFile)
-			r.Put("/books/{entryID}/files/{fileID}/primary", s.handlePrimaryTextFile)
+			r.With(auth.RequireMediaManager).Post("/books/{entryID}/files", s.handleAttachFiles)
+			r.With(auth.RequireMediaManager).Delete("/books/{entryID}/files/{fileID}", s.handleDetachFile)
+			r.With(auth.RequireMediaManager).Put("/books/{entryID}/files/{fileID}/primary", s.handlePrimaryTextFile)
+
+			// Sharing: who may read the files behind this book. The
+			// picker and both grants are the owner's own — a reader can
+			// share the books they attached, which is none of them, and
+			// the store scopes every one of these through an entry the
+			// caller owns.
+			r.Get("/books/{entryID}/shares", s.handleBookShares)
+			r.Post("/books/{entryID}/shares", s.handleShareBook)
+			r.Delete("/books/{entryID}/shares/{userID}", s.handleUnshareBook)
 
 			// Alignment: queue the text↔audio mapping, watch it run,
 			// clear it. The job is worked by an optional container
 			// through /internal; with no worker it just sits queued, and
-			// everything else about the book keeps working.
-			r.Post("/books/{entryID}/align", s.handleBookAlignEnqueue)
+			// everything else about the book keeps working. Watching is
+			// open to any reader of the book; starting and clearing a run
+			// writes shared state and costs real time on the worker, so
+			// both sit behind the file-layer gate.
+			r.With(auth.RequireMediaManager).Post("/books/{entryID}/align", s.handleBookAlignEnqueue)
 			r.Get("/books/{entryID}/align", s.handleBookAlignStatus)
-			r.Delete("/books/{entryID}/align", s.handleBookAlignDelete)
+			r.With(auth.RequireMediaManager).Delete("/books/{entryID}/align", s.handleBookAlignDelete)
 
 			// Search inside one book's text. It is the passage matcher's
 			// query profile inverted — a few remembered words instead of a
@@ -258,6 +279,9 @@ func (s *Server) Routes() http.Handler {
 			// list files for the attach UI, and serve the attach review
 			// queue.
 			r.Route("/media", func(r chi.Router) {
+				// The whole inventory is raw NAS paths and the controls
+				// that repoint them. None of it is a reader's business.
+				r.Use(auth.RequireMediaManager)
 				r.Get("/scan", s.handleMediaScan)
 				r.Post("/scan", s.handleMediaScan)
 				r.Get("/files", s.handleMediaFiles)
@@ -271,6 +295,31 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/season", s.handleSeason)
 				r.Get("/reading-season", s.handleReadingSeason)
 				r.Post("/{achievementID}/egg", s.handleAchievementEgg)
+			})
+
+			// Both halves of "who has what": books this account shared
+			// out, and books other people shared with it.
+			r.Get("/shares", s.handleSharesOverview)
+
+			// Account management. Everything under here needs the admin
+			// role, which answers 403 rather than 404: this is a fixed
+			// route that either exists for you or does not, not a row
+			// whose existence a status code could leak.
+			r.Route("/admin", func(r chi.Router) {
+				r.Use(auth.RequireAdmin)
+
+				r.Get("/users", s.handleListUsers)
+				r.Patch("/users/{userID}", s.handleUpdateUser)
+				r.Post("/users/{userID}/password", s.handleAdminResetPassword)
+				r.Delete("/users/{userID}", s.handleDeleteUser)
+
+				r.Get("/settings", s.handleGetServerSettings)
+				r.Put("/settings", s.handleUpdateServerSettings)
+
+				r.Get("/invites", s.handleListInvites)
+				r.Post("/invites", s.handleCreateInvite)
+				r.Post("/invites/{inviteID}/revoke", s.handleRevokeInvite)
+				r.Delete("/invites/{inviteID}", s.handleDeleteInvite)
 			})
 
 			r.Delete("/sessions/{sessionID}", s.handleDeleteSession)

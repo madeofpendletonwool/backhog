@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { BookCover } from "@/components/BookCover";
 import { PhysicalCopyPanel } from "@/components/PhysicalCopyPanel";
+import { ShareBookPanel } from "@/components/ShareBookPanel";
 import { SearchInBookDialog } from "@/components/SearchInBookDialog";
 import { ListMembership, ProjectMembership } from "@/components/EntryMembership";
 import { StatusMenu } from "@/components/StatusMenu";
@@ -220,6 +221,8 @@ export function BookDetailPage() {
           </Panel>
 
           <AttachedFormats entryId={entry.id} />
+
+          <SharePanel entryId={entry.id} />
 
           <UnattachedFiles entryId={entry.id} />
 
@@ -496,6 +499,21 @@ function Editions({ editions }: { editions: BookEdition[] }) {
  * It renders only for books with a choice to make. One format is not a
  * decision anyone needs to see.
  */
+/**
+ * The lending panel, fed from the same cached file list every other panel on
+ * this page reads. It renders nothing for a book with no files attached, and
+ * nothing for a copy that is somebody else's to lend.
+ */
+function SharePanel({ entryId }: { entryId: string }) {
+  const { data } = useQuery({
+    queryKey: ["bookFiles", entryId],
+    queryFn: () => api.bookFiles(entryId),
+  });
+  const files = data?.files ?? [];
+  if (files.length === 0) return null;
+  return <ShareBookPanel entryId={entryId} files={files} />;
+}
+
 function AttachedFormats({ entryId }: { entryId: string }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);

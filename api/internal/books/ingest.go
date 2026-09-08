@@ -66,7 +66,7 @@ func (ing *Ingester) DisplayPath(id string) string {
 // EnsureForEntry parses (or re-parses) the EPUB attached to a user's book
 // entry and returns its canonical-text row.
 func (ing *Ingester) EnsureForEntry(ctx context.Context, userID, entryID string) (models.EpubText, error) {
-	bookID, err := ing.store.BookIDForEntry(ctx, userID, entryID)
+	bookID, err := ing.store.BookFilesForEntry(ctx, userID, entryID)
 	if err != nil {
 		return models.EpubText{}, err
 	}

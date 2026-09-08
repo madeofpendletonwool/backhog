@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -14,6 +15,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
+	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
 
@@ -483,10 +485,37 @@ func TestAlignEnqueueNeedsBothHalves(t *testing.T) {
 	}
 	stranger := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 	register(t, app.ts.URL, stranger, "nosy@example.com", "nosy", "hogwash123")
+
+	// A self-service sign-up lands on `reader`, which is refused at the role
+	// gate before ownership is ever consulted: a reader may not start an
+	// alignment run on any book, including one of their own.
+	status, _ = app.call(t, stranger, http.MethodPost, "/api/books/"+alignEntry+"/align", "", nil)
+	if status != http.StatusForbidden {
+		t.Errorf("reader enqueue = %d, want 403", status)
+	}
+
+	// Past the role gate, the entry is still someone else's, and that is a
+	// plain 404 — a member must not be able to tell a foreign entry id from
+	// one that was never issued.
+	strangerID := userIDByEmail(t, app.store, "nosy@example.com")
+	if _, err := app.store.SetUserRole(context.Background(), strangerID, models.RoleMember); err != nil {
+		t.Fatalf("promote stranger: %v", err)
+	}
 	status, _ = app.call(t, stranger, http.MethodPost, "/api/books/"+alignEntry+"/align", "", nil)
 	if status != http.StatusNotFound {
 		t.Errorf("stranger enqueue = %d, want 404", status)
 	}
+}
+
+// userIDByEmail looks an account up the way a test fixture has to: the
+// register helper drives the HTTP API and never returns the id.
+func userIDByEmail(t *testing.T, st *store.Store, email string) string {
+	t.Helper()
+	user, _, err := st.GetUserByEmail(context.Background(), email)
+	if err != nil {
+		t.Fatalf("look up %s: %v", email, err)
+	}
+	return user.ID
 }
 
 func TestAlignDeleteClearsEverything(t *testing.T) {

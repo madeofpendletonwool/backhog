@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { Spinner } from "./components/ui/primitives";
 import { useAuth } from "./hooks/useAuth";
 import { AchievementsPage } from "./pages/AchievementsPage";
+import { AdminPage } from "./pages/AdminPage";
 import { BookDetailPage } from "./pages/BookDetailPage";
 import { BookFilesPage } from "./pages/BookFilesPage";
 import { BookLibraryPage } from "./pages/BookLibraryPage";
@@ -71,6 +72,9 @@ export function App() {
         <Route path="/books/:entryId" element={<BookDetailPage />} />
         <Route path="/books/:entryId/read" element={<BookReaderPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        {/* The page turns a non-admin away itself; the API refuses them
+            regardless. */}
+        <Route path="/admin" element={<AdminPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

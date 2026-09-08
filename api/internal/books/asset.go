@@ -53,7 +53,7 @@ type Asset struct {
 // script if it is ever navigated to directly, and there is no version of
 // "render the book" that is worth that.
 func (ing *Ingester) OpenAsset(ctx context.Context, userID, entryID, href string) (Asset, error) {
-	bookID, err := ing.store.BookIDForEntry(ctx, userID, entryID)
+	bookID, err := ing.store.BookFilesForEntry(ctx, userID, entryID)
 	if err != nil {
 		return Asset{}, err
 	}

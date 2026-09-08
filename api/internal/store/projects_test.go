@@ -525,7 +525,7 @@ func TestProjectItemMembership(t *testing.T) {
 func TestProjectIsolation(t *testing.T) {
 	s, userID := newProjectsStore(t)
 	ctx := context.Background()
-	other, err := s.CreateUser(ctx, "other@example.com", "other", "hash")
+	other, err := s.CreateUser(ctx, "other@example.com", "other", "hash", models.RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Dialog } from "@/components/ui/Dialog";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Panel, Select, Spinner } from "@/components/ui/primitives";
+import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { byline, formatDuration } from "@/lib/format";
@@ -50,6 +51,7 @@ async function findBookEntry(bookId: string): Promise<string | null> {
  * real NAS has hundreds of these.
  */
 export function BookFilesPage() {
+  const { canManageMedia, loading: authLoading } = useAuth();
   const queryClient = useQueryClient();
   const [pickFor, setPickFor] = useState<MediaCandidate | null>(null);
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
@@ -57,10 +59,20 @@ export function BookFilesPage() {
   const [showSkipped, setShowSkipped] = useState(false);
   const [kind, setKind] = useState<"" | "audio" | "epub">("");
 
-  const scan = useQuery({ queryKey: ["media", "scan"], queryFn: api.mediaScanStatus });
+  // A reader cannot attach anything, and every request this page makes
+  // would answer 403. The nav already drops the link; this covers a
+  // bookmark, and says why rather than showing a page of failed panels.
+  const allowed = canManageMedia;
+
+  const scan = useQuery({
+    queryKey: ["media", "scan"],
+    queryFn: api.mediaScanStatus,
+    enabled: allowed,
+  });
   const queue = useQuery({
     queryKey: ["media", "candidates"],
     queryFn: api.mediaCandidates,
+    enabled: allowed,
   });
 
   // While a scan runs, poll both the progress counters and the queue it is
@@ -172,6 +184,25 @@ export function BookFilesPage() {
   // safest thing in the queue — formats of books already confirmed, which
   // attach without touching what any of those books is read from.
   const alternateCount = bulkable.filter((c) => c.alternate_format).length;
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Spinner className="size-6" />
+      </div>
+    );
+  }
+  if (!allowed) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 lg:px-8">
+        <EmptyState
+          icon={<Gi name="lock" className="size-7" />}
+          title="Not your shelf to rearrange"
+          description="This page points library files at books, which changes what everyone on this server reads. Your account reads and listens; ask whoever runs it if you need more."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">

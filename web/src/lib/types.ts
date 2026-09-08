@@ -152,6 +152,12 @@ export interface BookEdition {
 interface EntryFields {
   id: string;
   status: Status;
+  /**
+   * The account whose attached files this book is read through, when they
+   * are not your own — the "Colin's copy" badge. Absent for everything
+   * else, including a book you attached yourself and one with no files.
+   */
+  shared_by?: string;
   platform_id: number | null;
   user_rating: number | null;
   notes: string;
@@ -192,11 +198,126 @@ export function isBookEntry(entry: Entry): entry is BookEntry {
   return entry.media_type === "book";
 }
 
+/**
+ * What an account may touch, in order.
+ *
+ * - `admin` administers accounts, invites and server settings on top of
+ *   everything a member can do. There is always at least one.
+ * - `member` is the full application, file management included.
+ * - `reader` is the full application minus the file layer: they read,
+ *   listen, track, rate, queue, curate and collect achievements, but do
+ *   not attach or detach files, move a book's primary text, kick the NAS
+ *   scan or start an alignment run.
+ */
+export type Role = "admin" | "member" | "reader";
+
+export const ROLES: Role[] = ["admin", "member", "reader"];
+
+/** How each role is named and explained wherever one is chosen. */
+export const ROLE_COPY: Record<Role, { label: string; blurb: string }> = {
+  admin: {
+    label: "Administrator",
+    blurb: "Everything, plus accounts, invites and server settings.",
+  },
+  member: {
+    label: "Member",
+    blurb: "The whole app, including attaching files and scanning the library.",
+  },
+  reader: {
+    label: "Reader",
+    blurb: "Reads, listens and tracks their own shelf. Cannot manage library files.",
+  },
+};
+
 export interface User {
   id: string;
   email: string;
   username: string;
+  role: Role;
+  /** Set on a suspended account, which cannot sign in at all. */
+  disabled_at?: string | null;
   created_at: string;
+}
+
+/** True for everyone but a reader — see {@link Role}. */
+export function canManageMedia(user: Pick<User, "role"> | null | undefined): boolean {
+  return !!user && user.role !== "reader";
+}
+
+export function isAdmin(user: Pick<User, "role"> | null | undefined): boolean {
+  return user?.role === "admin";
+}
+
+/** A user row in the account panel, with what removing it would cost. */
+export interface AdminUser extends User {
+  entry_count: number;
+  shared_count: number;
+  received_count: number;
+  last_seen_at?: string | null;
+}
+
+/** The admin-editable server configuration. */
+export interface ServerSettings {
+  registration_enabled: boolean;
+  default_role: Role;
+}
+
+export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
+
+/** A single-use sign-up link. `token` is present only on the response that
+ *  created it — the server stores a hash, so a lost link is reissued, not
+ *  recovered. */
+export interface Invite {
+  id: string;
+  email: string;
+  role: Role;
+  note: string;
+  status: InviteStatus;
+  token?: string;
+  created_by_username: string;
+  accepted_by_username?: string;
+  expires_at: string;
+  accepted_at?: string;
+  revoked_at?: string;
+  created_at: string;
+}
+
+/** What the sign-in pages read before anyone has an account. */
+export interface AuthConfig {
+  registration_enabled: boolean;
+  /** No accounts exist yet: the first sign-up is always allowed and becomes
+   *  the administrator. */
+  setup: boolean;
+  invite?: {
+    email: string;
+    role: Role;
+    invited_by: string;
+    expires_at: string;
+  };
+}
+
+/** One account a book can be shared with, and whether it already is. */
+export interface ShareCandidate {
+  user_id: string;
+  username: string;
+  role: Role;
+  shared: boolean;
+  /** Whether they have added this book to their own shelf yet. */
+  in_library: boolean;
+}
+
+/** One grant: the files behind this book, readable by this person. */
+export interface BookShare {
+  id: string;
+  book_id: string;
+  book_title?: string;
+  owner_id: string;
+  owner_username?: string;
+  user_id: string;
+  username: string;
+  user_email?: string;
+  shared_at: string;
+  in_library: boolean;
 }
 
 export interface Stats {
@@ -666,6 +787,13 @@ export interface MediaFile {
    * user owns and nothing reads. Always false for audio.
    */
   primary_text?: boolean;
+  /**
+   * The account that pointed this file at its book, and so the one whose
+   * permission a second reader needs. Null means nobody owns it — an
+   * attachment that predates ownership, or one whose owner's account is
+   * gone — and such a file is open to everyone.
+   */
+  attached_by?: string | null;
   missing_at?: string | null;
 }
 

@@ -78,7 +78,7 @@ func matchCandidatesWith(t *testing.T, provider metadata.BookProvider, library [
 
 func testUser(t *testing.T, st *store.Store) string {
 	t.Helper()
-	u, err := st.CreateUser(context.Background(), "matcher@example.com", "matcher", "hash")
+	u, err := st.CreateUser(context.Background(), "matcher@example.com", "matcher", "hash", models.RoleMember)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}

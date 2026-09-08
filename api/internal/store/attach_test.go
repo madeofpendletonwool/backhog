@@ -122,7 +122,7 @@ func TestAttachMediaFilesScoping(t *testing.T) {
 	userID, book1, book2, audioIDs, _ := seedAttachFixture(t, s)
 	entry := entryFor(t, s, userID, book1)
 	otherEntry := entryFor(t, s, userID, book2)
-	other, err := s.CreateUser(ctx, "other@example.com", "other", "hashhash")
+	other, err := s.CreateUser(ctx, "other@example.com", "other", "hashhash", models.RoleMember)
 	if err != nil {
 		t.Fatalf("other user: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestMediaIgnores(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	userID, _, _, audioIDs, epubID := seedAttachFixture(t, s)
-	other, err := s.CreateUser(ctx, "ignore@example.com", "ignorer", "hashhash")
+	other, err := s.CreateUser(ctx, "ignore@example.com", "ignorer", "hashhash", models.RoleMember)
 	if err != nil {
 		t.Fatalf("other user: %v", err)
 	}

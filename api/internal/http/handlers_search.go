@@ -174,7 +174,8 @@ func (s *Server) searchViewsFor(ctx context.Context, userID, entryID, bookID str
 	if v, ok := s.searchViews.get(key); ok {
 		return v, nil
 	}
-	v, err := s.loadBookViews(ctx, userID, entryID, bookID)
+	// Reached through bookEntry, so file access is already established.
+	v, err := s.loadBookViews(ctx, userID, entryID, bookID, true)
 	if err != nil {
 		return v, err
 	}

@@ -74,11 +74,153 @@ func ValidStatus(s string) bool {
 	return false
 }
 
+// Roles, in order of what they may touch. The ladder is deliberately short:
+// the only distinction the app actually needs is between someone who uses the
+// library and someone who administers the files under it, plus a third rung
+// for the person who administers the accounts.
+const (
+	// RoleAdmin manages accounts, invites and server settings on top of
+	// everything a member can do. There is always at least one.
+	RoleAdmin = "admin"
+	// RoleMember is the full application, file management included: the
+	// attach flow, the media scan, primary-text promotion, alignment runs.
+	RoleMember = "member"
+	// RoleReader is the full application minus the file layer. A reader
+	// reads, listens, tracks, rates, queues, curates lists and projects,
+	// pins their own printing's pages and earns achievements; they cannot
+	// attach or detach files, move a book's primary text, kick the NAS
+	// scan, browse raw library paths, or queue an alignment run.
+	RoleReader = "reader"
+)
+
+// AllRoles lists every role, most privileged first.
+var AllRoles = []string{RoleAdmin, RoleMember, RoleReader}
+
+// ValidRole reports whether s is a real role.
+func ValidRole(s string) bool {
+	switch s {
+	case RoleAdmin, RoleMember, RoleReader:
+		return true
+	}
+	return false
+}
+
 type User struct {
+	ID       string `json:"id"`
+	Email    string `json:"email"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	// DisabledAt is set on an account that has been suspended. A disabled
+	// user cannot authenticate at all: the session resolver refuses to
+	// return them, which retires every live session without deleting one.
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// IsAdmin reports whether the user administers accounts and settings.
+func (u User) IsAdmin() bool { return u.Role == RoleAdmin }
+
+// CanManageMedia reports whether the user may change the file layer: attach
+// and detach media, promote a primary text, kick the scan, browse the raw
+// inventory, queue an alignment. Readers may not; everyone else may.
+//
+// The empty role reads as a manager on purpose. It is what a User built by
+// a test fixture or an older code path carries, and defaulting a *missing*
+// role to "restricted" would fail closed in the one place failing closed is
+// wrong: it would silently break the owner's own attach page.
+func (u User) CanManageMedia() bool { return u.Role != RoleReader }
+
+// AdminUser is a user row as the account panel renders it: the account plus
+// the numbers that say what disabling or deleting it would cost, so the
+// decision is not made blind.
+type AdminUser struct {
+	User
+	// EntryCount is how many library entries the account owns — games and
+	// books together. Deleting the account destroys all of them.
+	EntryCount int `json:"entry_count"`
+	// SharedCount is how many books this account has shared out to others.
+	SharedCount int `json:"shared_count"`
+	// ReceivedCount is how many books others have shared with it.
+	ReceivedCount int `json:"received_count"`
+	// LastSeenAt is when their newest live session was issued, or nil when
+	// they have none. It is a coarse "have they logged in lately", not
+	// activity tracking: nothing records a request.
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+}
+
+// Invite is a single-use sign-up link an admin hands to someone. The token
+// itself is only ever in Token, only on the response that created it — the
+// database holds a hash.
+type Invite struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+	Note  string `json:"note"`
+	// Token is the secret half of the link, present only in the create
+	// response. Every later read leaves it empty.
+	Token       string     `json:"token,omitempty"`
+	CreatedBy   string     `json:"created_by"`
+	CreatedByAs string     `json:"created_by_username"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	AcceptedAt  *time.Time `json:"accepted_at,omitempty"`
+	AcceptedBy  string     `json:"accepted_by,omitempty"`
+	AcceptedAs  string     `json:"accepted_by_username,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// Status is the invite's lifecycle state, for display: pending, accepted,
+// revoked or expired.
+func (i Invite) Status(now time.Time) string {
+	switch {
+	case i.AcceptedAt != nil:
+		return "accepted"
+	case i.RevokedAt != nil:
+		return "revoked"
+	case !i.ExpiresAt.After(now):
+		return "expired"
+	}
+	return "pending"
+}
+
+// BookShare is one grant: the files the owner attached to this book may be
+// read and listened to by the recipient, through the recipient's own library
+// entry and with their own position, progress and reading sessions.
+type BookShare struct {
 	ID        string    `json:"id"`
-	Email     string    `json:"email"`
+	BookID    string    `json:"book_id"`
+	BookTitle string    `json:"book_title,omitempty"`
+	OwnerID   string    `json:"owner_id"`
+	OwnerName string    `json:"owner_username,omitempty"`
+	UserID    string    `json:"user_id"`
 	Username  string    `json:"username"`
-	CreatedAt time.Time `json:"created_at"`
+	UserEmail string    `json:"user_email,omitempty"`
+	SharedAt  time.Time `json:"shared_at"`
+	// InLibrary reports whether the recipient has this book on their own
+	// shelf yet. A share grants access; it does not reach into someone
+	// else's library and add rows to it.
+	InLibrary bool `json:"in_library"`
+}
+
+// ShareCandidate is one account a book can be shared with, and whether it
+// already is. It carries no more of the account than the picker renders.
+type ShareCandidate struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	Shared   bool   `json:"shared"`
+	// InLibrary reports whether they have already added this book.
+	InLibrary bool `json:"in_library"`
+}
+
+// ServerSettings is the admin-editable server configuration held in the
+// database, as opposed to the deployment configuration held in the
+// environment.
+type ServerSettings struct {
+	// RegistrationEnabled allows sign-up without an invite token.
+	RegistrationEnabled bool `json:"registration_enabled"`
+	// DefaultRole is the role a self-service registration lands on.
+	DefaultRole string `json:"default_role"`
 }
 
 type NamedRef struct {
@@ -154,11 +296,16 @@ type BookEdition struct {
 // two is set — the other is omitted from the payload rather than serialised
 // as an empty object.
 type Entry struct {
-	ID            string     `json:"id"`
-	MediaType     string     `json:"media_type"`
-	Game          *Game      `json:"game,omitempty"`
-	Book          *Book      `json:"book,omitempty"`
-	Status        string     `json:"status"`
+	ID        string `json:"id"`
+	MediaType string `json:"media_type"`
+	Game      *Game  `json:"game,omitempty"`
+	Book      *Book  `json:"book,omitempty"`
+	Status    string `json:"status"`
+	// SharedBy names the account whose attached files this book is read
+	// through, when they are not the reader's own — the badge that says
+	// "this is Colin's copy". Empty for everything else, including a book
+	// whose files the reader attached and a book with no files at all.
+	SharedBy      string     `json:"shared_by,omitempty"`
 	PlatformID    *int64     `json:"platform_id"`
 	UserRating    *int       `json:"user_rating"`
 	Notes         string     `json:"notes"`
@@ -330,10 +477,10 @@ type ProjectProgress struct {
 // Project is a temporary objective. Lists answer "what exists"; projects
 // answer "what am I trying to accomplish", and they end.
 type Project struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Kind        string    `json:"kind"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
 	// MediaScope is the arena this project lives in ('game' or 'book') — it
 	// decides which half of the library feeds the project's progress.
 	MediaScope  string    `json:"media_scope"`
@@ -758,14 +905,19 @@ type MediaFile struct {
 	// BookID is the attached book. Plain TEXT with no FK by design: the books
 	// table arrives in migration 00011 and the FK is added once it is
 	// guaranteed present. NULL means not attached yet.
-	BookID    *string   `json:"book_id,omitempty"`
+	BookID *string `json:"book_id,omitempty"`
 	// PrimaryText marks the one text-side file whose canonical text this
 	// book's offsets are measured against. Always false for audio. A book
 	// with several text files — the same title as both .epub and .mobi —
 	// has exactly one primary (enforced by a partial unique index); the
 	// others are owned formats that are never parsed and never read from.
-	PrimaryText bool      `json:"primary_text"`
-	ScannedAt   time.Time `json:"scanned_at"`
+	PrimaryText bool `json:"primary_text"`
+	// AttachedBy is the account that pointed this file at its book, and so
+	// the account whose permission a second reader needs. NULL means the
+	// attachment predates ownership or its owner's account is gone; such a
+	// file is open to everyone, because there is nobody left to ask.
+	AttachedBy *string   `json:"attached_by,omitempty"`
+	ScannedAt  time.Time `json:"scanned_at"`
 	// MissingAt is set when the path disappeared from its root; the row is
 	// kept so the BookID association survives a temporarily-unmounted NAS.
 	MissingAt *time.Time `json:"missing_at,omitempty"`

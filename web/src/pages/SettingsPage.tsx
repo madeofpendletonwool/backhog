@@ -1,5 +1,6 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { Field } from "./LoginPage";
 import { StatsStrip } from "@/components/StatsStrip";
@@ -18,12 +19,13 @@ import {
   type ThemeFamily,
 } from "@/hooks/useTheme";
 import { api } from "@/lib/api";
+import { ROLE_COPY } from "@/lib/types";
 import { ARENAS, ARENA_LABELS, type Arena } from "@/lib/arena";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/format";
 
 export function SettingsPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const { linked, setLinked } = useTheme();
   const { arena } = useArena();
   const navigate = useNavigate();
@@ -122,8 +124,30 @@ export function SettingsPage() {
               <dt className="text-ink-500">Member since</dt>
               <dd className="text-ink-200">{formatDate(user?.created_at ?? null)}</dd>
             </div>
+            <div className="flex justify-between">
+              <dt className="text-ink-500">Role</dt>
+              <dd className="text-ink-200">
+                {user ? ROLE_COPY[user.role].label : "—"}
+              </dd>
+            </div>
           </dl>
+          {user && (
+            <p className="mt-3 text-xs leading-relaxed text-ink-500">
+              {ROLE_COPY[user.role].blurb}
+            </p>
+          )}
+          {isAdmin && (
+            <Link
+              to="/admin"
+              className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-brand-400 hover:text-brand-300"
+            >
+              <Gi name="family-tree" className="size-4" />
+              Manage accounts and invites
+            </Link>
+          )}
         </Panel>
+
+        <SharingPanel />
 
         <Panel className="p-5">
           <h2 className="mb-1 text-sm font-semibold text-ink-200">Change password</h2>
@@ -198,6 +222,97 @@ export function SettingsPage() {
 
       <SteamImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
+  );
+}
+
+/**
+ * Who has your books, and whose books you have.
+ *
+ * Sharing itself happens on a book's own page — that is where you are when
+ * you decide to lend something. This is the ledger: one place to see every
+ * grant at once, and to take one back without hunting for the book it
+ * belongs to. It renders nothing on a server where nothing has been shared
+ * in either direction.
+ */
+function SharingPanel() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ["shares"], queryFn: api.shares });
+  const [error, setError] = useState("");
+
+  // A share grants access; it never reaches into someone else's library and
+  // puts rows in it. So a borrowed book needs one deliberate click to land
+  // on your shelf, and this is the only place that click makes sense —
+  // hunting the title down in Open Library to add a book you have already
+  // been handed is exactly the friction the button removes.
+  const shelve = useMutation({
+    mutationFn: (bookId: string) => api.addBookToLibrary(bookId),
+    onSuccess: () => {
+      setError("");
+      void queryClient.invalidateQueries({ queryKey: ["shares"] });
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const shared = data?.shared ?? [];
+  const received = data?.received ?? [];
+  if (shared.length === 0 && received.length === 0) return null;
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">Shared books</h2>
+      <p className="mb-4 text-xs leading-relaxed text-ink-500">
+        A shared book is read on the borrower&rsquo;s own shelf, at their own place in it.
+        Nothing about your copy — your progress, your notes, your rating — is visible to them.
+      </p>
+
+      {shared.length > 0 && (
+        <div className="mb-4">
+          <h3 className="mb-2 text-xs font-semibold text-ink-300">You lent out</h3>
+          <ul className="divide-y divide-line">
+            {shared.map((share) => (
+              <li key={share.id} className="flex flex-wrap items-baseline gap-x-2 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate text-ink-200">{share.book_title}</span>
+                <span className="text-xs text-ink-500">
+                  to {share.username}
+                  {!share.in_library && " · not on their shelf yet"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="mb-3 rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          {error}
+        </p>
+      )}
+
+      {received.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold text-ink-300">Lent to you</h3>
+          <ul className="divide-y divide-line">
+            {received.map((share) => (
+              <li key={share.id} className="flex flex-wrap items-center gap-x-2 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate text-ink-200">{share.book_title}</span>
+                <span className="text-xs text-ink-500">from {share.owner_username}</span>
+                {!share.in_library && (
+                  <Button
+                    size="sm"
+                    disabled={shelve.isPending}
+                    onClick={() => shelve.mutate(share.book_id)}
+                  >
+                    <Gi name="plus" className="size-3.5" />
+                    Add to shelf
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Panel>
   );
 }
 

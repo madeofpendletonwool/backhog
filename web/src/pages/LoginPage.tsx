@@ -4,9 +4,15 @@ import { Link } from "react-router-dom";
 import { AuthShell } from "./AuthShell";
 import { Button, Input } from "@/components/ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
+import { useAuthConfig } from "@/hooks/useAuthConfig";
 
 export function LoginPage() {
   const { login } = useAuth();
+  // An invite-only server should not advertise a sign-up form that will
+  // only ever answer 403. A fresh install with no accounts still offers it:
+  // that first sign-up is how the server gets an administrator at all.
+  const { data: config } = useAuthConfig();
+  const canSignUp = config?.registration_enabled || config?.setup;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -32,12 +38,16 @@ export function LoginPage() {
       title="Welcome back"
       subtitle="Sign in to get back to your backlog."
       footer={
-        <>
-          New here?{" "}
-          <Link to="/register" className="font-medium text-brand-400 hover:text-brand-300">
-            Create an account
-          </Link>
-        </>
+        canSignUp ? (
+          <>
+            New here?{" "}
+            <Link to="/register" className="font-medium text-brand-400 hover:text-brand-300">
+              {config?.setup ? "Set up this server" : "Create an account"}
+            </Link>
+          </>
+        ) : (
+          <>Accounts here are made by invitation.</>
+        )
       }
     >
       <form onSubmit={onSubmit} className="space-y-4">

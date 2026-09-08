@@ -121,7 +121,7 @@ type physicalCopyRequest struct {
 // work — page numbers of some other book are a client bug worth saying
 // out loud, not a 404.
 func (s *Server) handleCreateBookCopy(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -158,7 +158,7 @@ func (s *Server) handleCreateBookCopy(w http.ResponseWriter, r *http.Request) {
 // handleListBookCopies lists the caller's printings for one entry, each
 // with a count of its recorded page anchors.
 func (s *Server) handleListBookCopies(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -200,7 +200,7 @@ func parseCopyDueDate(v any) (*time.Time, error) {
 // it. The edition stays immutable: it is the copy's identity, and
 // anchors hang off it.
 func (s *Server) handleUpdateBookCopy(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -253,7 +253,7 @@ func (s *Server) handleUpdateBookCopy(w http.ResponseWriter, r *http.Request) {
 // page map stay — "returned" is a fact about possession, not a deletion —
 // and the same printing can be checked out again later.
 func (s *Server) handleReturnBookCopy(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -274,7 +274,7 @@ func (s *Server) handleReturnBookCopy(w http.ResponseWriter, r *http.Request) {
 // it. Re-registering the printing instead is a 409, on purpose — the map
 // already exists and the reopen is what keeps it.
 func (s *Server) handleReopenBookCopy(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -311,7 +311,7 @@ func (s *Server) handleReopenBookCopy(w http.ResponseWriter, r *http.Request) {
 // the book they had out from the library. The return state clears with
 // it; the page map, of course, stays.
 func (s *Server) handleOwnBookCopy(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -330,7 +330,7 @@ func (s *Server) handleOwnBookCopy(w http.ResponseWriter, r *http.Request) {
 // handleDeleteBookCopy drops a printing and its whole page map; the
 // copies can be re-scanned back into existence at any time.
 func (s *Server) handleDeleteBookCopy(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -363,7 +363,7 @@ type pageAnchorRequest struct {
 // nowhere would silently corrupt every interpolation over it — so the
 // text is parsed on demand here too.
 func (s *Server) handleSaveBookPageAnchor(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -407,7 +407,7 @@ func (s *Server) handleSaveBookPageAnchor(w http.ResponseWriter, r *http.Request
 
 // handleListBookCopyPages lists one copy's page map by page number.
 func (s *Server) handleListBookCopyPages(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}

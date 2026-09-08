@@ -25,14 +25,20 @@ func (s *Store) CreateSession(ctx context.Context, userID string) (string, time.
 }
 
 // UserForSession resolves a session token to its user, rejecting expired
-// sessions. Returns ErrNotFound for unknown or expired tokens.
+// sessions and disabled accounts. Returns ErrNotFound for unknown or expired
+// tokens.
+//
+// Disabling is enforced here rather than at each handler because this is the
+// single gate every authenticated request passes through: an account
+// suspended mid-session stops working on its very next request, without
+// anyone having to hunt down its cookies.
 func (s *Store) UserForSession(ctx context.Context, sessionID string) (models.User, error) {
 	var u models.User
 	err := s.db.QueryRowContext(ctx, `
-		SELECT u.id, u.email, u.username, u.created_at
+		SELECT u.id, u.email, u.username, u.role, u.disabled_at, u.created_at
 		FROM sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.id = ? AND s.expires_at > CURRENT_TIMESTAMP`, sessionID).
-		Scan(&u.ID, &u.Email, &u.Username, &u.CreatedAt)
+		WHERE s.id = ? AND s.expires_at > CURRENT_TIMESTAMP AND u.disabled_at IS NULL`, sessionID).
+		Scan(&u.ID, &u.Email, &u.Username, &u.Role, &u.DisabledAt, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.User{}, ErrNotFound
 	}

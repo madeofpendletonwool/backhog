@@ -50,6 +50,13 @@ import type {
   SteamMatch,
   TonightPicks,
   User,
+  AdminUser,
+  AuthConfig,
+  BookShare,
+  Invite,
+  Role,
+  ServerSettings,
+  ShareCandidate,
 } from "./types";
 
 /** An API error carrying the HTTP status, so callers can special-case 401. */
@@ -91,10 +98,19 @@ export const api = {
   login: (email: string, password: string) =>
     request<User>("/auth/login", { method: "POST", body: body({ email, password }) }),
 
-  register: (email: string, username: string, password: string) =>
+  /**
+   * What the sign-in pages may offer. Unauthenticated: it is read before
+   * anyone has an account. Pass a token to resolve it into the offer it
+   * represents — an unknown, spent or expired one simply comes back with no
+   * invite attached, because the four cases are not distinguished.
+   */
+  authConfig: (invite?: string) =>
+    request<AuthConfig>(`/auth/config${invite ? `?invite=${encodeURIComponent(invite)}` : ""}`),
+
+  register: (email: string, username: string, password: string, invite?: string) =>
     request<User>("/auth/register", {
       method: "POST",
-      body: body({ email, username, password }),
+      body: body({ email, username, password, invite: invite || undefined }),
     }),
 
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
@@ -243,6 +259,59 @@ export const api = {
       method: "POST",
       body: body({ entry_id, before_id, after_id }),
     }),
+
+  // --- accounts (admin) -------------------------------------------------
+  adminUsers: () => request<{ users: AdminUser[] }>("/admin/users"),
+
+  /** Change a role, suspend an account, or restore one. */
+  updateUser: (userId: string, changes: { role?: Role; disabled?: boolean }) =>
+    request<User>(`/admin/users/${userId}`, { method: "PATCH", body: body(changes) }),
+
+  /** Set someone else's password, revoking every session they had. */
+  resetUserPassword: (userId: string, newPassword: string) =>
+    request<{ ok: boolean }>(`/admin/users/${userId}/password`, {
+      method: "POST",
+      body: body({ new_password: newPassword }),
+    }),
+
+  /** Irreversible: takes the account's whole library with it. */
+  deleteUser: (userId: string) =>
+    request<{ ok: boolean }>(`/admin/users/${userId}`, { method: "DELETE" }),
+
+  serverSettings: () => request<ServerSettings>("/admin/settings"),
+
+  saveServerSettings: (settings: ServerSettings) =>
+    request<ServerSettings>("/admin/settings", { method: "PUT", body: body(settings) }),
+
+  invites: () => request<{ invites: Invite[] }>("/admin/invites"),
+
+  /** The response is the only time the token exists — show it immediately. */
+  createInvite: (input: { email?: string; role: Role; note?: string; days?: number }) =>
+    request<Invite>("/admin/invites", { method: "POST", body: body(input) }),
+
+  revokeInvite: (inviteId: string) =>
+    request<{ ok: boolean }>(`/admin/invites/${inviteId}/revoke`, { method: "POST" }),
+
+  deleteInvite: (inviteId: string) =>
+    request<{ ok: boolean }>(`/admin/invites/${inviteId}`, { method: "DELETE" }),
+
+  // --- sharing ----------------------------------------------------------
+  /** Every account this book could be shared with, flagged with whether it is. */
+  bookShares: (entryId: string) =>
+    request<{ candidates: ShareCandidate[] }>(`/books/${entryId}/shares`),
+
+  shareBook: (entryId: string, userId: string) =>
+    request<BookShare>(`/books/${entryId}/shares`, {
+      method: "POST",
+      body: body({ user_id: userId }),
+    }),
+
+  /** Takes back the grant and nothing else: their entry and progress stay. */
+  unshareBook: (entryId: string, userId: string) =>
+    request<{ ok: boolean }>(`/books/${entryId}/shares/${userId}`, { method: "DELETE" }),
+
+  /** Both halves of "who has what": shared out, and shared with you. */
+  shares: () => request<{ shared: BookShare[]; received: BookShare[] }>("/shares"),
 
   // --- lists ----------------------------------------------------------
   lists: () => request<{ lists: GameList[] }>("/lists"),

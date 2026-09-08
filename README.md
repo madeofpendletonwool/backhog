@@ -49,7 +49,22 @@ Library and read, listen, and track them on the same spine — see
   the text for the line you half-remember and be told what page it is on and
   what minute of the audiobook it is in (see
   [Books](#books) and [docs/BOOKS.md](docs/BOOKS.md))
-- **Multi-user** — real accounts, fully isolated libraries, shared metadata cache
+- **Multi-user** — real accounts, fully isolated libraries, shared metadata cache.
+  Three roles: **admins** manage accounts and settings, **members** get the whole
+  app including the file layer, and **readers** get everything *except* it — they
+  read, listen, track, rate, queue and collect achievements, but cannot attach or
+  detach library files, move a book's primary text, run the scanner or start an
+  alignment. That is the account to give a friend
+- **Invites and a closed door** — turn self-service sign-up off and hand out
+  single-use invite links instead, each carrying the role the account lands on.
+  Admins can also suspend an account (which retires its sessions on the next
+  request), reset a forgotten password, or delete one outright
+- **Lending books** — share a book with someone else on your server and they read
+  and listen to it on their own shelf, with their own place in it, their own
+  reading sessions and their own rating. Nothing of yours is visible to them.
+  Taking the share back takes the files and nothing else: their progress survives,
+  and re-sharing later picks up where they left off (see
+  [Accounts and sharing](#accounts-and-sharing))
 
 Go API · SQLite · React + Vite + Tailwind · Docker Compose.
 
@@ -203,6 +218,46 @@ discard `Secure` cookies on non-HTTPS origins, and login just appears to do
 nothing.
 
 ---
+
+## Accounts and sharing
+
+The first account created on a fresh server becomes its administrator, whatever
+the registration setting says — otherwise a deployment shipped with the door shut
+could never open it. Everything else is decided under **Accounts** in the sidebar.
+
+**Roles**
+
+| | admin | member | reader |
+|---|---|---|---|
+| Read, listen, track, rate, queue, lists, projects, achievements | ✅ | ✅ | ✅ |
+| Physical copies and page anchors for their own printing | ✅ | ✅ | ✅ |
+| Attach/detach files, promote a primary text, run the scanner | ✅ | ✅ | ❌ |
+| Browse raw NAS paths, start or clear an alignment run | ✅ | ✅ | ❌ |
+| Accounts, invites, server settings | ✅ | ❌ | ❌ |
+
+Accounts that existed before roles arrived become members, so an upgrade changes
+nothing for anyone already using the app. Accounts that sign themselves up land on
+the role you pick under **Sign-ups** — `reader` by default.
+
+**Sharing**
+
+Media files attach to the *book*, not to a library, which is what lets two people
+share one audiobook timeline and one alignment. Who may read those files is a
+separate question, and the answer is: whoever attached them, plus anyone they
+shared that book with. A book nobody has attached anything to is nobody's to
+withhold and stays open.
+
+Lend a book from its own detail page. The recipient sees it under **Shared books**
+in Settings and adds it to their shelf with one click — a share grants access, it
+never puts rows in someone else's library. Once it is on their shelf it is an
+ordinary book to them, badged with your name, with their own position, progress
+and history; the NAS paths are blanked out of everything they can see.
+
+> **Upgrading an existing multi-user install:** before this, any account that added
+> a work from Open Library could stream whatever anyone else had attached to it.
+> After the migration, existing attachments belong to the oldest account and the
+> rest need a share. If other people were reading your books that way, share those
+> books with them and they carry on where they were.
 
 ## Configuration
 

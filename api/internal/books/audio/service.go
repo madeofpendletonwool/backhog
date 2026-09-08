@@ -58,7 +58,7 @@ func NewService(st *store.Store, roots []string) *Service {
 // not repeat the work. A file that genuinely cannot be measured leaves the
 // timeline degraded rather than being given a made-up length.
 func (s *Service) Timeline(ctx context.Context, userID, entryID string) (Timeline, error) {
-	bookID, err := s.store.BookIDForEntry(ctx, userID, entryID)
+	bookID, err := s.store.BookFilesForEntry(ctx, userID, entryID)
 	if err != nil {
 		return Timeline{}, err
 	}
@@ -167,7 +167,7 @@ func (s *Service) durationOf(ctx context.Context, f models.MediaFile) float64 {
 // store.ErrNotFound so the endpoint answers with a single indistinguishable
 // 404.
 func (s *Service) OpenTrack(ctx context.Context, userID, entryID string, trackID int64) (*os.File, os.FileInfo, string, error) {
-	bookID, err := s.store.BookIDForEntry(ctx, userID, entryID)
+	bookID, err := s.store.BookFilesForEntry(ctx, userID, entryID)
 	if err != nil {
 		return nil, nil, "", err
 	}

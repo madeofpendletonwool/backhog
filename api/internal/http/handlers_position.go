@@ -152,8 +152,22 @@ type bookViews struct {
 // position read happens on every page turn and every player tick, and paying
 // a full parse for it would make the cheap endpoint the expensive one. A book
 // whose text has never been parsed simply has no percentage and no chapter.
-func (s *Server) loadBookViews(ctx context.Context, userID, entryID, bookID string) (bookViews, error) {
+//
+// `files` is the caller's file access from bookEntryOwned. Without it the
+// text and the audiobook are simply not read: a reader tracking their
+// paperback of a book whose ebook belongs to someone else still gets their
+// own stored position back, just with no percentage, no chapter and no
+// audio view — exactly what a book with nothing attached already looks like.
+func (s *Server) loadBookViews(ctx context.Context, userID, entryID, bookID string, files bool) (bookViews, error) {
 	v := bookViews{}
+	if !files {
+		tr, err := position.Load(ctx, s.anchors, entryID)
+		if err != nil {
+			return v, err
+		}
+		v.translator = tr
+		return v, nil
+	}
 
 	if f, err := s.store.EpubMediaFileForBook(ctx, bookID); err == nil {
 		if et, err := s.store.GetEpubText(ctx, f.ID); err == nil {
@@ -192,7 +206,7 @@ func (s *Server) loadBookViews(ctx context.Context, userID, entryID, bookID stri
 // translation instead: an arbitrary position placed in the other spaces
 // through the anchor maps, nothing read from or written to stored progress.
 func (s *Server) handleGetBookPosition(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, bookID, ok := s.bookEntry(w, r)
+	userID, entryID, bookID, files, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -204,7 +218,7 @@ func (s *Server) handleGetBookPosition(w http.ResponseWriter, r *http.Request) {
 			fail(w, errorf(http.StatusBadRequest, "send exactly one of char or audio"))
 			return
 		}
-		s.translateBookPosition(w, r, userID, entryID, bookID, charParam, audioParam)
+		s.translateBookPosition(w, r, userID, entryID, bookID, charParam, audioParam, files)
 		return
 	}
 
@@ -213,7 +227,7 @@ func (s *Server) handleGetBookPosition(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	views, err := s.loadBookViews(r.Context(), userID, entryID, bookID)
+	views, err := s.loadBookViews(r.Context(), userID, entryID, bookID, files)
 	if err != nil {
 		fail(w, err)
 		return
@@ -272,9 +286,9 @@ type translationResponse struct {
 // translateBookPosition is the speculative half of GET position: exactly
 // one of charParam/audioParam names the space the question was asked in.
 func (s *Server) translateBookPosition(w http.ResponseWriter, r *http.Request,
-	userID, entryID, bookID, charParam, audioParam string) {
+	userID, entryID, bookID, charParam, audioParam string, files bool) {
 
-	views, err := s.loadBookViews(r.Context(), userID, entryID, bookID)
+	views, err := s.loadBookViews(r.Context(), userID, entryID, bookID, files)
 	if err != nil {
 		fail(w, err)
 		return
@@ -393,7 +407,7 @@ func percentAtOffset(charOffset int, v bookViews) float64 {
 // handlePutBookPosition stores a position given in whichever space the client
 // is working in.
 func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, bookID, ok := s.bookEntry(w, r)
+	userID, entryID, bookID, files, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -418,7 +432,7 @@ func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	views, err := s.loadBookViews(r.Context(), userID, entryID, bookID)
+	views, err := s.loadBookViews(r.Context(), userID, entryID, bookID, files)
 	if err != nil {
 		fail(w, err)
 		return
@@ -544,7 +558,7 @@ func (s *Server) applyAudioWrite(w http.ResponseWriter, r *http.Request, userID,
 
 // handleAddReadingSession logs a stretch of reading or listening.
 func (s *Server) handleAddReadingSession(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -580,7 +594,7 @@ func (s *Server) handleAddReadingSession(w http.ResponseWriter, r *http.Request)
 // handleGetReadingSessions lists an entry's logged sessions with the per-mode
 // totals the reading dashboard reports.
 func (s *Server) handleGetReadingSessions(w http.ResponseWriter, r *http.Request) {
-	userID, entryID, _, ok := s.bookEntry(w, r)
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
 		return
 	}
@@ -601,6 +615,10 @@ func (s *Server) handleGetReadingSessions(w http.ResponseWriter, r *http.Request
 // bookEntry authenticates the caller and resolves the {entryID} URL parameter
 // to the book it points at, answering 401/404 itself. The bool reports
 // whether the handler may continue.
+//
+// This is the file-backed door: it refuses an entry whose book has files
+// attached by somebody who has not shared them. Handlers that read the
+// canonical text, the audiobook or the alignment go through here.
 func (s *Server) bookEntry(w http.ResponseWriter, r *http.Request) (userID, entryID, bookID string, ok bool) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {
@@ -608,7 +626,7 @@ func (s *Server) bookEntry(w http.ResponseWriter, r *http.Request) (userID, entr
 		return "", "", "", false
 	}
 	entryID = chi.URLParam(r, "entryID")
-	bookID, err = s.store.BookIDForEntry(r.Context(), userID, entryID)
+	bookID, err = s.store.BookFilesForEntry(r.Context(), userID, entryID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			fail(w, errNotFound)
@@ -618,6 +636,41 @@ func (s *Server) bookEntry(w http.ResponseWriter, r *http.Request) (userID, entr
 		return "", "", "", false
 	}
 	return userID, entryID, bookID, true
+}
+
+// bookEntryOwned is bookEntry for the handlers that touch no files: reading
+// progress and reading sessions, the printings the reader physically owns,
+// and the page anchors pinned into them. Those are the user's own rows about
+// their own copy, and they must keep working on a book nobody has attached
+// anything to — or one whose ebook belongs to another account.
+//
+// `files` reports whether this caller may *also* read the book's files. It
+// is not an authorisation result the caller may ignore: a handler that
+// derives anything from the text or the audiobook has to fold it in, or
+// position would quietly hand out the chapter titles of a book that was
+// never shared. loadBookViews takes it for exactly that reason.
+func (s *Server) bookEntryOwned(w http.ResponseWriter, r *http.Request) (userID, entryID, bookID string, files, ok bool) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return "", "", "", false, false
+	}
+	entryID = chi.URLParam(r, "entryID")
+	bookID, err = s.store.BookIDForEntry(r.Context(), userID, entryID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fail(w, errNotFound)
+			return "", "", "", false, false
+		}
+		fail(w, err)
+		return "", "", "", false, false
+	}
+	files, err = s.store.CanAccessBookFiles(r.Context(), userID, bookID)
+	if err != nil {
+		fail(w, err)
+		return "", "", "", false, false
+	}
+	return userID, entryID, bookID, files, true
 }
 
 // renderPosition derives the audio and page views from the stored character

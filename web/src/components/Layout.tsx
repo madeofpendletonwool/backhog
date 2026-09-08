@@ -23,7 +23,14 @@ import { ruleSetTarget } from "@/lib/smartlists";
 import type { Arena } from "@/lib/arena";
 import type { GiName } from "@/lib/gameicons";
 
-type NavItem = { to: string; label: string; icon: GiName; end: boolean };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: GiName;
+  end: boolean;
+  /** Only for accounts that may manage library files — see useAuth. */
+  media?: boolean;
+};
 
 /* The three places the sidebar has to know which family it is in. Records
    rather than ternaries: with two branches a third family lands in whichever
@@ -69,7 +76,10 @@ const bookNav: NavItem[] = [
   { to: "/books", label: "Shelf", icon: "layout-grid", end: true },
   { to: "/queue?media=book", label: "Reading Queue", icon: "list-ordered", end: false },
   { to: "/debt?media=book", label: "Reading Debt", icon: "hourglass", end: false },
-  { to: "/books/files", label: "Book files", icon: "full-folder", end: false },
+  // The attach flow. A reader has no business here and the API would refuse
+  // them anyway, so the item is dropped from their nav rather than left to
+  // lead somewhere that answers 403 — see mediaNav below.
+  { to: "/books/files", label: "Book files", icon: "full-folder", end: false, media: true },
   { to: "/achievements?media=book", label: "Achievements", icon: "trophy", end: false },
   { to: "/lists", label: "Lists", icon: "list-tree", end: false },
   { to: "/projects", label: "Projects", icon: "target", end: false },
@@ -80,7 +90,7 @@ export function Layout() {
   const [pickOpen, setPickOpen] = useState(false);
   const [readOpen, setReadOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, logout, canManageMedia, isAdmin } = useAuth();
   const navigate = useNavigate();
   const { data: listData } = useLists();
   const { family } = useTheme();
@@ -90,7 +100,9 @@ export function Layout() {
   const { data: stats } = useStats();
   const { data: bookStats } = useBookStats(arena === "books");
 
-  const navItems = arena === "books" ? bookNav : gameNav;
+  const navItems = (arena === "books" ? bookNav : gameNav).filter(
+    (item) => !item.media || canManageMedia,
+  );
 
   /* The hog is the mark in Midnight, the joystick in the arcade — the
      one place a component gets to know which family it is in, because a
@@ -227,6 +239,12 @@ export function Layout() {
               <Gi name="download" className="size-4" />
               Import from Steam
             </button>
+          )}
+          {isAdmin && (
+            <NavLink to="/admin" className={navLinkClass}>
+              <Gi name="family-tree" className="size-4" />
+              <span className="truncate">Accounts</span>
+            </NavLink>
           )}
           <NavLink to="/settings" className={navLinkClass}>
             <Gi name="settings" className="size-4" />

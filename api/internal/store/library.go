@@ -253,7 +253,16 @@ func (s *Store) ListEntries(ctx context.Context, userID string, f LibraryFilter)
 		" ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, limit, max(f.Offset, 0))
 
-	return s.queryEntries(ctx, query, args...)
+	entries, err := s.queryEntries(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	// The "shared by" badge is a listing affordance, so it is stamped here
+	// rather than inside the entry projection every caller shares.
+	if err := s.hydrateSharedBy(ctx, userID, entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // CountEntries returns the total matching a filter, for pagination.

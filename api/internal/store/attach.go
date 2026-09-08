@@ -130,12 +130,16 @@ func (s *Store) AttachMediaFiles(ctx context.Context, userID, entryID string, fi
 		if kind == models.MediaFileAudio {
 			track = i + 1
 		}
+		// The attacher owns the attachment: it is what "my copy" means
+		// once more than one account can reach the same book, and what
+		// every share is a grant against.
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE media_files SET book_id = ?, track_number = ? WHERE id = ?`,
-			bookID, track, id); err != nil {
+			`UPDATE media_files SET book_id = ?, track_number = ?, attached_by = ? WHERE id = ?`,
+			bookID, track, userID, id); err != nil {
 			return nil, err
 		}
 		f.BookID = &bookID
+		f.AttachedBy = &userID
 		attached = append(attached, f)
 	}
 
@@ -228,7 +232,7 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 
 	res, err := tx.ExecContext(ctx,
 		`UPDATE media_files
-		 SET book_id = NULL, track_number = NULL, is_primary_text = 0
+		 SET book_id = NULL, track_number = NULL, is_primary_text = 0, attached_by = NULL
 		 WHERE id = ? AND book_id = ?`,
 		fileID, bookID)
 	if err != nil {
@@ -282,14 +286,13 @@ func promoteAfterDetachTx(ctx context.Context, tx *sql.Tx, bookID string, before
 // MediaFilesForEntry lists the files attached to a user's book entry — text
 // files first, the book's designated canonical text at their head, then audio
 // in track order.
+//
+// Gated on file access, not just on owning the entry: this list is where the
+// reader learns a book has an audiobook and a text at all, and a book whose
+// files were never shared with them should look exactly like a book with
+// nothing attached.
 func (s *Store) MediaFilesForEntry(ctx context.Context, userID, entryID string) ([]models.MediaFile, error) {
-	var bookID string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT book_id FROM library_entries
-		WHERE id = ? AND user_id = ? AND media_type = 'book'`, entryID, userID).Scan(&bookID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
+	bookID, err := s.BookFilesForEntry(ctx, userID, entryID)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +330,7 @@ func (s *Store) MediaFilesForBook(ctx context.Context, bookID string) ([]models.
 // the model carries.
 const mediaFileColumns = `id, root, path, kind, size_bytes, mtime, sha256,
 	       duration_seconds, container_metadata, book_id, is_primary_text,
-	       scanned_at, missing_at`
+	       attached_by, scanned_at, missing_at`
 
 // qualify prefixes every column in a list with a table alias, for the queries
 // that join media_files against something else and would otherwise have to
@@ -343,11 +346,14 @@ func qualify(columns, alias string) string {
 // scanMediaFile reads a media_files row (without track_number) from a Rows.
 func scanMediaFile(rows interface{ Scan(dest ...any) error }) (models.MediaFile, error) {
 	var f models.MediaFile
-	var sha256, metadata, attachedBook sql.NullString
+	var sha256, metadata, attachedBook, attachedBy sql.NullString
 	if err := rows.Scan(&f.ID, &f.Root, &f.Path, &f.Kind, &f.SizeBytes, &f.Mtime,
 		&sha256, &f.DurationSeconds, &metadata, &attachedBook, &f.PrimaryText,
-		&f.ScannedAt, &f.MissingAt); err != nil {
+		&attachedBy, &f.ScannedAt, &f.MissingAt); err != nil {
 		return f, err
+	}
+	if attachedBy.Valid {
+		f.AttachedBy = &attachedBy.String
 	}
 	if sha256.Valid {
 		f.SHA256 = &sha256.String

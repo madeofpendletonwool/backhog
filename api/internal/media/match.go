@@ -540,6 +540,10 @@ func groupDir(dir string) string {
 	}
 }
 
+// audioDirKey addresses one audiobook's directory within a root: the group
+// every audio file in it, and in the sections nested under it, belongs to.
+type audioDirKey struct{ root, dir string }
+
 // sidecarKey addresses a directory's OPF sidecar exactly the way an audio
 // group is addressed, so "which book does this directory hold" has one
 // answer whichever kind of file is in it.
@@ -612,8 +616,7 @@ func attachedStems(files []models.MediaFile) map[textStem]models.MediaFile {
 // nothing on screen to say they were the same thing twice.
 func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
 	sidecars map[sidecarKey]models.MediaSidecar, attached map[textStem]models.MediaFile) []group {
-	type key struct{ root, dir string }
-	audioDirs := map[key][]models.MediaFile{}
+	audioDirs := map[audioDirKey][]models.MediaFile{}
 	textStems := map[textStem][]models.MediaFile{}
 
 	for _, f := range files {
@@ -621,7 +624,7 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
 			continue
 		}
 		if f.Kind == models.MediaFileAudio {
-			k := key{f.Root, groupDir(path.Dir(f.Path))}
+			k := audioDirKey{f.Root, groupDir(path.Dir(f.Path))}
 			audioDirs[k] = append(audioDirs[k], f)
 		} else {
 			k := stemOf(f)
@@ -629,7 +632,9 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
 		}
 	}
 
-	dirs := make([]key, 0, len(audioDirs))
+	coalesceNestedAudio(audioDirs)
+
+	dirs := make([]audioDirKey, 0, len(audioDirs))
 	for k := range audioDirs {
 		dirs = append(dirs, k)
 	}
@@ -680,6 +685,103 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
 		g.signal = extractSignal(g)
 	}
 	return groups
+}
+
+// coalesceNestedAudio folds an audio directory into an enclosing audio
+// directory when the two sets of files say they are the same album.
+//
+// groupDir already handles the rip that names its own platters ("Book/CD 2"),
+// but a rip can also nest a *section* of one book in its own folder:
+//
+//	1977 - The Silmarillion/1_ Ainulindale.mp3
+//	1977 - The Silmarillion/2_ Valaquenta.mp3
+//	1977 - The Silmarillion/3_ Quenta Silmarillion/3_ QS - Chapter 01.mp3
+//	1977 - The Silmarillion/4_ Akallabeth.mp3
+//
+// Keyed on the literal directory that is two candidates for one audiobook,
+// and the user is asked to attach The Silmarillion twice.
+//
+// The tags settle it, because nesting alone does not: an author folder
+// holding one loose audiobook beside a subfolder for another
+// ("Neil Gaiman/The Graveyard Book.m4b" next to "Neil Gaiman/American Gods/")
+// has exactly the same shape and is exactly two books. So the merge happens
+// only when both directories carry an album tag and it is the same album —
+// the one statement a rip makes about which book its files belong to. Files
+// with no album at all are not evidence either way; a directory that has no
+// agreed album has nothing to match on and stays its own candidate.
+//
+// Deepest first, so a section nested several levels down collapses the whole
+// chain onto the book's own directory rather than one level of it.
+func coalesceNestedAudio(audioDirs map[audioDirKey][]models.MediaFile) {
+	dirs := make([]audioDirKey, 0, len(audioDirs))
+	for k := range audioDirs {
+		dirs = append(dirs, k)
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		di, dj := strings.Count(dirs[i].dir, "/"), strings.Count(dirs[j].dir, "/")
+		if di != dj {
+			return di > dj
+		}
+		if dirs[i].root != dirs[j].root {
+			return dirs[i].root < dirs[j].root
+		}
+		return dirs[i].dir < dirs[j].dir
+	})
+
+	for _, k := range dirs {
+		album := groupAlbum(audioDirs[k])
+		if album == "" {
+			continue
+		}
+		// Walk up to the nearest enclosing directory that is itself a
+		// group, and stop there whether or not it matches: a further
+		// ancestor is the author's shelf, not the book.
+		for dir := k.dir; ; {
+			parent := path.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+			files, ok := audioDirs[audioDirKey{k.root, dir}]
+			if !ok {
+				continue
+			}
+			if groupAlbum(files) == album {
+				audioDirs[audioDirKey{k.root, dir}] = append(files, audioDirs[k]...)
+				delete(audioDirs, k)
+			}
+			break
+		}
+	}
+}
+
+// groupAlbum is the album every tagged file in a group agrees on, normalized
+// for comparison. It is empty when no file names an album, and empty when
+// two of them name different ones — a mixed directory is not one album, and
+// must not be merged into anything as though it were.
+func groupAlbum(files []models.MediaFile) string {
+	album := ""
+	for _, f := range files {
+		if len(f.ContainerMetadata) == 0 {
+			continue
+		}
+		var tags audioTags
+		if err := json.Unmarshal(f.ContainerMetadata, &tags); err != nil {
+			continue
+		}
+		name := normalizeName(cleanTitle(tags.Album))
+		if name == "" {
+			continue
+		}
+		if album == "" {
+			album = name
+			continue
+		}
+		if name != album {
+			return ""
+		}
+	}
+	return album
 }
 
 // textFormatRank mirrors the store's ordering of text containers by how much
@@ -746,20 +848,37 @@ func (g *group) identity() (isbn, workKey string) {
 // disc — otherwise natural sort on the full path, so disc 1 lands before
 // disc 10 before disc 2.
 func orderTracks(files []models.MediaFile) {
-	tracks := make([]int, len(files))
+	// The track numbers travel with their files. Read into a parallel slice
+	// and indexed by the comparator's i and j, they would be read at the
+	// positions the sort has already permuted — every file compared against
+	// whichever track number happens to be sitting at its index. Nothing was
+	// visibly wrong while a rip's filenames ran in track order; a book whose
+	// sections are split across folders is the case where they do not.
+	type ordered struct {
+		file  models.MediaFile
+		track int
+		seq   int
+	}
+	items := make([]ordered, len(files))
 	allTagged := len(files) > 0
-	for i := range files {
-		tracks[i] = tagTrack(files[i].ContainerMetadata)
-		if tracks[i] <= 0 {
+	for i, f := range files {
+		items[i] = ordered{file: f, track: tagTrack(f.ContainerMetadata), seq: i}
+		if items[i].track <= 0 {
 			allTagged = false
 		}
 	}
-	sort.SliceStable(files, func(i, j int) bool {
-		if allTagged && tracks[i] != tracks[j] {
-			return tracks[i] < tracks[j]
+	sort.Slice(items, func(i, j int) bool {
+		if allTagged && items[i].track != items[j].track {
+			return items[i].track < items[j].track
 		}
-		return naturalLess(files[i].Path, files[j].Path)
+		if items[i].file.Path != items[j].file.Path {
+			return naturalLess(items[i].file.Path, items[j].file.Path)
+		}
+		return items[i].seq < items[j].seq
 	})
+	for i := range items {
+		files[i] = items[i].file
+	}
 }
 
 // tagTrack reads the track number from a file's container metadata JSON.

@@ -402,3 +402,114 @@ func containsString(haystack, needle string) bool {
 	}
 	return false
 }
+
+// TestSearchPrefersMatchedEditionTitle: Open Library catalogues Dark Tower III
+// under "A Torre Negra", the title of one of its Portuguese editions, and
+// serves the English "The Waste Lands" on the edition that matched. Searching
+// for the book by its own name must not come back labelled in a language
+// nobody asked for — the work is right, only the promoted title is wrong.
+func TestSearchPrefersMatchedEditionTitle(t *testing.T) {
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/search.json", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("fields"); !containsString(got, "editions.title") {
+			t.Errorf("fields = %q, want editions.title requested", got)
+		}
+		writeFixture(t, w, map[string]any{"docs": []map[string]any{{
+			"key":         "/works/OL81625W",
+			"title":       "A Torre Negra",
+			"author_name": []string{"Stephen King"},
+			"cover_i":     8443630,
+			"editions": map[string]any{"docs": []map[string]any{
+				{"title": "The Waste Lands", "cover_i": 14655584},
+			}},
+		}}})
+	})
+
+	books, err := client.Search(context.Background(), "The Waste Lands Stephen King", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("got %d books, want 1", len(books))
+	}
+	if books[0].Title != "The Waste Lands" {
+		t.Errorf("title = %q, want the matched edition's English title", books[0].Title)
+	}
+	if books[0].ID != "OL81625W" {
+		t.Errorf("id = %q, want the work key to be unchanged", books[0].ID)
+	}
+	if want := "https://covers.openlibrary.org/b/id/14655584-L.jpg"; books[0].CoverURL != want {
+		t.Errorf("cover = %q, want the matched edition's cover %q", books[0].CoverURL, want)
+	}
+}
+
+// TestSearchKeepsWorkTitleWhenItMatches: the ordinary hit. The work title is
+// why the work was found, so an edition reprint title must not displace it.
+func TestSearchKeepsWorkTitleWhenItMatches(t *testing.T) {
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/search.json", func(w http.ResponseWriter, r *http.Request) {
+		writeFixture(t, w, map[string]any{"docs": []map[string]any{{
+			"key":         "/works/OL893415W",
+			"title":       "Dune",
+			"author_name": []string{"Frank Herbert"},
+			"cover_i":     1,
+			"editions": map[string]any{"docs": []map[string]any{
+				{"title": "Dune: 40th Anniversary Edition", "cover_i": 2},
+			}},
+		}}})
+	})
+
+	books, err := client.Search(context.Background(), "Dune Frank Herbert", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if books[0].Title != "Dune" {
+		t.Errorf("title = %q, want the work title kept", books[0].Title)
+	}
+	if want := "https://covers.openlibrary.org/b/id/1-L.jpg"; books[0].CoverURL != want {
+		t.Errorf("cover = %q, want the work cover %q", books[0].CoverURL, want)
+	}
+}
+
+// TestSearchIgnoresWorseMatchedEdition: an omnibus hit carries an edition
+// titled for the box set. The work title answers more of the query, so it
+// stays.
+func TestSearchIgnoresWorseMatchedEdition(t *testing.T) {
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/search.json", func(w http.ResponseWriter, r *http.Request) {
+		writeFixture(t, w, map[string]any{"docs": []map[string]any{{
+			"key":   "/works/OL149174W",
+			"title": "The Dark Tower (Gunslinger / Drawing of the Three / Waste Lands)",
+			"editions": map[string]any{"docs": []map[string]any{
+				{"title": "The Dark Tower, Books 1-3"},
+			}},
+		}}})
+	})
+
+	books, err := client.Search(context.Background(), "The Waste Lands Stephen King", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if books[0].Title != "The Dark Tower (Gunslinger / Drawing of the Three / Waste Lands)" {
+		t.Errorf("title = %q, want the work title kept", books[0].Title)
+	}
+}
+
+// TestSearchWithNoEditionsBlock: an older or fielded response carrying no
+// editions at all must behave exactly as before.
+func TestSearchWithNoEditionsBlock(t *testing.T) {
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/search.json", func(w http.ResponseWriter, r *http.Request) {
+		writeFixture(t, w, map[string]any{"docs": []map[string]any{{
+			"key": "/works/OL1W", "title": "Anathem",
+		}}})
+	})
+
+	books, err := client.Search(context.Background(), "Anathem", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if books[0].Title != "Anathem" {
+		t.Errorf("title = %q, want Anathem", books[0].Title)
+	}
+}

@@ -1113,3 +1113,125 @@ func TestUnattachedSiblingResolvesToTheAttachedBook(t *testing.T) {
 		t.Fatalf("provider searched %d times for a file whose answer was already on disk", n)
 	}
 }
+
+// TestNestedSectionFolderIsOneCandidate: a rip that gives one section of a
+// book its own folder — The Silmarillion keeps Quenta Silmarillion's 24
+// chapters in a subdirectory beside the four top-level parts — used to be
+// offered as two books, because grouping keyed on the literal directory and
+// the folder name is not a disc name. The album tag says it is one album, so
+// it is one candidate, in one continuous track order.
+func TestNestedSectionFolderIsOneCandidate(t *testing.T) {
+	const dir = "J.R.R Tolkien/1977 - The Silmarillion"
+	const qs = dir + "/3_ Quenta Silmarillion - The History of the Silmarils"
+	files := []models.MediaFile{
+		taggedAudio(dir+"/1_ Ainulindale.mp3", "Ainulindale", "J. R. R. Tolkien", "The Silmarillion", 1),
+		taggedAudio(dir+"/2_ Valaquenta.mp3", "Valaquenta", "J. R. R. Tolkien", "The Silmarillion", 2),
+		taggedAudio(qs+"/3_ QS - Chapter 01.mp3", "Of the Beginning of Days", "J. R. R. Tolkien", "The Silmarillion", 3),
+		taggedAudio(qs+"/3_ QS - Chapter 02.mp3", "Of Aule and Yavanna", "J. R. R. Tolkien", "The Silmarillion", 4),
+		taggedAudio(dir+"/4_ Akallabeth.mp3", "Akallabeth", "J. R. R. Tolkien", "The Silmarillion", 5),
+	}
+	cs := matchCandidates(t, nil, nil, files)
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates for one book, want 1: %v", len(cs), keysOf(cs))
+	}
+	c := cs[0]
+	if c.DirPath != dir {
+		t.Errorf("dir_path = %q, want the section folder folded into %q", c.DirPath, dir)
+	}
+	want := []string{
+		dir + "/1_ Ainulindale.mp3",
+		dir + "/2_ Valaquenta.mp3",
+		qs + "/3_ QS - Chapter 01.mp3",
+		qs + "/3_ QS - Chapter 02.mp3",
+		dir + "/4_ Akallabeth.mp3",
+	}
+	if got := pathsOf(c); !slicesEqual(got, want) {
+		t.Errorf("track order = %v, want %v", got, want)
+	}
+}
+
+// TestNestedDifferentAlbumStaysSeparate: the shape that must NOT merge. An
+// author folder holding one loose audiobook beside a subfolder for another
+// nests exactly like the Silmarillion, and is two books — the albums say so.
+func TestNestedDifferentAlbumStaysSeparate(t *testing.T) {
+	files := []models.MediaFile{
+		taggedAudio("Neil Gaiman/The Graveyard Book.m4b", "The Graveyard Book", "Neil Gaiman", "The Graveyard Book", 1),
+		taggedAudio("Neil Gaiman/Neverwhere/01 - London Below.mp3", "London Below", "Neil Gaiman", "Neverwhere", 1),
+		taggedAudio("Neil Gaiman/Neverwhere/02 - Earl's Court.mp3", "Earl's Court", "Neil Gaiman", "Neverwhere", 2),
+	}
+	cs := matchCandidates(t, nil, nil, files)
+	if len(cs) != 2 {
+		t.Fatalf("got %d candidates for two books, want 2: %v", len(cs), keysOf(cs))
+	}
+}
+
+// TestNestedUntaggedStaysSeparate: with no album on either side there is no
+// evidence the two directories are one book, and nesting alone is not enough
+// to merge them.
+func TestNestedUntaggedStaysSeparate(t *testing.T) {
+	files := []models.MediaFile{
+		plainAudio("Neil Gaiman/The Graveyard Book.m4b"),
+		plainAudio("Neil Gaiman/American Gods/Part 001.mp3"),
+		plainAudio("Neil Gaiman/American Gods/Part 002.mp3"),
+	}
+	cs := matchCandidates(t, nil, nil, files)
+	if len(cs) != 2 {
+		t.Fatalf("got %d candidates, want 2: %v", len(cs), keysOf(cs))
+	}
+}
+
+// TestNestedMixedParentStaysSeparate: a parent directory holding two
+// different albums has no album of its own, so a nested folder has nothing
+// to match against and keeps its own candidate.
+func TestNestedMixedParentStaysSeparate(t *testing.T) {
+	files := []models.MediaFile{
+		taggedAudio("Shelf/Dune.m4b", "Dune", "Frank Herbert", "Dune", 1),
+		taggedAudio("Shelf/Anathem.m4b", "Anathem", "Neal Stephenson", "Anathem", 1),
+		taggedAudio("Shelf/Dune/01.mp3", "Part 1", "Frank Herbert", "Dune", 1),
+	}
+	cs := matchCandidates(t, nil, nil, files)
+	if len(cs) != 2 {
+		t.Fatalf("got %d candidates, want 2: %v", len(cs), keysOf(cs))
+	}
+}
+
+// TestNestedSectionFoldsWholeChain: a section nested two levels down lands
+// on the book's own directory, not on the intermediate folder.
+func TestNestedSectionFoldsWholeChain(t *testing.T) {
+	files := []models.MediaFile{
+		taggedAudio("Book/01.mp3", "One", "A", "The Book", 1),
+		taggedAudio("Book/Part Two/02.mp3", "Two", "A", "The Book", 2),
+		taggedAudio("Book/Part Two/Section B/03.mp3", "Three", "A", "The Book", 3),
+	}
+	cs := matchCandidates(t, nil, nil, files)
+	if len(cs) != 1 {
+		t.Fatalf("got %d candidates, want 1: %v", len(cs), keysOf(cs))
+	}
+	if cs[0].DirPath != "Book" {
+		t.Errorf("dir_path = %q, want \"Book\"", cs[0].DirPath)
+	}
+}
+
+// TestOrderTracksFollowsTagsNotPositions: track numbers must travel with
+// their files. Reading them from a parallel slice by the comparator's index
+// compares each file against whatever number the partly-sorted slice has
+// moved into that position, so a rip whose filenames do not already run in
+// track order came back scrambled.
+func TestOrderTracksFollowsTagsNotPositions(t *testing.T) {
+	files := []models.MediaFile{
+		taggedAudio("z-first.mp3", "One", "A", "Album", 1),
+		taggedAudio("y-second.mp3", "Two", "A", "Album", 2),
+		taggedAudio("x-third.mp3", "Three", "A", "Album", 3),
+		taggedAudio("w-fourth.mp3", "Four", "A", "Album", 4),
+		taggedAudio("v-fifth.mp3", "Five", "A", "Album", 5),
+	}
+	orderTracks(files)
+	want := []string{"z-first.mp3", "y-second.mp3", "x-third.mp3", "w-fourth.mp3", "v-fifth.mp3"}
+	got := make([]string, len(files))
+	for i, f := range files {
+		got[i] = f.Path
+	}
+	if !slicesEqual(got, want) {
+		t.Errorf("track order = %v, want %v", got, want)
+	}
+}

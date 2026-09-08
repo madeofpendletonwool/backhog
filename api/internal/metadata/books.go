@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/time/rate"
 )
@@ -138,6 +139,19 @@ type olSearchDoc struct {
 	AuthorName       []string `json:"author_name"`
 	FirstPublishYear *int     `json:"first_publish_year"`
 	CoverID          int64    `json:"cover_i"`
+	// Editions is the printing (or printings) of this work that actually
+	// matched the query — Open Library's own answer to "which edition made
+	// this a hit". It is what rescues a work whose promoted title is in a
+	// language nobody searched in; see preferMatchedEdition.
+	Editions struct {
+		Docs []olSearchEdition `json:"docs"`
+	} `json:"editions"`
+}
+
+// olSearchEdition is one matched printing inside a search hit.
+type olSearchEdition struct {
+	Title   string `json:"title"`
+	CoverID int64  `json:"cover_i"`
 }
 
 // olText accepts Open Library's dual encoding where a text field is either a
@@ -203,7 +217,11 @@ func (c *OpenLibrary) Search(ctx context.Context, query string, limit int) ([]Bo
 	var payload struct {
 		Docs []olSearchDoc `json:"docs"`
 	}
-	path := fmt.Sprintf("/search.json?q=%s&limit=%d&fields=key,title,author_name,first_publish_year,cover_i",
+	// The editions block must be asked for by name, alongside the work
+	// fields — requesting only its subfields comes back empty.
+	path := fmt.Sprintf("/search.json?q=%s&limit=%d"+
+		"&fields=key,title,author_name,first_publish_year,cover_i"+
+		",editions,editions.title,editions.cover_i",
 		url.QueryEscape(query), limit)
 	if err := c.getJSON(ctx, path, &payload); err != nil {
 		if errors.Is(err, ErrQueryNotAllowed) {
@@ -223,12 +241,98 @@ func (c *OpenLibrary) Search(ctx context.Context, query string, limit int) ([]Bo
 		if doc.CoverID != 0 {
 			b.CoverURL = fmt.Sprintf(openLibraryCoverURL, doc.CoverID)
 		}
+		preferMatchedEdition(&b, doc, query)
 		if encoded, err := json.Marshal(doc); err == nil {
 			b.Raw = encoded
 		}
 		books = append(books, b)
 	}
 	return books, nil
+}
+
+// preferMatchedEdition relabels a hit with the title of the edition that
+// actually matched, when the work's own title does not answer the query and
+// an edition's does.
+//
+// A work title is whatever Open Library has promoted onto the work record,
+// and that is not always the name the book is known by. Dark Tower III is
+// catalogued as "A Torre Negra" — the title of a Portuguese edition — with
+// "The Waste Lands" sitting on the English printings underneath it. Searching
+// for The Waste Lands returns the right work under a name the reader cannot
+// recognise, and every title comparison downstream scores it at zero, so the
+// attach matcher proposes an omnibus instead of the book.
+//
+// The response already carries the answer: Open Library returns, per work,
+// the edition its query matched. Swapping only on a strictly better match
+// keeps this inert for the ordinary hit, where the work title is the reason
+// the work was found at all.
+func preferMatchedEdition(b *Book, doc olSearchDoc, query string) {
+	want := searchTokens(query)
+	if len(want) == 0 {
+		return
+	}
+	best := queryCoverage(want, b.Title)
+	for _, ed := range doc.Editions.Docs {
+		if ed.Title == "" {
+			continue
+		}
+		covered := queryCoverage(want, ed.Title)
+		if covered <= best {
+			continue
+		}
+		best = covered
+		b.Title = ed.Title
+		// The cover follows the title: a Portuguese jacket over an English
+		// title is the same defect wearing different clothes. A matched
+		// edition with no cover of its own keeps the work's.
+		if ed.CoverID != 0 {
+			b.CoverURL = fmt.Sprintf(openLibraryCoverURL, ed.CoverID)
+		}
+	}
+}
+
+// searchStopwords are the words too common to tell two titles apart. They
+// mirror the attach matcher's list, for the same reason: counting "the" makes
+// every English title resemble every other.
+var searchStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "of": true, "and": true, "or": true,
+	"in": true, "on": true, "to": true, "for": true, "with": true, "from": true,
+	"at": true, "by": true,
+}
+
+// searchTokens folds a string to its distinguishing lowercase words.
+func searchTokens(s string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	out := fields[:0]
+	for _, f := range fields {
+		if !searchStopwords[f] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// queryCoverage counts how many distinct query words a title accounts for.
+// It is a count, not a ratio: the question is only which of two titles
+// answers more of what was asked, and a longer title is not thereby a worse
+// one — "The Waste Lands" and "A Torre Negra" are 3 and 0 for the same query.
+func queryCoverage(want []string, title string) int {
+	have := map[string]bool{}
+	for _, t := range searchTokens(title) {
+		have[t] = true
+	}
+	seen := map[string]bool{}
+	n := 0
+	for _, t := range want {
+		if seen[t] || !have[t] {
+			continue
+		}
+		seen[t] = true
+		n++
+	}
+	return n
 }
 
 // GetByWorkKey returns the full work record: description, subjects and cover,

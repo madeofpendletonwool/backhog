@@ -208,9 +208,52 @@ func (s *Server) handlePrimaryTextFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"file": file})
 }
 
+// handlePrimaryAudioEdition switches which of a book's audiobooks it is
+// listened to — the recording the timeline is built from and the one every
+// stored audio position means.
+//
+// Unlike its text-side counterpart there is nothing to prepare first: an
+// audiobook needs no parse, only files. What the store does need to refuse is
+// a recording it cannot play, which is a whole edition sitting on an
+// unmounted root; that comes back as a 400 naming the reason rather than a
+// silent switch onto a tape with no bytes behind it.
+func (s *Server) handlePrimaryAudioEdition(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+
+	editionID, err := strconv.ParseInt(chi.URLParam(r, "editionID"), 10, 64)
+	if err != nil || editionID <= 0 {
+		fail(w, errorf(http.StatusBadRequest, "invalid audiobook id"))
+		return
+	}
+
+	edition, err := s.store.SetPrimaryAudioEdition(r.Context(), userID, chi.URLParam(r, "entryID"), editionID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, errNotFound)
+		return
+	case errors.Is(err, store.ErrAttach):
+		fail(w, errorf(http.StatusBadRequest, err.Error()))
+		return
+	case err != nil:
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"audio_edition": edition})
+}
+
 // handleBookFiles lists the files attached to one of the user's book
 // entries: text files first with the canonical one at their head (each
 // carrying primary_text so the UI can say which), then audio in track order.
+//
+// The audiobooks come back grouped as well as flat. A book can have several
+// recordings attached and only one of them is on the timeline, which is not
+// something a client can work out from a list of paths — so the grouping, the
+// designation and the derived labels are served alongside the files rather
+// than left to be guessed at.
 func (s *Server) handleBookFiles(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.UserFrom(r.Context())
 	if !ok {
@@ -218,7 +261,8 @@ func (s *Server) handleBookFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := s.store.MediaFilesForEntry(r.Context(), user.ID, chi.URLParam(r, "entryID"))
+	entryID := chi.URLParam(r, "entryID")
+	files, err := s.store.MediaFilesForEntry(r.Context(), user.ID, entryID)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, errNotFound)
 		return
@@ -227,7 +271,15 @@ func (s *Server) handleBookFiles(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": redactPaths(files, user)})
+	editions, err := s.store.AudioEditionsForEntry(r.Context(), user.ID, entryID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"files":          redactPaths(files, user),
+		"audio_editions": editions,
+	})
 }
 
 // redactPaths blanks the NAS root and path on the way out to someone who may

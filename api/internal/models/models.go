@@ -923,6 +923,39 @@ type MediaFile struct {
 	MissingAt *time.Time `json:"missing_at,omitempty"`
 }
 
+// AudioEdition is one recording of a book: the set of audio files that make
+// up a single tape. A book can have several — the same title read by two
+// different narrators, an abridgement beside the unabridged rip — and
+// exactly one of them is Primary, the one the timeline is built from and the
+// one the player plays.
+//
+// Everything but ID, BookID and Primary is derived from the edition's files
+// rather than stored, so a rename on the NAS or a newly measured track shows
+// up without a migration.
+type AudioEdition struct {
+	ID     int64  `json:"id"`
+	BookID string `json:"book_id"`
+	// Primary marks the edition this book is listened to. Exactly one per
+	// book, enforced by a partial unique index.
+	Primary bool `json:"primary"`
+	// Label names the edition the way its owner would: the directory a rip
+	// lives in, or the file name of a lone .m4b.
+	Label string `json:"label"`
+	// Narrator is the reader's name when the tags make it unambiguous, and
+	// empty when they do not. See internal/store for the heuristic — it is
+	// a hint for telling two editions apart, never an authority.
+	Narrator      string  `json:"narrator,omitempty"`
+	TrackCount    int     `json:"track_count"`
+	TotalDuration float64 `json:"total_duration"`
+	// Degraded reports at least one track whose length is unknown, so
+	// TotalDuration is short by that track's real length.
+	Degraded bool `json:"degraded"`
+	// MissingCount is how many of the edition's files are absent from their
+	// root right now — an unmounted NAS, not a deleted recording.
+	MissingCount int       `json:"missing_count"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 // Reasons a file was skipped by the scanner. DRM of any form is refused,
 // not worked around — this tool is DRM-free by decision, and the reason
 // names which shape was refused. The remaining reasons exist so that "not

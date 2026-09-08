@@ -39,6 +39,8 @@ func seedAlignmentEntry(t *testing.T, s *Store, userID string, idx int) string {
 	      VALUES (?, '/nas', 'x/`+suffix+`-01.m4b', 'audio', 10, 1, ?, 1, 19800.0, CURRENT_TIMESTAMP),
 	             (?, '/nas', 'x/`+suffix+`-02.m4b', 'audio', 10, 1, ?, 2, 20200.0, CURRENT_TIMESTAMP)`,
 		2000+2*idx, bookID, 2001+2*idx, bookID)
+	exec(`INSERT INTO audio_editions (id, book_id, is_primary) VALUES (?, ?, 1)`, idx, bookID)
+	exec(`UPDATE media_files SET audio_edition_id = ? WHERE kind = 'audio' AND book_id = ?`, idx, bookID)
 	return entryID
 }
 

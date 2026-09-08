@@ -131,6 +131,11 @@ func newBookFixtureStore(t *testing.T) *Store {
 			100+i, fmt.Sprintf("/nas/deep-field-%d.m4b", i+1), seconds, i+1)
 	}
 
+	// Attached audio belongs to a designated recording, which is what the
+	// attach flow writes and what the sizing sum reads.
+	exec(`INSERT INTO audio_editions (id, book_id, is_primary) VALUES (1, 'ob6', 1)`)
+	exec(`UPDATE media_files SET audio_edition_id = 1 WHERE kind = 'audio' AND book_id = 'ob6'`)
+
 	// Winter Errand's EPUB: a canonical text is a measured length, so its
 	// 450,000 characters (250 pages) must beat the printing's 999.
 	exec(`INSERT INTO media_files (id, root, path, kind, size_bytes, mtime, book_id, scanned_at)

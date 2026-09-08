@@ -578,3 +578,94 @@ func TestAlternateFormatFlow(t *testing.T) {
 		t.Fatalf("primary flags after the switch = %v, want the mobi reading", primary)
 	}
 }
+
+// TestAudioEditionsChooseWhichRecordingPlays covers the audio half of the
+// format choice: two recordings of one book, only one of them on the
+// timeline, and a switch that changes which.
+//
+// The fixture NAS holds a directory-per-book rip and a single-file m4b, so
+// attaching both to one entry produces exactly the pair a user gets when
+// they own the same title read by two different people.
+func TestAudioEditionsChooseWhichRecordingPlays(t *testing.T) {
+	app := newAttachTestApp(t)
+	app.scanAndWait(t)
+	entry := addBookEntry(t, app, "OL1W")
+
+	status, body := app.req(t, http.MethodGet, "/api/media/files?kind=audio", nil)
+	if status != http.StatusOK {
+		t.Fatalf("media files: status %d: %v", status, body)
+	}
+	files := body["files"].([]any)
+	rip := []any{
+		fileIDByPath(t, files, "Neal Stephenson/Anathem/01 - Erasmas.m4b"),
+		fileIDByPath(t, files, "Neal Stephenson/Anathem/02 - Apert.m4b"),
+	}
+	lone := fileIDByPath(t, files, "Andy Weir/Project Hail Mary.m4b")
+
+	for _, batch := range []any{rip, []any{lone}} {
+		status, body = app.req(t, http.MethodPost, "/api/books/"+entry+"/files",
+			map[string]any{"file_ids": batch, "kind": "audio"})
+		if status != http.StatusCreated {
+			t.Fatalf("attach %v: status %d: %v", batch, status, body)
+		}
+	}
+
+	status, body = app.req(t, http.MethodGet, "/api/books/"+entry+"/files", nil)
+	if status != http.StatusOK {
+		t.Fatalf("book files: status %d: %v", status, body)
+	}
+	editions := body["audio_editions"].([]any)
+	if len(editions) != 2 {
+		t.Fatalf("audio_editions = %v, want one per recording", editions)
+	}
+	playing := editions[0].(map[string]any)
+	spare := editions[1].(map[string]any)
+	if playing["primary"] != true || spare["primary"] != false {
+		t.Fatalf("designation = %v, want the first-attached recording playing", editions)
+	}
+	if playing["label"] != "Anathem" || playing["track_count"] != 2.0 {
+		t.Errorf("playing edition = %v, want the two-track Anathem rip", playing)
+	}
+	if spare["label"] != "Project Hail Mary" {
+		t.Errorf("spare edition = %v, want the lone file named for itself", spare)
+	}
+
+	// Only the designated recording is a timeline. Before editions, this
+	// returned all three files as one interleaved tape.
+	status, body = app.req(t, http.MethodGet, "/api/books/"+entry+"/audio", nil)
+	if status != http.StatusOK {
+		t.Fatalf("timeline: status %d: %v", status, body)
+	}
+	if tracks := body["tracks"].([]any); len(tracks) != 2 {
+		t.Fatalf("timeline has %d tracks, want only the designated recording's 2", len(tracks))
+	}
+
+	editionID := int64(spare["id"].(float64))
+	status, body = app.req(t, http.MethodPut,
+		fmt.Sprintf("/api/books/%s/audio-editions/%d/primary", entry, editionID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("switch: status %d: %v", status, body)
+	}
+	if switched := body["audio_edition"].(map[string]any); switched["primary"] != true {
+		t.Fatalf("switch returned %v, want the recording designated", switched)
+	}
+
+	status, body = app.req(t, http.MethodGet, "/api/books/"+entry+"/audio", nil)
+	if status != http.StatusOK {
+		t.Fatalf("timeline after switch: status %d: %v", status, body)
+	}
+	tracks := body["tracks"].([]any)
+	if len(tracks) != 1 {
+		t.Fatalf("timeline has %d tracks after the switch, want the lone m4b", len(tracks))
+	}
+	if got := tracks[0].(map[string]any)["path"]; got != "Andy Weir/Project Hail Mary.m4b" {
+		t.Errorf("playing %v, want the recording just switched to", got)
+	}
+
+	// An id that is not this book's is a 404, never a hint that it exists.
+	status, _ = app.req(t, http.MethodPut,
+		fmt.Sprintf("/api/books/%s/audio-editions/%d/primary", entry, editionID+9000), nil)
+	if status != http.StatusNotFound {
+		t.Errorf("unknown edition = %d, want 404", status)
+	}
+}

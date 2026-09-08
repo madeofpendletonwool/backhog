@@ -797,6 +797,32 @@ export interface MediaFile {
   missing_at?: string | null;
 }
 
+/**
+ * One recording of a book: the set of audio files that behave as a single
+ * tape. A book can have several — the same title read by two narrators, an
+ * abridgement beside the unabridged rip — and exactly one of them is the one
+ * the player plays. Everything but the id and the flag is derived from the
+ * files by the server, so a directory renamed on the NAS renames the edition.
+ */
+export interface AudioEdition {
+  id: number;
+  book_id: string;
+  /** The recording this book is listened to. Exactly one per book. */
+  primary: boolean;
+  /** The rip's directory, or a lone file's own name. */
+  label: string;
+  /** The reader, when the tags say so unambiguously. A hint, not an authority. */
+  narrator?: string;
+  track_count: number;
+  /** Seconds, summed over the tracks whose length is known. */
+  total_duration: number;
+  /** At least one track's length is unknown, so total_duration is short. */
+  degraded: boolean;
+  /** Files absent from the NAS right now: an unmounted mount, not a deletion. */
+  missing_count: number;
+  created_at: string;
+}
+
 /** One file the scanner did not inventory, with the reason why. */
 export interface MediaSkipped {
   id: number;

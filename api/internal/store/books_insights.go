@@ -217,8 +217,15 @@ const unreadBooksWhere = `e.user_id = ? AND e.media_type = 'book' AND e.status I
 
 // bookSizeSelect is the shared sizing projection: the entry's own printing
 // falling back to the work's earliest one with a page count, the canonical
-// text length of the book's designated text file, the summed duration of any
-// attached audiobook, and the stored reading position.
+// text length of the book's designated text file, the running time of the
+// book's designated audiobook, and the stored reading position.
+//
+// The audio sum is scoped to the designated edition for the same reason the
+// char count is scoped to the designated text: a book with two recordings
+// attached has one running time, not the two added together. Unlike the
+// player, the sum tolerates a missing file — a length is a fact about the
+// recording, and an unmounted NAS should not make a shelf briefly report
+// half the hours it owes.
 const bookSizeSelect = `
 	COALESCE(ed.page_count,
 		(SELECT ed2.page_count FROM book_editions ed2
@@ -226,6 +233,7 @@ const bookSizeSelect = `
 		 ORDER BY ed2.published_year, ed2.id LIMIT 1), 0),
 	COALESCE(` + primaryTextCharCount + `, 0),
 	COALESCE((SELECT SUM(mf2.duration_seconds) FROM media_files mf2
+	          JOIN audio_editions ae ON ae.id = mf2.audio_edition_id AND ae.is_primary = 1
 	          WHERE mf2.book_id = e.book_id AND mf2.kind = 'audio'
 	            AND mf2.duration_seconds IS NOT NULL), 0),
 	COALESCE((SELECT bp.percent_complete FROM book_progress bp WHERE bp.entry_id = e.id), 0)`

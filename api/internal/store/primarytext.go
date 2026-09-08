@@ -173,11 +173,9 @@ func designatePrimaryTx(ctx context.Context, tx *sql.Tx, bookID string, newID in
 // ratio instead — they are a whole map, not one point, and scaling keeps it
 // monotonic, which is the property the position translator interpolates over.
 //
-// Alignments are deleted rather than scaled. An alignment is a dense map from
-// char offsets to audio seconds, built by matching the actual words of one
-// canonical text; stretched onto a different text it would still answer every
-// query, just wrongly, and a plausible wrong answer is worse than none. The
-// worker re-derives it, which is what it is for.
+// Alignments are deleted rather than scaled, for the reason dropAlignmentsTx
+// gives: a map built against one canonical text answers every query wrongly
+// once stretched onto another.
 //
 // A target that has never been parsed (after.chars == 0) cannot be scaled
 // onto. SetPrimaryTextFile refuses that case outright; the detach path can
@@ -207,11 +205,5 @@ func migrateOffsetsTx(ctx context.Context, tx *sql.Tx, bookID string, before, af
 		}
 	}
 
-	for _, table := range []string{"alignments", "alignment_jobs"} {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM `+table+` WHERE entry_id IN (`+entriesOfBook+`)`, bookID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return dropAlignmentsTx(ctx, tx, bookID)
 }

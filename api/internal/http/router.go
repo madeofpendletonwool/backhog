@@ -199,6 +199,10 @@ func (s *Server) Routes() http.Handler {
 			r.With(auth.RequireMediaManager).Post("/books/{entryID}/files", s.handleAttachFiles)
 			r.With(auth.RequireMediaManager).Delete("/books/{entryID}/files/{fileID}", s.handleDetachFile)
 			r.With(auth.RequireMediaManager).Put("/books/{entryID}/files/{fileID}/primary", s.handlePrimaryTextFile)
+			// The same choice on the audio side, made over a whole
+			// recording rather than one file: which of the audiobooks
+			// attached to this book is the one that plays.
+			r.With(auth.RequireMediaManager).Put("/books/{entryID}/audio-editions/{editionID}/primary", s.handlePrimaryAudioEdition)
 
 			// Sharing: who may read the files behind this book. The
 			// picker and both grants are the owner's own — a reader can

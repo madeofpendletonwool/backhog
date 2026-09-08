@@ -127,6 +127,16 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 	insertFile(positionTrackTwo, "02.m4b", "audio", trackTwoSize, "OL1W", 2)
 	insertFile(positionLoneTrack, "lone.m4b", "audio", loneSize, "OL2W", 1)
 
+	// Hand-inserted rows still have to look like attached ones: audio that
+	// belongs to a book belongs to one of that book's designated editions,
+	// which is what the attach flow writes and what the timeline reads.
+	exec(`INSERT INTO audio_editions (book_id, is_primary)
+	      SELECT DISTINCT book_id, 1 FROM media_files
+	      WHERE kind = 'audio' AND book_id IS NOT NULL`)
+	exec(`UPDATE media_files
+	      SET audio_edition_id = (SELECT id FROM audio_editions WHERE book_id = media_files.book_id)
+	      WHERE kind = 'audio' AND book_id IS NOT NULL`)
+
 	return app
 }
 

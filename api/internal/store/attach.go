@@ -106,6 +106,18 @@ func (s *Store) AttachMediaFiles(ctx context.Context, userID, entryID string, fi
 		return nil, err
 	}
 
+	// One attach batch of audio is one recording. Which edition it lands in
+	// is decided before the loop so that every file of the batch carries the
+	// same one, including a re-attach that only reorders an existing tape.
+	var editionID any
+	if kind == models.MediaFileAudio {
+		id, err := audioEditionForBatchTx(ctx, tx, bookID, fileIDs)
+		if err != nil {
+			return nil, err
+		}
+		editionID = id
+	}
+
 	attached := make([]models.MediaFile, 0, len(fileIDs))
 	for i, id := range fileIDs {
 		f, err := scanMediaFileTx(ctx, tx,
@@ -134,13 +146,26 @@ func (s *Store) AttachMediaFiles(ctx context.Context, userID, entryID string, fi
 		// once more than one account can reach the same book, and what
 		// every share is a grant against.
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE media_files SET book_id = ?, track_number = ?, attached_by = ? WHERE id = ?`,
-			bookID, track, userID, id); err != nil {
+			`UPDATE media_files
+			 SET book_id = ?, track_number = ?, audio_edition_id = ?, attached_by = ?
+			 WHERE id = ?`,
+			bookID, track, editionID, userID, id); err != nil {
 			return nil, err
 		}
 		f.BookID = &bookID
 		f.AttachedBy = &userID
 		attached = append(attached, f)
+	}
+
+	if kind == models.MediaFileAudio {
+		// Files that moved out of an older edition can have emptied it. The
+		// designation only moves if the emptied edition was holding it.
+		if _, err := pruneEmptyAudioEditionsTx(ctx, tx, bookID); err != nil {
+			return nil, err
+		}
+		if err := ensurePrimaryAudioEditionTx(ctx, tx, bookID); err != nil {
+			return nil, err
+		}
 	}
 
 	if kind == models.MediaFileEpub {
@@ -162,6 +187,71 @@ func (s *Store) AttachMediaFiles(ctx context.Context, userID, entryID string, fi
 		return nil, err
 	}
 	return attached, nil
+}
+
+// audioEditionForBatchTx decides which recording an audio attach batch is.
+//
+// Attaching audio to a book that already has some is the whole point of this
+// feature — a second narrator, an unabridged rip beside an abridgement — so a
+// batch is a NEW edition by default. The one case that is not a new recording
+// is a re-attach of the same files to fix their order: the attach flow is how
+// track order is corrected, and re-sending a tape's files must renumber that
+// tape rather than clone it.
+//
+// "The same files" is exact: every file already in this book's same edition,
+// and the whole of it. A subset is deliberately treated as a new edition —
+// re-sending three files of five and reusing the edition would number them
+// 1..3 against siblings still holding 4 and 5, which is the interleaving this
+// grouping exists to prevent.
+func audioEditionForBatchTx(ctx context.Context, tx *sql.Tx, bookID string, fileIDs []int64) (int64, error) {
+	if reused, err := existingAudioEditionTx(ctx, tx, bookID, fileIDs); err != nil || reused != 0 {
+		return reused, err
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO audio_editions (book_id) VALUES (?)`, bookID)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// existingAudioEditionTx returns the edition these exact files already form,
+// or 0 when they do not form one.
+func existingAudioEditionTx(ctx context.Context, tx *sql.Tx, bookID string, fileIDs []int64) (int64, error) {
+	var edition int64
+	for _, id := range fileIDs {
+		var attachedBook sql.NullString
+		var editionID sql.NullInt64
+		err := tx.QueryRowContext(ctx,
+			`SELECT book_id, audio_edition_id FROM media_files WHERE id = ?`, id).
+			Scan(&attachedBook, &editionID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil // the attach loop reports the unknown id
+		}
+		if err != nil {
+			return 0, err
+		}
+		if !attachedBook.Valid || attachedBook.String != bookID || !editionID.Valid {
+			return 0, nil
+		}
+		if edition == 0 {
+			edition = editionID.Int64
+		} else if edition != editionID.Int64 {
+			return 0, nil
+		}
+	}
+	if edition == 0 {
+		return 0, nil
+	}
+	var held int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM media_files WHERE audio_edition_id = ?`, edition).Scan(&held); err != nil {
+		return 0, err
+	}
+	if held != len(fileIDs) {
+		return 0, nil
+	}
+	return edition, nil
 }
 
 // ensurePrimaryTextTx guarantees a book with any text-side file attached has
@@ -219,9 +309,10 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 	// "what were the stored offsets measured against".
 	var before textIdentity
 	var wasPrimary bool
+	var kind sql.NullString
 	if err := tx.QueryRowContext(ctx,
-		`SELECT is_primary_text FROM media_files WHERE id = ? AND book_id = ?`,
-		fileID, bookID).Scan(&wasPrimary); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		`SELECT kind, is_primary_text FROM media_files WHERE id = ? AND book_id = ?`,
+		fileID, bookID).Scan(&kind, &wasPrimary); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if wasPrimary {
@@ -230,9 +321,20 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 		}
 	}
 
+	// The tape as it stands, for the same reason: once the row is cleared
+	// there is no way back to what a stored listening position was measured
+	// against. Only the last file of the designated edition can move it.
+	var beforeTape []audioTrack
+	if kind.String == models.MediaFileAudio {
+		if beforeTape, err = primaryAudioTracksTx(ctx, tx, bookID); err != nil {
+			return err
+		}
+	}
+
 	res, err := tx.ExecContext(ctx,
 		`UPDATE media_files
-		 SET book_id = NULL, track_number = NULL, is_primary_text = 0, attached_by = NULL
+		 SET book_id = NULL, track_number = NULL, is_primary_text = 0,
+		     audio_edition_id = NULL, attached_by = NULL
 		 WHERE id = ? AND book_id = ?`,
 		fileID, bookID)
 	if err != nil {
@@ -240,6 +342,11 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	if kind.String == models.MediaFileAudio {
+		if err := promoteAudioAfterDetachTx(ctx, tx, bookID, beforeTape); err != nil {
+			return err
+		}
 	}
 	// Detaching the primary leaves the book's remaining formats with no
 	// canonical text at all, which would read as "no ebook" even though one
@@ -249,6 +356,43 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 		return err
 	}
 	return tx.Commit()
+}
+
+// promoteAudioAfterDetachTx keeps the audio designation pointing at something
+// playable after a detach.
+//
+// Detaching one track of a multi-file tape changes nothing here: the edition
+// still exists, still holds the rest, and the position inside it is still
+// meaningful. Only detaching the last file of the designated edition — which
+// is the whole edition when it is a single .m4b — leaves the book with audio
+// attached and nothing designated, and then another recording takes over.
+// That is a different tape, so the position is carried across by proportion
+// and the alignment goes, exactly as an explicit switch would do it.
+func promoteAudioAfterDetachTx(ctx context.Context, tx *sql.Tx, bookID string, beforeTape []audioTrack) error {
+	lostPrimary, err := pruneEmptyAudioEditionsTx(ctx, tx, bookID)
+	if err != nil {
+		return err
+	}
+	if err := ensurePrimaryAudioEditionTx(ctx, tx, bookID); err != nil {
+		return err
+	}
+	if !lostPrimary {
+		return nil
+	}
+	afterTape, err := primaryAudioTracksTx(ctx, tx, bookID)
+	if err != nil {
+		return err
+	}
+	if len(afterTape) == 0 {
+		// No recording left to move onto. The stored position stays put for
+		// whenever one is attached again, which is what detaching the last
+		// text file does too.
+		return nil
+	}
+	if err := remapAudioProgressTx(ctx, tx, bookID, beforeTape, afterTape); err != nil {
+		return err
+	}
+	return dropAlignmentsTx(ctx, tx, bookID)
 }
 
 // promoteAfterDetachTx designates a new primary when the detached file was

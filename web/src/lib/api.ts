@@ -2,6 +2,7 @@ import type {
   AchievementStatus,
   AlignmentJobView,
   AlignmentStatusView,
+  AudioEdition,
   AudioTimeline,
   Book,
   BookFacets,
@@ -481,8 +482,22 @@ export const api = {
       method: "PUT",
     }),
 
+  /**
+   * Makes one of a book's attached audiobooks the one that plays. The server
+   * carries the listening position across by proportion — the same fraction
+   * of the way through a tape of a different length — and drops any
+   * alignment, which was built against the voice being left behind.
+   */
+  setPrimaryAudioEdition: (entryId: string, editionId: number) =>
+    request<{ audio_edition: AudioEdition }>(
+      `/books/${entryId}/audio-editions/${editionId}/primary`,
+      { method: "PUT" },
+    ),
+
   bookFiles: (entryId: string) =>
-    request<{ files: MediaFile[] }>(`/books/${entryId}/files`),
+    request<{ files: MediaFile[]; audio_editions: AudioEdition[] }>(
+      `/books/${entryId}/files`,
+    ),
 
   ignoreMediaFiles: (fileIds: number[]) =>
     request<{ ignored: number }>("/media/ignore", {

@@ -130,6 +130,55 @@ in the arena.
 
 ---
 
+## The designated audiobook
+
+The same choice, one shape harder, on the audio side. A book can have
+several **recordings** attached — the same title read by two different
+narrators, an abridgement beside the unabridged rip — and exactly one of
+them is the audiobook: the tape the timeline is built from, the one the
+player plays, the one an alignment is measured against.
+
+The unit being chosen is a *set*, because an audiobook is not one file but
+N files that behave like a single tape. So the designation cannot live on
+`media_files` the way `is_primary_text` does: `audio_editions` is one row
+per recording, `media_files.audio_edition_id` points at it, and
+`is_primary` names the one that counts (one per book, partial unique
+index). Everything an edition displays — its label, its length, its track
+count, its narrator — is derived from its files on read, so a directory
+renamed on the NAS renames the edition and nothing goes stale.
+
+Grouping is not only how a user picks a version; it is what makes owning
+two survivable at all. Before it, a second rip's tracks were numbered
+1..N beside the first's and `ORDER BY track_number, path` interleaved
+them: chapter one in one voice, chapter one in another, chapter two.
+
+One attach batch is one recording (`POST /books/{entry}/files` with
+`kind=audio`), and attaching a second one never moves the designation —
+the same promise the text side makes when a `.mobi` lands beside the
+`.epub`. The designation moves when someone moves it (`PUT
+/books/{entry}/audio-editions/{id}/primary`) or when the last file of the
+current one is detached. Both paths pay the same two costs:
+
+- **The listening position is carried by proportion.** It is stored as
+  `(raw_audio_file_id, raw_audio_seconds)` — deliberately track-relative,
+  since a global offset moves on its own when a track is re-measured —
+  which makes it meaningless the moment that file is off the timeline. So
+  it is converted to a global second on the tape being left, taken as a
+  fraction of that tape's length, and placed at the same fraction of the
+  new one. Two readings are not the same length, but they are the same
+  book. A tape nobody could measure has no fraction to work with; those
+  positions are cleared rather than guessed, and `percent_complete`
+  stands.
+- **The alignment is deleted.** Its anchors map char offsets onto the
+  seconds of one specific performance, and a second narrator does not say
+  the same words at the same times.
+
+A recording whose files are all off the mount cannot be switched onto:
+the request fails naming the reason, rather than designating a timeline
+with no bytes behind it.
+
+---
+
 ## The data model
 
 The arena rides the games spine (`library_entries`), it does not build a
@@ -158,7 +207,8 @@ The book-specific hierarchy, one table per concept:
 | `book_editions` | **Edition / Printing** | OL edition key (`OL12345M`) | ISBN10/13, publisher, page count, binding. Page numbers belong *here*, not to the work |
 | `library_entries` | your copy of the work | + `media_type`, `book_id`, nullable `edition_id` | The spine. `edition_id` is the printing the entry is anchored to, recorded at add time |
 | `physical_copies` | the lump of paper | `(user, entry, edition)` UNIQUE | A printing the user holds, owned or borrowed (`acquisition`, `due_at`, `returned_at`). The thing page anchors attach to — a second printing is a second row with its own map |
-| `media_files` | EPUB & audiobook files | `(root, path)` UNIQUE | The NAS inventory — pointed-at, never uploaded. `is_primary_text` names the one text file a book is read from, one per book |
+| `media_files` | EPUB & audiobook files | `(root, path)` UNIQUE | The NAS inventory — pointed-at, never uploaded. `is_primary_text` names the one text file a book is read from, one per book; `audio_edition_id` names the recording an audio file belongs to |
+| `audio_editions` | one **recording** of a work | per book, `is_primary` unique per book | The set of audio files that behave as one tape. `media_files.audio_edition_id` points here; only the designated edition is a timeline. Label, length and narrator are derived from the files, never stored |
 | `media_sidecars` | parsed `.opf` metadata | `(root, path)` UNIQUE | Replaced per root each scan; the matcher's best evidence |
 | `epub_texts` / `epub_chapters` | parsed canonical text | per media file | Only the designated primary is parsed. See above |
 | `book_progress` | position | entry PK | One row per entry: `char_offset` is the truth |
@@ -561,7 +611,8 @@ handoff degrades, by asking the user to say where they were.
 |---|---|
 | `GET /api/books/search`, `GET /api/books/isbn/{isbn}`, `GET /api/books/{bookID}` | Open Library search / ISBN lookup / cached work |
 | `GET/POST /api/media/scan`, `GET /api/media/files`, `GET /api/media/candidates`, `POST /api/media/ignore`, `DELETE /api/media/ignore/{fileID}` | NAS inventory + attach candidates |
-| `GET/POST /api/books/{entryID}/files`, `DELETE …/files/{fileID}` | attach / detach EPUB & audio |
+| `GET/POST /api/books/{entryID}/files`, `DELETE …/files/{fileID}` | attach / detach EPUB & audio (the GET also carries the book's `audio_editions`) |
+| `PUT /api/books/{entryID}/files/{fileID}/primary`, `PUT …/audio-editions/{editionID}/primary` | choose the canonical text / the audiobook that plays |
 | `GET /api/books/{entryID}/text[/chapters\|/display\|/asset]` | canonical text ranged reads |
 | `GET /api/books/{entryID}/audio`, `GET …/audio/{trackID}` | timeline + track bytes (Range) |
 | `GET/PUT /api/books/{entryID}/position`, `GET/POST …/sessions` | the one position, and reading sessions |

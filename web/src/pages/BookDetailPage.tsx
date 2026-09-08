@@ -222,6 +222,8 @@ export function BookDetailPage() {
 
           <AttachedFormats entryId={entry.id} />
 
+          <AudioEditions entryId={entry.id} />
+
           <SharePanel entryId={entry.id} />
 
           <UnattachedFiles entryId={entry.id} />
@@ -593,6 +595,117 @@ function AttachedFormats({ entryId }: { entryId: string }) {
         text. Any audio alignment is dropped, because it was built against{" "}
         {current ? (current.path.split("/").pop() ?? "the other file") : "the other file"} and would
         point at the wrong words.
+      </p>
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-red-300">
+          {error}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * The book's audiobooks, and which of them it is actually listened to.
+ *
+ * Owning a title twice on the audio side is a different thing from owning it
+ * twice on the text side: two recordings are two performances, chosen for the
+ * voice as much as for the file. So the panel leads with the narrator when
+ * the tags name one, and with the length — an abridgement is half the hours
+ * of the unabridged rip, which is often the whole reason both are on the NAS.
+ *
+ * Only one of them is a timeline. Switching moves the listening position by
+ * proportion and drops any alignment, so it is a deliberate act with its
+ * consequence stated, exactly like switching the canonical text.
+ *
+ * It renders only for books with a choice to make.
+ */
+function AudioEditions({ entryId }: { entryId: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const { data } = useQuery({
+    queryKey: ["bookFiles", entryId],
+    queryFn: () => api.bookFiles(entryId),
+  });
+
+  const promote = useMutation({
+    mutationFn: (editionId: number) => api.setPrimaryAudioEdition(entryId, editionId),
+    onSuccess: () => {
+      setError(null);
+      // A different tape: the timeline, the position on it and the alignment
+      // built against the old one are all stale.
+      const stale = [
+        ["bookFiles", entryId],
+        ["entry", entryId],
+        ["bookAudio", entryId],
+        ["bookAlign", entryId],
+        ["bookPosition", entryId],
+        ["bookPagePosition", entryId],
+      ];
+      for (const queryKey of stale) queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const editions = data?.audio_editions ?? [];
+  if (editions.length < 2) return null;
+
+  const current = editions.find((edition) => edition.primary);
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">Audiobook versions</h2>
+      <p className="mb-3 text-xs leading-relaxed text-ink-500">
+        You have {editions.length} recordings of this book. One of them is the audiobook — the one
+        the player plays, and the one your place in the audio is measured against.
+      </p>
+      <ul className="space-y-2">
+        {editions.map((edition) => {
+          const unplayable = edition.missing_count >= edition.track_count;
+          return (
+            <li key={edition.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span className="min-w-0">
+                <span className="block truncate text-xs text-ink-300" title={edition.label}>
+                  {edition.label}
+                </span>
+                <span className="text-[11px] text-ink-600">
+                  {edition.narrator && <>read by {edition.narrator} · </>}
+                  {edition.degraded ? "length unknown" : formatDuration(edition.total_duration)} ·{" "}
+                  {edition.track_count} file{edition.track_count === 1 ? "" : "s"}
+                </span>
+                {edition.missing_count > 0 && (
+                  <span className="block text-[11px] text-amber-400">
+                    {unplayable
+                      ? "missing from the NAS right now"
+                      : `${edition.missing_count} of its files are missing from the NAS right now`}
+                  </span>
+                )}
+              </span>
+              {edition.primary ? (
+                <span className="f-chip-active shrink-0 px-2 py-1 font-display text-[10px] uppercase tracking-wider text-ink-100">
+                  Listening to this
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0 text-ink-400 hover:text-ink-200"
+                  disabled={unplayable}
+                  loading={promote.isPending && promote.variables === edition.id}
+                  onClick={() => promote.mutate(edition.id)}
+                >
+                  Listen to this instead
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-3 text-xs leading-relaxed text-ink-500">
+        Switching keeps how far through the book you are and resumes at the same fraction of the new
+        recording — two readings are not the same length, but they are the same book. Any audio
+        alignment is dropped, because it was built against{" "}
+        {current ? current.label : "the other recording"} and would point at the wrong words.
       </p>
       {error && (
         <p role="alert" className="mt-2 text-xs text-red-300">

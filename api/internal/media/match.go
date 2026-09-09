@@ -549,23 +549,84 @@ type audioDirKey struct{ root, dir string }
 // answer whichever kind of file is in it.
 type sidecarKey struct{ root, dir string }
 
-// sidecarsByDir indexes parsed sidecars by the directory they describe. A
-// directory holding more than one .opf picks deterministically —
-// Calibre's own metadata.opf first, then path order — because an arbitrary
-// choice would make the same library match differently on each scan.
-func sidecarsByDir(cars []models.MediaSidecar) map[sidecarKey]models.MediaSidecar {
-	byDir := map[sidecarKey]models.MediaSidecar{}
+// sidecarIndex holds every parsed .opf of a directory, keyed by that
+// directory and ordered so the first is the canonical one: Calibre's own
+// metadata.opf, then path order. Keeping all of them rather than only the
+// first is what lets a flat shelf — one "Title - Author.opf" per book, all
+// in the author's folder — hand each book its own sidecar.
+type sidecarIndex map[sidecarKey][]models.MediaSidecar
+
+// sidecarsByDir indexes parsed sidecars by the directory they describe,
+// deterministically ordered, because an arbitrary choice would make the same
+// library match differently on each scan.
+func sidecarsByDir(cars []models.MediaSidecar) sidecarIndex {
+	byDir := sidecarIndex{}
 	for _, car := range cars {
 		k := sidecarKey{car.Root, groupDir(path.Dir(car.Path))}
-		if held, ok := byDir[k]; ok {
-			heldRank, carRank := sidecarPreference(held.Path), sidecarPreference(car.Path)
-			if heldRank < carRank || (heldRank == carRank && held.Path <= car.Path) {
-				continue
+		byDir[k] = append(byDir[k], car)
+	}
+	for k := range byDir {
+		in := byDir[k]
+		sort.Slice(in, func(i, j int) bool {
+			ri, rj := sidecarPreference(in[i].Path), sidecarPreference(in[j].Path)
+			if ri != rj {
+				return ri < rj
 			}
-		}
-		byDir[k] = car
+			return in[i].Path < in[j].Path
+		})
 	}
 	return byDir
+}
+
+// sidecarStem is a sidecar's path without its extension: the stem a
+// "Title - Author.opf" shares with the "Title - Author.epub" it was written
+// to describe.
+func sidecarStem(car models.MediaSidecar) string {
+	return strings.TrimSuffix(car.Path, path.Ext(car.Path))
+}
+
+// sidecarFor picks the .opf that describes one group, or nil when the
+// directory's sidecars describe some other book.
+//
+// A directory used to hand its first sidecar to every group in it, which is
+// right for the one-book-per-folder layout Calibre writes and catastrophic
+// for the flat shelf every ebook pack ships:
+//
+//	Isaac Asimov/Forward the Foundation - Isaac Asimov.{epub,mobi,opf}
+//	Isaac Asimov/Foundation - Isaac Asimov.{epub,mobi,opf}
+//	Isaac Asimov/Foundation and Empire - Isaac Asimov.{epub,mobi,opf}
+//
+// Every book there has a correct sidecar of its own, but the directory has
+// seven, so all seven books took whichever sorted first and were offered —
+// at weight 1.0, and via that sidecar's ISBN as an outright identity — as
+// Forward the Foundation. A whole series confidently collapsed onto one
+// volume, and the same for every author folder shaped this way.
+//
+// So a sidecar reaches a group two ways. By name: its stem matches the
+// group's, which is the file-level statement "this .opf is about that book"
+// and is the strongest evidence in the directory. Or by being the only
+// question in the room: the directory holds exactly one candidate, so its
+// canonical sidecar can only be about that one. Anything else is a sidecar
+// about some other book in a shared folder, and the group is better served
+// by the metadata inside its own file.
+func (idx sidecarIndex) sidecarFor(g *group, groupsInDir map[sidecarKey]int) *models.MediaSidecar {
+	k := sidecarKey{g.root, groupDir(g.dirPath)}
+	cars := idx[k]
+	if len(cars) == 0 {
+		return nil
+	}
+	if g.kind == models.MediaFileEpub {
+		stem := stemOf(g.files[0]).stem
+		for i := range cars {
+			if sidecarStem(cars[i]) == stem {
+				return &cars[i]
+			}
+		}
+	}
+	if groupsInDir[k] == 1 {
+		return &cars[0]
+	}
+	return nil
 }
 
 // textStem addresses a text-side file the way a NAS shelf actually names
@@ -615,7 +676,7 @@ func attachedStems(files []models.MediaFile) map[textStem]models.MediaFile {
 // candidates for one book, each confidently suggesting the same title, with
 // nothing on screen to say they were the same thing twice.
 func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
-	sidecars map[sidecarKey]models.MediaSidecar, attached map[textStem]models.MediaFile) []group {
+	sidecars sidecarIndex, attached map[textStem]models.MediaFile) []group {
 	audioDirs := map[audioDirKey][]models.MediaFile{}
 	textStems := map[textStem][]models.MediaFile{}
 
@@ -674,14 +735,20 @@ func groupCandidates(files []models.MediaFile, ignored map[int64]bool,
 		groups = append(groups, g)
 	}
 
+	// How many candidates each sidecar directory holds, so a sidecar that
+	// names no file in particular can tell "the one book in this folder"
+	// from "one of the several books in this folder".
+	groupsInDir := map[sidecarKey]int{}
+	for _, g := range groups {
+		groupsInDir[sidecarKey{g.root, groupDir(g.dirPath)}]++
+	}
+
 	for i := range groups {
 		g := &groups[i]
 		if g.kind == models.MediaFileAudio {
 			orderTracks(g.files)
 		}
-		if car, ok := sidecars[sidecarKey{g.root, groupDir(g.dirPath)}]; ok {
-			g.sidecar = &car
-		}
+		g.sidecar = sidecars.sidecarFor(g, groupsInDir)
 		g.signal = extractSignal(g)
 	}
 	return groups

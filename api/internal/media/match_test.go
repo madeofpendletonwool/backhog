@@ -817,13 +817,151 @@ func TestSidecarPickIsDeterministic(t *testing.T) {
 	}
 	byDir := sidecarsByDir(cars)
 	got := byDir[sidecarKey{"/nas", "Books/Dune"}]
-	if got.Title != "Dune" {
-		t.Errorf("picked %q; want Calibre's metadata.opf to win", got.Title)
+	if len(got) != 3 {
+		t.Fatalf("indexed %d sidecars; want all three kept", len(got))
+	}
+	if got[0].Title != "Dune" {
+		t.Errorf("picked %q; want Calibre's metadata.opf to win", got[0].Title)
 	}
 	// And the same answer regardless of the order they arrive in.
 	reversed := []models.MediaSidecar{cars[2], cars[1], cars[0]}
-	if sidecarsByDir(reversed)[sidecarKey{"/nas", "Books/Dune"}].Title != "Dune" {
+	if sidecarsByDir(reversed)[sidecarKey{"/nas", "Books/Dune"}][0].Title != "Dune" {
 		t.Error("sidecar choice depends on input order")
+	}
+}
+
+// mobiFile is the second container of a text book: same stem, different
+// extension, so it groups with the epub beside it.
+func mobiFile(pathStr string) models.MediaFile {
+	return models.MediaFile{Root: "/nas", Path: pathStr, Kind: models.MediaFileEpub,
+		SizeBytes: 1, Mtime: 1, ScannedAt: scannedNow}
+}
+
+// The flat author shelf: one folder, several books, and a correct
+// "Title - Author.opf" beside each. Every book must get its own sidecar.
+//
+// This folder used to hand its lexicographically first .opf to all of them,
+// so an entire series was offered as one volume — "Forward the Foundation"
+// sorts before "Foundation", and every Asimov on the shelf was confidently
+// proposed as Forward the Foundation at 100%.
+func TestPerBookSidecarsInAFlatDirectory(t *testing.T) {
+	files := []models.MediaFile{
+		epubFile("Isaac Asimov/Forward the Foundation - Isaac Asimov.epub"),
+		mobiFile("Isaac Asimov/Forward the Foundation - Isaac Asimov.mobi"),
+		epubFile("Isaac Asimov/Foundation - Isaac Asimov.epub"),
+		mobiFile("Isaac Asimov/Foundation - Isaac Asimov.mobi"),
+		epubFile("Isaac Asimov/Second Foundation - Isaac Asimov.epub"),
+		mobiFile("Isaac Asimov/Second Foundation - Isaac Asimov.mobi"),
+	}
+	sidecars := []models.MediaSidecar{
+		sidecarRow("Isaac Asimov/Forward the Foundation - Isaac Asimov.opf",
+			"Forward the Foundation", "Isaac Asimov", ""),
+		sidecarRow("Isaac Asimov/Foundation - Isaac Asimov.opf",
+			"Foundation", "Isaac Asimov", ""),
+		sidecarRow("Isaac Asimov/Second Foundation - Isaac Asimov.opf",
+			"Second Foundation", "Isaac Asimov", ""),
+	}
+	cs := matchCandidatesWith(t, nil, nil, files, sidecars)
+	if len(cs) != 3 {
+		t.Fatalf("got %d candidates, want one per book: %v", len(cs), keysOf(cs))
+	}
+	for _, want := range []struct{ stem, title string }{
+		{"Isaac Asimov/Forward the Foundation - Isaac Asimov", "Forward the Foundation"},
+		{"Isaac Asimov/Foundation - Isaac Asimov", "Foundation"},
+		{"Isaac Asimov/Second Foundation - Isaac Asimov", "Second Foundation"},
+	} {
+		c := findCandidate(t, cs, "text:/nas:"+want.stem)
+		if c.TitleGuess != want.title {
+			t.Errorf("%s guessed %q; want its own sidecar's %q",
+				want.stem, c.TitleGuess, want.title)
+		}
+	}
+}
+
+// The same shelf, with the sidecars carrying ISBNs. An ISBN bypasses scoring
+// entirely, so the wrong sidecar reaching a group did not merely tilt a score
+// — it resolved that group to another book's ISBN as an outright identity, at
+// confidence 1. Each book must resolve to its own.
+func TestFlatDirectorySidecarISBNsDoNotCrossBooks(t *testing.T) {
+	provider := &isbnProvider{
+		isbn: "9780553588484",
+		book: metadata.Book{ID: "OL20W", Title: "A Game of Thrones",
+			Authors: []string{"George R. R. Martin"}},
+	}
+	files := []models.MediaFile{
+		epubFile("George R. R. Martin/Clash of Kings, A - George R. R. Martin.epub"),
+		epubFile("George R. R. Martin/Game Of Thrones, A - George R. R. Martin.epub"),
+	}
+	sidecars := []models.MediaSidecar{
+		// Sorts first, and is not this shelf's only book.
+		sidecarRow("George R. R. Martin/Clash of Kings, A - George R. R. Martin.opf",
+			"A Clash of Kings", "George R. R. Martin", "0553381695"),
+		sidecarRow("George R. R. Martin/Game Of Thrones, A - George R. R. Martin.opf",
+			"A Game Of Thrones", "George R. R. Martin", "9780553588484"),
+	}
+	cs := matchCandidatesWith(t, provider, nil, files, sidecars)
+
+	thrones := findCandidate(t, cs,
+		"text:/nas:George R. R. Martin/Game Of Thrones, A - George R. R. Martin")
+	if len(thrones.Suggestions) == 0 || thrones.Suggestions[0].Book.ID != "OL20W" {
+		t.Fatalf("suggestions = %+v; want its own ISBN's book", thrones.Suggestions)
+	}
+
+	// The other book's ISBN is the one the provider does not know, so a
+	// suggestion here could only have come from the wrong sidecar.
+	clash := findCandidate(t, cs,
+		"text:/nas:George R. R. Martin/Clash of Kings, A - George R. R. Martin")
+	for _, s := range clash.Suggestions {
+		if s.Book.ID == "OL20W" {
+			t.Errorf("A Clash of Kings resolved to %q via another book's sidecar", s.Book.Title)
+		}
+	}
+}
+
+// A directory holding several books and one sidecar that names none of them
+// by filename: the sidecar is about some other book, so each group falls back
+// to the metadata inside its own file rather than taking a confident guess
+// from a neighbour's .opf.
+func TestUnaddressedSidecarYieldsToOwnMetadata(t *testing.T) {
+	own := epubFile("shelf/pg0042-final-v2.epub")
+	raw, err := json.Marshal(bookTags{Title: "Anathem", Authors: []string{"Neal Stephenson"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own.ContainerMetadata = raw
+	files := []models.MediaFile{own, epubFile("shelf/something-else.epub")}
+	sidecars := []models.MediaSidecar{
+		sidecarRow("shelf/metadata.opf", "Dune", "Frank Herbert", ""),
+	}
+	cs := matchCandidatesWith(t, nil, testLibrary, files, sidecars)
+
+	c := findCandidate(t, cs, "text:/nas:shelf/pg0042-final-v2")
+	if c.TitleGuess != "Anathem" {
+		t.Errorf("guess = %q; want the epub's own metadata, not the shelf's .opf", c.TitleGuess)
+	}
+	if len(c.Suggestions) == 0 || c.Suggestions[0].Book.ID != "OL1W" {
+		t.Errorf("suggestions = %+v; want OL1W", c.Suggestions)
+	}
+}
+
+// One book alone in its folder is Calibre's own layout, and there the
+// directory's metadata.opf is exactly the statement it looks like.
+func TestSoleGroupInDirectoryStillTakesTheSidecar(t *testing.T) {
+	files := []models.MediaFile{
+		epubFile("Neal Stephenson/Anathem (2804)/book.epub"),
+		mobiFile("Neal Stephenson/Anathem (2804)/book.mobi"),
+	}
+	sidecars := []models.MediaSidecar{
+		sidecarRow("Neal Stephenson/Anathem (2804)/metadata.opf",
+			"Anathem", "Neal Stephenson", ""),
+	}
+	cs := matchCandidatesWith(t, nil, testLibrary, files, sidecars)
+	c := findCandidate(t, cs, "text:/nas:Neal Stephenson/Anathem (2804)/book")
+	if c.TitleGuess != "Anathem" {
+		t.Errorf("guess = %q; want the directory's sidecar", c.TitleGuess)
+	}
+	if len(c.Suggestions) == 0 || c.Suggestions[0].Signal != SourceSignalSidecar {
+		t.Errorf("suggestions = %+v; want a sidecar-sourced match", c.Suggestions)
 	}
 }
 

@@ -350,3 +350,69 @@ func TestAddRequiresExactlyOneSubject(t *testing.T) {
 		t.Errorf("rejections took %v; provider was consulted", elapsed)
 	}
 }
+
+// TestChangeThePrintingOverHTTP covers the field the add form has always
+// taken and the entry could never change: which printing this copy is. A
+// misclick at add time, or a second printing bought later, is one PATCH.
+func TestChangeThePrintingOverHTTP(t *testing.T) {
+	app := newBooksTestApp(t)
+
+	status, body := app.post(t, "/api/library", map[string]any{"book_id": "OL1168083W"})
+	if status != http.StatusCreated {
+		t.Fatalf("add book: status %d, body %s", status, body)
+	}
+	entry := decodeEntry(t, body)
+	if entry.EditionID != nil {
+		t.Fatalf("printing = %v on a book added by title, want none", entry.EditionID)
+	}
+	if len(entry.Book.Editions) < 2 {
+		t.Fatalf("fixture has %d printings, want at least 2", len(entry.Book.Editions))
+	}
+	first := entry.Book.Editions[0].ID
+	second := entry.Book.Editions[1].ID
+
+	status, body = app.patch(t, "/api/library/"+entry.ID, map[string]any{"edition_id": first})
+	if status != http.StatusOK {
+		t.Fatalf("choose a printing: status %d, body %s", status, body)
+	}
+	var wrapped struct {
+		Entry models.Entry `json:"entry"`
+	}
+	if err := json.Unmarshal(body, &wrapped); err != nil {
+		t.Fatalf("decode patch response: %v (body %s)", err, body)
+	}
+	if wrapped.Entry.EditionID == nil || *wrapped.Entry.EditionID != first {
+		t.Fatalf("printing = %v, want %q", wrapped.Entry.EditionID, first)
+	}
+
+	// Changing your mind is the whole point, and so is admitting you do not
+	// know: null clears the anchor.
+	if status, body = app.patch(t, "/api/library/"+entry.ID, map[string]any{"edition_id": second}); status != http.StatusOK {
+		t.Fatalf("change the printing: status %d, body %s", status, body)
+	}
+	status, body = app.get(t, "/api/library/"+entry.ID)
+	if status != http.StatusOK {
+		t.Fatalf("get entry: status %d, body %s", status, body)
+	}
+	if got := decodeEntry(t, body); got.EditionID == nil || *got.EditionID != second {
+		t.Fatalf("printing after change = %v, want %q", got.EditionID, second)
+	}
+	if status, _ = app.patch(t, "/api/library/"+entry.ID, map[string]any{"edition_id": nil}); status != http.StatusOK {
+		t.Fatalf("clear the printing: status %d", status)
+	}
+	status, body = app.get(t, "/api/library/"+entry.ID)
+	if status != http.StatusOK {
+		t.Fatalf("get entry: status %d, body %s", status, body)
+	}
+	if got := decodeEntry(t, body); got.EditionID != nil {
+		t.Fatalf("printing after clearing = %v, want none", got.EditionID)
+	}
+
+	// A printing of some other work, and a non-string id, are both refused.
+	if status, _ = app.patch(t, "/api/library/"+entry.ID, map[string]any{"edition_id": "OL9999999M"}); status != http.StatusBadRequest {
+		t.Errorf("foreign printing: status %d, want 400", status)
+	}
+	if status, _ = app.patch(t, "/api/library/"+entry.ID, map[string]any{"edition_id": 7}); status != http.StatusBadRequest {
+		t.Errorf("numeric printing: status %d, want 400", status)
+	}
+}

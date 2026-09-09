@@ -305,8 +305,14 @@ type Entry struct {
 	// through, when they are not the reader's own — the badge that says
 	// "this is Colin's copy". Empty for everything else, including a book
 	// whose files the reader attached and a book with no files at all.
-	SharedBy      string     `json:"shared_by,omitempty"`
-	PlatformID    *int64     `json:"platform_id"`
+	SharedBy   string `json:"shared_by,omitempty"`
+	PlatformID *int64 `json:"platform_id"`
+	// EditionID is the printing this entry is anchored to: the page count
+	// its progress is measured in, and the physical copy whose page map the
+	// position endpoints read. Null for a book added by title alone (and
+	// always for a game), which is not a gap to fill in — most readers do
+	// not know or care which printing they hold.
+	EditionID     *string    `json:"edition_id"`
 	UserRating    *int       `json:"user_rating"`
 	Notes         string     `json:"notes"`
 	QueuePosition *float64   `json:"queue_position"`

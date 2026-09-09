@@ -229,3 +229,114 @@ func TestBorrowedCopyLifecycle(t *testing.T) {
 		t.Errorf("anchors after forget = %d, want the map gone", n)
 	}
 }
+
+// Changing the printing an entry is anchored to is how a misclick at add
+// time is undone, and how a reader with two printings says which one they
+// are actually reading. Nothing stored moves with it: each copy keeps its
+// own page map, and the switch decides which map the position endpoints
+// read — that is what makes the change safe to make twice.
+func TestChangingThePrintingSwitchesThePageMap(t *testing.T) {
+	s := newPageAnchorStore(t)
+	ctx := context.Background()
+
+	first, err := s.CreatePhysicalCopy(ctx, "u1", "e1", "OL1M", "hardback", "", nil)
+	if err != nil {
+		t.Fatalf("register first printing: %v", err)
+	}
+	second, err := s.CreatePhysicalCopy(ctx, "u1", "e1", "OL2M", "paperback", "", nil)
+	if err != nil {
+		t.Fatalf("register second printing: %v", err)
+	}
+	if !first.DrivesPages || second.DrivesPages {
+		t.Fatalf("drives_pages = %v/%v, want the anchored printing to drive pages",
+			first.DrivesPages, second.DrivesPages)
+	}
+	pin := func(copyID string, page, offset int) {
+		t.Helper()
+		if _, err := s.SavePageAnchor(ctx, "u1", "e1", copyID, models.PageAnchor{
+			PrintedPage: page, CharOffset: offset, Source: models.PageAnchorSourceManual,
+		}); err != nil {
+			t.Fatalf("pin page %d: %v", page, err)
+		}
+	}
+	pin(first.ID, 100, 180000)
+	pin(second.ID, 140, 180000)
+
+	anchors, err := s.PageAnchorsForEntry(ctx, "e1")
+	if err != nil {
+		t.Fatalf("PageAnchorsForEntry: %v", err)
+	}
+	if len(anchors) != 1 || anchors[0].PrintedPage != 100 {
+		t.Fatalf("page map = %+v, want the hardback's", anchors)
+	}
+
+	entry, _, err := s.UpdateEntry(ctx, "u1", "e1", EntryUpdate{EditionID: strptr("OL2M")})
+	if err != nil {
+		t.Fatalf("re-anchor: %v", err)
+	}
+	if entry.EditionID == nil || *entry.EditionID != "OL2M" {
+		t.Fatalf("entry printing = %v, want OL2M", entry.EditionID)
+	}
+
+	anchors, err = s.PageAnchorsForEntry(ctx, "e1")
+	if err != nil {
+		t.Fatalf("PageAnchorsForEntry after switch: %v", err)
+	}
+	if len(anchors) != 1 || anchors[0].PrintedPage != 140 {
+		t.Fatalf("page map = %+v, want the paperback's", anchors)
+	}
+	// Both maps survive: the hardback's is still there to switch back to.
+	if n := anchorCount(t, s, ctx, first.ID); n != 1 {
+		t.Errorf("hardback anchors = %d, want its map kept", n)
+	}
+
+	copies, err := s.PhysicalCopies(ctx, "u1", "e1")
+	if err != nil {
+		t.Fatalf("PhysicalCopies: %v", err)
+	}
+	for _, c := range copies {
+		if want := c.EditionID == "OL2M"; c.DrivesPages != want {
+			t.Errorf("copy of %s drives_pages = %v, want %v", c.EditionID, c.DrivesPages, want)
+		}
+	}
+
+	// Clearing is the honest "I don't know which printing this is": the
+	// entry stops reading any page map rather than picking one.
+	entry, _, err = s.UpdateEntry(ctx, "u1", "e1", EntryUpdate{ClearEdition: true})
+	if err != nil {
+		t.Fatalf("clear printing: %v", err)
+	}
+	if entry.EditionID != nil {
+		t.Fatalf("printing = %v after clearing, want none", entry.EditionID)
+	}
+	anchors, err = s.PageAnchorsForEntry(ctx, "e1")
+	if err != nil {
+		t.Fatalf("PageAnchorsForEntry after clearing: %v", err)
+	}
+	if len(anchors) != 0 {
+		t.Errorf("page map = %+v with no printing chosen, want none", anchors)
+	}
+}
+
+// A printing of some other work is a client bug, and the same one the add
+// path already refuses.
+func TestChangingThePrintingRefusesAnotherWorksEdition(t *testing.T) {
+	s := newPageAnchorStore(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO books (id, title, authors_json) VALUES ('OL9W', 'Cryptonomicon', '[]');
+		`); err != nil {
+		t.Fatalf("seed other work: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO book_editions (id, book_id) VALUES ('OL9M', 'OL9W')`); err != nil {
+		t.Fatalf("seed other printing: %v", err)
+	}
+
+	if _, _, err := s.UpdateEntry(ctx, "u1", "e1", EntryUpdate{EditionID: strptr("OL9M")}); !errors.Is(err, ErrEditionMismatch) {
+		t.Fatalf("re-anchor to another work = %v, want ErrEditionMismatch", err)
+	}
+	if _, _, err := s.UpdateEntry(ctx, "u1", "e1", EntryUpdate{EditionID: strptr("nope")}); !errors.Is(err, ErrEditionMismatch) {
+		t.Fatalf("re-anchor to an unknown printing = %v, want ErrEditionMismatch", err)
+	}
+}

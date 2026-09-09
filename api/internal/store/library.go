@@ -36,7 +36,8 @@ type LibraryFilter struct {
 // LEFT JOIN on games.id costs the same index probe the old inner join paid.
 // Genres and platforms are attached separately by hydrate.
 const entrySelect = `
-	SELECT e.id, e.media_type, e.status, e.platform_id, e.user_rating, e.notes, e.queue_position,
+	SELECT e.id, e.media_type, e.status, e.platform_id, e.edition_id, e.user_rating, e.notes,
+	       e.queue_position,
 	       e.started_at, e.finished_at, e.created_at, e.updated_at, e.game_id, e.book_id,
 	       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0)
 	FROM library_entries e
@@ -296,9 +297,14 @@ type EntryUpdate struct {
 	Status        *string
 	PlatformID    *int64
 	ClearPlatform bool
-	UserRating    *int
-	ClearRating   bool
-	Notes         *string
+	// EditionID re-anchors a book entry to a different printing, the way
+	// PlatformID re-points a game at the console it is actually owned on.
+	// ClearEdition is the explicit "I don't know which printing this is".
+	EditionID    *string
+	ClearEdition bool
+	UserRating   *int
+	ClearRating  bool
+	Notes        *string
 }
 
 // UpdateEntry applies a partial update. Status transitions stamp started_at and
@@ -314,12 +320,14 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 	}
 	defer tx.Rollback()
 
-	var currentStatus string
+	var currentStatus, mediaType string
+	var bookID sql.NullString
 	var startedAt, finishedAt sql.NullTime
 	var queuePos sql.NullFloat64
-	err = tx.QueryRowContext(ctx,
-		`SELECT status, started_at, finished_at, queue_position FROM library_entries WHERE user_id = ? AND id = ?`,
-		userID, entryID).Scan(&currentStatus, &startedAt, &finishedAt, &queuePos)
+	err = tx.QueryRowContext(ctx, `
+		SELECT status, media_type, book_id, started_at, finished_at, queue_position
+		FROM library_entries WHERE user_id = ? AND id = ?`,
+		userID, entryID).Scan(&currentStatus, &mediaType, &bookID, &startedAt, &finishedAt, &queuePos)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Entry{}, nil, ErrNotFound
 	}
@@ -399,6 +407,31 @@ func (s *Store) UpdateEntry(ctx context.Context, userID, entryID string, u Entry
 	case u.PlatformID != nil:
 		sets = append(sets, "platform_id = ?")
 		args = append(args, *u.PlatformID)
+	}
+
+	// Re-anchoring the printing. Nothing stored moves with it: page anchors
+	// belong to the physical copy that was scanned, so switching printings
+	// swaps which copy's map the position endpoints read and leaves both
+	// maps intact — that is what makes owning two printings work, and what
+	// makes an accidental choice at add time recoverable.
+	switch {
+	case u.ClearEdition:
+		sets = append(sets, "edition_id = NULL")
+	case u.EditionID != nil:
+		if mediaType != models.MediaBook || !bookID.Valid {
+			return models.Entry{}, nil, errors.New("only a book entry has a printing")
+		}
+		var owner string
+		err := tx.QueryRowContext(ctx,
+			`SELECT book_id FROM book_editions WHERE id = ?`, *u.EditionID).Scan(&owner)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && owner != bookID.String) {
+			return models.Entry{}, nil, ErrEditionMismatch
+		}
+		if err != nil {
+			return models.Entry{}, nil, err
+		}
+		sets = append(sets, "edition_id = ?")
+		args = append(args, *u.EditionID)
 	}
 
 	// Next! needs the queue rank captured before the UPDATE clears the
@@ -716,11 +749,14 @@ func (s *Store) queryEntries(ctx context.Context, query string, args ...any) ([]
 	for rows.Next() {
 		var e models.Entry
 		var gameID sql.NullInt64
-		var bookID sql.NullString
-		if err := rows.Scan(&e.ID, &e.MediaType, &e.Status, &e.PlatformID, &e.UserRating, &e.Notes,
-			&e.QueuePosition, &e.StartedAt, &e.FinishedAt, &e.CreatedAt, &e.UpdatedAt, &gameID, &bookID,
-			&e.LoggedMinutes); err != nil {
+		var bookID, editionID sql.NullString
+		if err := rows.Scan(&e.ID, &e.MediaType, &e.Status, &e.PlatformID, &editionID, &e.UserRating,
+			&e.Notes, &e.QueuePosition, &e.StartedAt, &e.FinishedAt, &e.CreatedAt, &e.UpdatedAt,
+			&gameID, &bookID, &e.LoggedMinutes); err != nil {
 			return nil, err
+		}
+		if editionID.Valid && editionID.String != "" {
+			e.EditionID = &editionID.String
 		}
 		if gameID.Valid {
 			e.Game = &models.Game{ID: gameID.Int64}

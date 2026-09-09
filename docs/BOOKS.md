@@ -205,7 +205,7 @@ The book-specific hierarchy, one table per concept:
 |---|---|---|---|
 | `books` | **Work** | Open Library work key (`OL12345W`) | Shared metadata cache, like `games`. Authors/subjects stay JSON until faceting needs them |
 | `book_editions` | **Edition / Printing** | OL edition key (`OL12345M`) | ISBN10/13, publisher, page count, binding. Page numbers belong *here*, not to the work |
-| `library_entries` | your copy of the work | + `media_type`, `book_id`, nullable `edition_id` | The spine. `edition_id` is the printing the entry is anchored to, recorded at add time |
+| `library_entries` | your copy of the work | + `media_type`, `book_id`, nullable `edition_id` | The spine. `edition_id` is the printing the entry is anchored to — chosen at add time, changed later with `PATCH /library/{id}` (null = "I don't know which") |
 | `physical_copies` | the lump of paper | `(user, entry, edition)` UNIQUE | A printing the user holds, owned or borrowed (`acquisition`, `due_at`, `returned_at`). The thing page anchors attach to — a second printing is a second row with its own map |
 | `media_files` | EPUB & audiobook files | `(root, path)` UNIQUE | The NAS inventory — pointed-at, never uploaded. `is_primary_text` names the one text file a book is read from, one per book; `audio_edition_id` names the recording an audio file belongs to |
 | `audio_editions` | one **recording** of a work | per book, `is_primary` unique per book | The set of audio files that behave as one tape. `media_files.audio_edition_id` points here; only the designated edition is a timeline. Label, length and narrator are derived from the files, never stored |
@@ -393,6 +393,17 @@ another's. The borrowed lifecycle never touches the map: return stamps
 `returned_at`, a re-checkout of the same printing reopens the same row
 (its map intact) with a fresh due date, and buying the book you had out
 flips the row to owned. Only "Forget this copy" ever deletes a map.
+
+Which map the position endpoints *read* is a separate question, and it is
+answered by `library_entries.edition_id` — the printing the entry itself is
+anchored to. Registering the first copy of an unanchored entry adopts its
+printing ("I own this on paper" is the strongest statement anyone makes
+about which printing an entry is); after that the choice only moves when
+someone moves it, from the Printings panel or from the copy that says it is
+not the one being read. Changing it is cheap and reversible: each copy keeps
+its own anchors, so the switch swaps which map is read and destroys nothing,
+and clearing it (`edition_id: null`) is the honest "I don't know which
+printing this is" — page numbers fall back to the even stretch.
 
 The flow, from a phone:
 

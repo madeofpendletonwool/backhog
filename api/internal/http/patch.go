@@ -20,7 +20,8 @@ func decodeRaw(r *http.Request, dst *map[string]any) error {
 }
 
 var entryPatchFields = map[string]bool{
-	"status": true, "platform_id": true, "user_rating": true, "notes": true,
+	"status": true, "platform_id": true, "edition_id": true,
+	"user_rating": true, "notes": true,
 }
 
 // parseUpdateEntry converts a decoded PATCH body into a store.EntryUpdate.
@@ -51,6 +52,25 @@ func parseUpdateEntry(raw map[string]any) (store.EntryUpdate, error) {
 			}
 			id := int64(n)
 			u.PlatformID = &id
+		}
+	}
+
+	// The printing a book entry is anchored to, chosen at add time and
+	// changeable after it: null is the honest "I don't know which one",
+	// which is also how a misclick is undone.
+	if v, ok := raw["edition_id"]; ok {
+		if v == nil {
+			u.ClearEdition = true
+		} else {
+			id, ok := v.(string)
+			if !ok {
+				return u, errorf(http.StatusBadRequest, "edition_id must be a string or null")
+			}
+			if id == "" {
+				u.ClearEdition = true
+			} else {
+				u.EditionID = &id
+			}
 		}
 	}
 

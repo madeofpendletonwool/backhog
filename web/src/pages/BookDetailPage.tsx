@@ -166,7 +166,7 @@ export function BookDetailPage() {
 
           <BookFacts book={book} />
 
-          <Editions editions={editions} />
+          <Editions entry={entry} editions={editions} />
 
           <Panel className="p-5">
             <div className="mb-2.5 flex items-center justify-between">
@@ -445,40 +445,86 @@ function ListenButton({ entry }: { entry: BookEntry }) {
 }
 
 /**
- * Every printing the provider knows about.
+ * Every printing the provider knows about, and which of them this copy is.
  *
- * Read-only, and deliberately so: the API takes `edition_id` when a book is
- * added, but the entry payload never returns it and PATCH /api/library/{id}
- * rejects the field, so there is nothing here to select against or save. When
- * the entry starts carrying its edition, this list becomes the picker.
+ * The choice is made when the book is added, from a list most people click
+ * through quickly, and it is not cosmetic: the printing decides the page
+ * count progress is measured in and which registered copy's page map the
+ * position endpoints read. So it has to be changeable afterwards — for a
+ * misclick, and for the reader who genuinely acquires a second printing.
+ *
+ * Nothing is destroyed by changing it. Page anchors belong to the copy that
+ * was scanned, so switching swaps which map is read and leaves both intact;
+ * switching back restores the old one exactly.
  */
-function Editions({ editions }: { editions: BookEdition[] }) {
+function Editions({ entry, editions }: { entry: BookEntry; editions: BookEdition[] }) {
+  const update = useUpdateEntry();
   if (editions.length === 0) return null;
+
+  const chosen = entry.edition_id ?? null;
+  const choose = (editionId: string | null) =>
+    update.mutate({ id: entry.id, patch: { edition_id: editionId } });
 
   return (
     <Panel className="p-5">
       <h2 className="mb-1 text-sm font-semibold text-ink-200">Printings</h2>
-      <p className="mb-3 text-xs text-ink-500">
-        {editions.length} edition{editions.length === 1 ? "" : "s"} on file. You chose which one you
-        own when you added the book.
+      <p className="mb-3 text-xs leading-relaxed text-ink-500">
+        {editions.length} edition{editions.length === 1 ? "" : "s"} on file.{" "}
+        {chosen
+          ? "Yours is marked. Page counts and scanned pages are read against it."
+          : "You haven't said which one you hold, so page numbers are stretched evenly across the text."}
       </p>
       <ul className="max-h-80 space-y-0.5 overflow-y-auto pr-1">
-        {editions.map((edition) => (
-          <li
-            key={edition.id}
-            className="flex items-baseline justify-between gap-3 rounded-lg px-2 py-1.5 text-sm"
-          >
-            <span className="min-w-0 flex-1 truncate text-ink-300">
-              {editionLabel(edition) || "Unlabelled printing"}
-            </span>
-            {editionISBN(edition) && (
-              <span className="shrink-0 text-[11px] tabular-nums text-ink-600">
-                {editionISBN(edition)}
+        {editions.map((edition) => {
+          const mine = edition.id === chosen;
+          return (
+            <li
+              key={edition.id}
+              className={`flex items-baseline justify-between gap-3 rounded-lg px-2 py-1.5 text-sm ${
+                mine ? "f-chip-active" : ""
+              }`}
+            >
+              <span className="min-w-0 flex-1 truncate text-ink-300">
+                {editionLabel(edition) || "Unlabelled printing"}
               </span>
-            )}
-          </li>
-        ))}
+              {editionISBN(edition) && (
+                <span className="shrink-0 text-[11px] tabular-nums text-ink-600">
+                  {editionISBN(edition)}
+                </span>
+              )}
+              {mine ? (
+                <span className="shrink-0 font-display text-[10px] uppercase tracking-wider text-ink-100">
+                  Yours
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0 text-ink-500 hover:text-ink-200"
+                  loading={update.isPending && update.variables?.patch.edition_id === edition.id}
+                  onClick={() => choose(edition.id)}
+                >
+                  This one
+                </Button>
+              )}
+            </li>
+          );
+        })}
       </ul>
+      {chosen && (
+        <button
+          type="button"
+          onClick={() => choose(null)}
+          className="mt-3 rounded-lg text-xs text-ink-500 transition-colors hover:text-ink-300 focus-visible:focus-ring"
+        >
+          I'm not sure which printing this is
+        </button>
+      )}
+      {update.error && (
+        <p role="alert" className="mt-2 text-xs text-red-300">
+          {(update.error as Error).message}
+        </p>
+      )}
     </Panel>
   );
 }

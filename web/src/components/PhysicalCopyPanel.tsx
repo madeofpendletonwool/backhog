@@ -72,6 +72,17 @@ export function PhysicalCopyPanel({
     mutationFn: (copyId: string) => api.ownBookCopy(entryId, copyId),
     onSuccess: () => invalidate(),
   });
+  // Re-anchoring the entry to this copy's printing. The page map itself is
+  // untouched — every copy keeps its own — so this only changes which one
+  // the position endpoints read, and it is reversible from the Printings
+  // panel or from here.
+  const readThisOne = useMutation({
+    mutationFn: (editionId: string) => api.updateEntry(entryId, { edition_id: editionId }),
+    onSuccess: () => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ["entry", entryId] });
+    },
+  });
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ["bookCopies", entryId] }),
@@ -90,7 +101,12 @@ export function PhysicalCopyPanel({
   const borrowed = copy?.acquisition === "borrowed";
   const returned = copy?.returned_at != null;
   const actionError =
-    register.error ?? giveBack.error ?? checkOutAgain.error ?? buyIt.error ?? drop.error;
+    register.error ??
+    giveBack.error ??
+    checkOutAgain.error ??
+    buyIt.error ??
+    drop.error ??
+    readThisOne.error;
 
   if (editions.length === 0) return null;
 
@@ -199,10 +215,21 @@ export function PhysicalCopyPanel({
           )}
 
           {!copy.drives_pages && (
-            <p className="mt-1 text-xs leading-relaxed text-amber-300/90">
-              Your progress is tracked against a different printing of this book, so this copy's
-              pages are recorded but not shown.
-            </p>
+            <div className="mt-1">
+              <p className="text-xs leading-relaxed text-amber-300/90">
+                Your progress is tracked against a different printing of this book, so this copy's
+                pages are recorded but not shown.
+              </p>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mt-1 text-ink-400 hover:text-ink-200"
+                loading={readThisOne.isPending}
+                onClick={() => readThisOne.mutate(copy.edition_id)}
+              >
+                Read this printing instead
+              </Button>
+            </div>
           )}
 
           <p className="mt-3 font-display text-[11px] uppercase tracking-wider text-ink-300">

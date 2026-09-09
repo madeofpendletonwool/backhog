@@ -159,6 +159,13 @@ interface EntryFields {
    */
   shared_by?: string;
   platform_id: number | null;
+  /**
+   * The printing this copy is anchored to: the page count its progress is
+   * measured in, and the physical copy whose page map the position endpoints
+   * read. Null for a book added by title alone (and always for a game) —
+   * not a gap to fill in, just an unanswered question.
+   */
+  edition_id: string | null;
   user_rating: number | null;
   notes: string;
   queue_position: number | null;

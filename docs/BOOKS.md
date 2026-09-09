@@ -128,6 +128,67 @@ module that imports the very same function rather than a copy. Two
 normalizers that drifted apart would silently rot every stored offset
 in the arena.
 
+### The PDF parser
+
+`api/internal/books/pdf/` is the third container parser, built to the same
+spine contract as `epub/` and `mobi/`: `Parse(io.ReaderAt, size)` returns
+an `*epub.Document`, one Doc per page (`pdf:page:N`), blocks in reading
+order, outline titles and depth, per-page image inventories, heading
+evidence from display type. It is pure parsing, and it is not yet wired
+into the scanner or the ingester — stage 1 wires it after the parser
+earns its fixtures.
+
+Two things live in the parser that must never move into the shared
+normalizer:
+
+- **Dehyphenation.** A line-end `hyphen-\nated` split is rejoined into one
+  word — across lines *and across page breaks* — before `Normalize` runs,
+  because its dash rule would otherwise freeze the split into the canonical
+  text (`hyphen ated`, two words) and every stored offset after it.
+- **Running-head stripping.** A line recurring at the same page edge across
+  the book (masked so folio numbers count as one shape) is apparatus, not
+  prose, and is dropped before blocking.
+
+Reading order is clustered from geometry, not draw order: glyphs group
+into words and baselines, a baseline splits at column-scale gaps, a page
+with a clear un-crossed gutter reads its left column before its right,
+and lines merge into paragraph blocks on spacing, indents and type-size
+changes.
+
+The quality gate is a *classification*, not a text. A PDF whose fonts
+carry broken or missing ToUnicode maps extracts as plausible-looking
+garbage, and a canonical text built from it would silently poison search,
+alignment and the knowledge layer. So extraction is measured before it is
+trusted — replacement-char and control-rune ratios first, dictionary
+coverage only as a corroborating witness (so a clean-extracting book in a
+language the word list doesn't cover can never be refused) — and the
+outcome is one of `text-native`, `image-native`, `drm`, `corrupt`, surfaced
+to the caller because an image-native file (comics, scans, garbage
+victims) must route down a paged path instead of storing a fake text.
+
+DRM is refused whole: any `/Encrypt` dictionary is an `ErrDRM` the caller
+maps to a `drm_pdf` skip reason — including owner-password-only
+"restrictions" files that decrypt with an empty user password. DRM-free
+crowd, by decision, no half-support.
+
+**The library decision** (the roadmap said pdfcpu; reality corrected it):
+pdfcpu has *no text extraction* — it is an object-model and manipulation
+toolkit, so "start from pdfcpu for extraction" was impossible. What the
+arena actually uses, both pure Go, CGO-free and GPL-compatible:
+
+- **github.com/ledongthuc/pdf** (BSD-3, the maintained rsc.io/pdf fork)
+  reads the object model and decodes content-stream text into positioned
+  runs — font encodings, ToUnicode CMaps, embedded TrueType charmaps.
+  Unmappable glyphs surface as U+FFFD, which is the gate's raw signal.
+- **github.com/pdfcpu/pdfcpu** (Apache-2.0) reads outlines only: its
+  bookmark reader resolves destinations — including named ones — to page
+  numbers, which the text reader does not expose.
+
+`go-fitz` (CGO/MuPDF) and unipdf (AGPL) remain out by constraint. If
+extraction quality disappoints on real-world books, the mobi-go move
+applies unchanged: a focused standalone parser repo rather than weak
+output.
+
 ---
 
 ## The designated audiobook

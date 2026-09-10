@@ -855,7 +855,10 @@ func groupAlbum(files []models.MediaFile) string {
 // of the book survives canonicalization. Here it decides which file of a
 // group speaks for it — the metadata read for the title guess, and the file
 // listed first — so the guess comes from the best copy present rather than
-// from whichever extension sorts first alphabetically.
+// from whichever extension sorts first alphabetically. A PDF ranks last:
+// extraction is the lossiest trip to canonical text (running heads dropped,
+// pages are the only structure), so it speaks only when no true ebook
+// container is present.
 func textFormatRank(p string) int {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".epub":
@@ -866,8 +869,10 @@ func textFormatRank(p string) int {
 		return 2
 	case ".mobi":
 		return 3
+	case ".pdf":
+		return 4
 	}
-	return 4
+	return 5
 }
 
 func sortTextFormats(files []models.MediaFile) {

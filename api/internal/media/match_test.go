@@ -1136,10 +1136,13 @@ func TestOwnedBooksBeyondOnePageAreRecognised(t *testing.T) {
 // in two containers, and the queue must ask about them once. Presenting them
 // separately produced two candidates for one book, each confidently naming
 // the same title, with nothing on screen to say they were the same thing.
+// A .pdf joins the pair: the stem is the whole of the match, and the
+// container is nothing.
 func TestTextFormatsOfOneBookAreOneCandidate(t *testing.T) {
 	candidates := matchCandidates(t, &fakeProvider{}, testLibrary, []models.MediaFile{
 		epubFile("Neal Stephenson/Anathem.mobi"),
 		epubFile("Neal Stephenson/Anathem.epub"),
+		epubFile("Neal Stephenson/Anathem.pdf"),
 	})
 
 	text := 0
@@ -1148,20 +1151,24 @@ func TestTextFormatsOfOneBookAreOneCandidate(t *testing.T) {
 			continue
 		}
 		text++
-		if len(c.Files) != 2 {
-			t.Fatalf("candidate %q holds %d files, want both formats", c.Key, len(c.Files))
+		if len(c.Files) != 3 {
+			t.Fatalf("candidate %q holds %d files, want all three formats", c.Key, len(c.Files))
 		}
 		// The best container speaks for the group: its metadata produced the
-		// title guess, so it is the file listed first.
+		// title guess, so it is the file listed first — the pdf ranks last,
+		// its extraction the lossiest trip to canonical text.
 		if got := c.Files[0].Path; got != "Neal Stephenson/Anathem.epub" {
 			t.Fatalf("first file = %q, want the epub", got)
 		}
+		if got := c.Files[2].Path; got != "Neal Stephenson/Anathem.pdf" {
+			t.Fatalf("last file = %q, want the pdf ranked after the mobi", got)
+		}
 		if c.AlternateFormat {
-			t.Fatal("a pair with nothing attached is not an alternate of anything")
+			t.Fatal("a group with nothing attached is not an alternate of anything")
 		}
 	}
 	if text != 1 {
-		t.Fatalf("text candidates = %d, want the pair collapsed into 1", text)
+		t.Fatalf("text candidates = %d, want the trio collapsed into 1", text)
 	}
 }
 
@@ -1246,6 +1253,68 @@ func TestUnattachedSiblingResolvesToTheAttachedBook(t *testing.T) {
 	}
 	if !c.Suggestions[0].InLibrary || c.Suggestions[0].EntryID != entry.ID {
 		t.Fatalf("suggestion = %+v, want it pointed at the existing entry", c.Suggestions[0])
+	}
+	if n := provider.searches.Load(); n != 0 {
+		t.Fatalf("provider searched %d times for a file whose answer was already on disk", n)
+	}
+}
+
+// The .pdf case: X.pdf beside a confirmed X.epub is one decision, not two —
+// the same sibling rule the mobi gets, with the added wrinkle that the pdf
+// may be image-native, which is the parse's verdict to make, never the
+// matcher's. The queue says "another format of the book you attached"; what
+// happens when it is promoted to primary is decided later, honestly.
+func TestUnattachedPDFSiblingResolvesToTheAttachedBook(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	userID := testUser(t, st)
+	for _, b := range testLibrary {
+		if err := st.UpsertBook(ctx, b, ""); err != nil {
+			t.Fatalf("seed book: %v", err)
+		}
+	}
+	entry, err := st.AddBookEntry(ctx, userID, "OL1W", nil, models.StatusBacklog)
+	if err != nil {
+		t.Fatalf("add entry: %v", err)
+	}
+	if err := st.InsertMediaFiles(ctx, []models.MediaFile{
+		epubFile("Neal Stephenson/Anathem.epub"),
+		epubFile("Neal Stephenson/Anathem.pdf"),
+	}); err != nil {
+		t.Fatalf("insert files: %v", err)
+	}
+	inventory, err := st.ListMediaFiles(ctx, store.MediaFileFilter{})
+	if err != nil {
+		t.Fatalf("list files: %v", err)
+	}
+	var epubID int64
+	for _, f := range inventory {
+		if strings.HasSuffix(f.Path, ".epub") {
+			epubID = f.ID
+		}
+	}
+	if _, err := st.AttachMediaFiles(ctx, userID, entry.ID, []int64{epubID}, models.MediaFileEpub); err != nil {
+		t.Fatalf("attach epub: %v", err)
+	}
+
+	provider := &countingProvider{}
+	m := NewMatcher(st, provider)
+	candidates, err := m.Candidates(ctx, userID)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %d, want just the unattached pdf", len(candidates))
+	}
+	c := candidates[0]
+	if !c.AlternateFormat {
+		t.Fatal("the pdf is not flagged as an alternate format")
+	}
+	if c.AlternateOf != "Neal Stephenson/Anathem.epub" {
+		t.Fatalf("alternate_of = %q, want the attached epub", c.AlternateOf)
+	}
+	if len(c.Suggestions) != 1 || c.Suggestions[0].Book.ID != "OL1W" || c.Suggestions[0].Confidence != 1 {
+		t.Fatalf("suggestions = %+v, want the sibling's book at confidence 1", c.Suggestions)
 	}
 	if n := provider.searches.Load(); n != 0 {
 		t.Fatalf("provider searched %d times for a file whose answer was already on disk", n)

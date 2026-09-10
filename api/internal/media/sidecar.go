@@ -24,12 +24,13 @@ import (
 const sidecarExtension = ".opf"
 
 // knownUnhandled are ebook formats this tool recognises and deliberately does
-// not parse. MOBI, AZW and AZW3 are parsed (see mobiExtensions and
-// internal/books/mobi); KFX — Amazon's newer container — is out of scope
-// permanently: mobi-go, the pure-Go Kindle reader this project builds on,
-// does not read it by design, and no other open reader exists. Naming the
-// format and pointing at the EPUB or MOBI of the same book is the honest
-// answer, and it keeps these files from reading as a broken scan.
+// not parse. MOBI, AZW, AZW3 and PDF are parsed (see mobiExtensions,
+// pdfExtension and internal/books/{mobi,pdf}); KFX — Amazon's newer
+// container — is out of scope permanently: mobi-go, the pure-Go Kindle
+// reader this project builds on, does not read it by design, and no other
+// open reader exists. Naming the format and pointing at the EPUB or MOBI
+// of the same book is the honest answer, and it keeps these files from
+// reading as a broken scan.
 var knownUnhandled = map[string]bool{
 	".kfx": true,
 }
@@ -41,6 +42,15 @@ var mobiExtensions = map[string]bool{
 	".mobi": true,
 	".azw":  true,
 	".azw3": true,
+}
+
+// pdfExtension is the text-side extension the pdf parser owns: the same
+// kind 'epub' slot and the same canonical model, with one honest difference
+// the parse-time quality gate enforces — a pdf whose text layer is absent
+// or broken (comics, scans) is classified image-native and refused a
+// canonical text rather than half-parsed.
+var pdfExtension = map[string]bool{
+	".pdf": true,
 }
 
 // bookTags is the JSON shape of the container_metadata column for an epub:

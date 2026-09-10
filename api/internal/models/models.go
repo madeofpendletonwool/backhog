@@ -977,6 +977,11 @@ const (
 	// parser (mobi.ErrDRM): detected at scan and again at parse time,
 	// never half-supported.
 	MediaSkipDRMMobi = "drm_mobi"
+	// MediaSkipDRMPDF reports a .pdf carrying an /Encrypt dictionary —
+	// including owner-password-only "restrictions" files that open with
+	// an empty user password — refused whole (pdf.ErrDRM): detected at
+	// scan and again at parse time, never half-supported.
+	MediaSkipDRMPDF = "drm_pdf"
 	// MediaSkipFormatUnhandled is a recognised ebook format this tool does
 	// not parse (.kfx, the one Kindle format with no reader to build on —
 	// out of scope by design, not by omission). Not a DRM refusal and not

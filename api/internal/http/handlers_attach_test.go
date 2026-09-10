@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,14 +55,23 @@ func newAttachTestApp(t *testing.T) *attachTestApp {
 		}
 	}
 	// A directory-per-book audiobook, a single-file audiobook, a real EPUB,
-	// a DRM-free Kindle file, and an Audible file the scanner must skip and
-	// explain.
+	// a DRM-free Kindle file, an Audible file the scanner must skip and
+	// explain — and the pdf text side: a text-native book, an image-only
+	// comic the scanner inventories but the parse refuses, and an encrypted
+	// file the scanner refuses.
 	write("Neal Stephenson/Anathem/01 - Erasmas.m4b", "fake audio 1")
 	write("Neal Stephenson/Anathem/02 - Apert.m4b", "fake audio 2")
 	write("Andy Weir/Project Hail Mary.m4b", "fake single audio")
 	write("books/Dune.epub", string(apiEpubFixture(t)))
 	writeBytes("kindle/Synthetic PalmDOC Book.mobi", fixtures.MOBI6Palmdoc)
 	write("Audible/locked.aax", "audible DRM bytes")
+	writeBytes("pdf/The Synthetic Book.pdf", fixtures.BuildProsePDF())
+	writeBytes("pictures/Pictures.pdf", fixtures.BuildImageOnlyPDF())
+	lockedPDF, err := fixtures.BuildEncryptedPDF(true)
+	if err != nil {
+		t.Fatalf("build encrypted pdf: %v", err)
+	}
+	writeBytes("pdf/locked.pdf", lockedPDF)
 
 	database, err := db.Open(filepath.Join(t.TempDir(), "attach.db"))
 	if err != nil {
@@ -91,6 +101,8 @@ func newAttachTestApp(t *testing.T) *attachTestApp {
 		{ID: "OL1W", Title: "Anathem", Authors: []string{"Neal Stephenson"}},
 		{ID: "OL2W", Title: "Project Hail Mary", Authors: []string{"Andy Weir"}},
 		{ID: "OL3W", Title: "Dune", Authors: []string{"Frank Herbert"}},
+		{ID: "OL4W", Title: "The Synthetic Book", Authors: []string{"Fixture Author"}},
+		{ID: "OL5W", Title: "Pictures", Authors: []string{"Fixture Artist"}},
 	} {
 		if err := st.UpsertBook(t.Context(), b, ""); err != nil {
 			t.Fatalf("seed book %s: %v", b.ID, err)
@@ -201,8 +213,8 @@ func TestAttachFlow(t *testing.T) {
 		t.Fatalf("candidates: status %d: %v", status, body)
 	}
 	candidates := body["candidates"].([]any)
-	if len(candidates) != 4 {
-		t.Fatalf("got %d candidates, want 4 (two audio groups, the epub, the mobi): %v", len(candidates), body)
+	if len(candidates) != 6 {
+		t.Fatalf("got %d candidates, want 6 (two audio groups, the epub, the mobi, two pdfs): %v", len(candidates), body)
 	}
 
 	// The Anathem directory: grouped, ordered, confidently matched to the
@@ -236,14 +248,33 @@ func TestAttachFlow(t *testing.T) {
 		t.Fatalf("mobi candidate = %v", mobi)
 	}
 
-	// The skipped file is explained, not silently missing.
-	skipped := body["skipped"].([]any)
-	if len(skipped) != 1 {
-		t.Fatalf("skipped = %v, want one row", skipped)
+	// The pdf: a normal text-side candidate too. The scanner cannot tell a
+	// text-native pdf from an image-native one — that verdict belongs to
+	// the parse — so both inventory, and the encrypted sibling is the only
+	// one refused, with its own name for the lock.
+	synthetic := candidateBy(t, candidates, "pdf")
+	if synthetic["kind"] != "epub" || synthetic["title_guess"] != "The Synthetic Book" {
+		t.Fatalf("pdf candidate = %v", synthetic)
 	}
-	skip := skipped[0].(map[string]any)
-	if skip["path"] != "Audible/locked.aax" || skip["reason"] != "unsupported_extension" {
-		t.Errorf("skip row = %v", skip)
+	if got := len(synthetic["files"].([]any)); got != 1 {
+		t.Errorf("pdf candidate holds %d files, want 1 (locked.pdf is skipped, not grouped)", got)
+	}
+
+	// The skipped files are explained, not silently missing.
+	skipped := body["skipped"].([]any)
+	if len(skipped) != 2 {
+		t.Fatalf("skipped = %v, want two rows", skipped)
+	}
+	skipReason := map[string]string{}
+	for _, s := range skipped {
+		sm := s.(map[string]any)
+		skipReason[sm["path"].(string)] = sm["reason"].(string)
+	}
+	if skipReason["Audible/locked.aax"] != "unsupported_extension" {
+		t.Errorf("locked.aax reason = %q", skipReason["Audible/locked.aax"])
+	}
+	if skipReason["pdf/locked.pdf"] != "drm_pdf" {
+		t.Errorf("locked.pdf reason = %q, want drm_pdf", skipReason["pdf/locked.pdf"])
 	}
 
 	// Attach the audio group in the candidate's order: the array is the
@@ -320,6 +351,99 @@ func TestAttachFlow(t *testing.T) {
 	// it owns no text and no longer becomes a zero-length row of its own.
 	if mobiParsed != 1 || mobiChapters != 3 {
 		t.Errorf("mobi parse = %d rows / %d chapters; want 1 / 3", mobiParsed, mobiChapters)
+	}
+
+	// The pdf flows through the identical machinery — one text row, its
+	// outline-titled chapters partitioning it, readable and searchable end
+	// to end.
+	pdfEntry := addBookEntry(t, app, "OL4W")
+	status, body = app.req(t, http.MethodGet, "/api/media/files?kind=epub&unattached=true", nil)
+	if status != http.StatusOK {
+		t.Fatalf("files: status %d: %v", status, body)
+	}
+	pdfID := fileIDByPath(t, body["files"].([]any), "pdf/The Synthetic Book.pdf")
+	status, body = app.req(t, http.MethodPost, "/api/books/"+pdfEntry+"/files",
+		map[string]any{"file_ids": []float64{pdfID}, "kind": "epub"})
+	if status != http.StatusCreated {
+		t.Fatalf("attach pdf: status %d: %v", status, body)
+	}
+	var pdfParsed, pdfChapters int
+	if err := app.store.DB().QueryRow(
+		`SELECT COUNT(*) FROM epub_texts et JOIN media_files mf ON mf.id = et.media_file_id
+		 WHERE mf.path = 'pdf/The Synthetic Book.pdf'`).Scan(&pdfParsed); err != nil {
+		t.Fatalf("probe pdf epub_texts: %v", err)
+	}
+	if err := app.store.DB().QueryRow(
+		`SELECT COUNT(*) FROM epub_chapters ch JOIN epub_texts et ON et.id = ch.epub_text_id
+		 JOIN media_files mf ON mf.id = et.media_file_id
+		 WHERE mf.path = 'pdf/The Synthetic Book.pdf'`).Scan(&pdfChapters); err != nil {
+		t.Fatalf("probe pdf chapters: %v", err)
+	}
+	if pdfParsed != 1 || pdfChapters != 3 {
+		t.Errorf("pdf parse = %d rows / %d chapters; want 1 / 3", pdfParsed, pdfChapters)
+	}
+
+	// Readable: the chapters payload carries the outline's titles and the
+	// ranged text fetch reads the canonical bytes.
+	status, body = app.req(t, http.MethodGet, "/api/books/"+pdfEntry+"/text/chapters", nil)
+	if status != http.StatusOK {
+		t.Fatalf("pdf chapters: status %d: %v", status, body)
+	}
+	if body["toc"].(map[string]any)["source"] != "outline" {
+		t.Errorf("pdf toc source = %v, want the outline", body["toc"])
+	}
+	pdfCh := body["chapters"].([]any)
+	if len(pdfCh) != 3 || pdfCh[0].(map[string]any)["title"] != "Chapter One" {
+		t.Fatalf("pdf chapter titles = %v", pdfCh)
+	}
+	status, body = app.req(t, http.MethodGet, "/api/books/"+pdfEntry+"/text?from=0&to=7", nil)
+	if status != http.StatusOK || body["text"] != "chapter" {
+		t.Errorf("pdf ranged read = (%d, %v)", status, body["text"])
+	}
+
+	// Searchable: a hit carries its chapter, over the pdf-sourced canonical
+	// text exactly like an epub-sourced one.
+	status, body = app.req(t, http.MethodGet, searchPath(pdfEntry, "until the hyphen joins"), nil)
+	if status != http.StatusOK {
+		t.Fatalf("pdf search: status %d: %v", status, body)
+	}
+	pdfHits := results(t, body)
+	if len(pdfHits) == 0 {
+		t.Fatal("pdf search found nothing")
+	}
+	if ch := pdfHits[0]["chapter"].(map[string]any); ch["title"] != "Chapter One" {
+		t.Errorf("pdf search hit chapter = %v, want Chapter One", ch)
+	}
+
+	// The image-native pdf: inventoried, attachable — and refused a
+	// canonical text with the honest interim label when read. The
+	// attachment itself holds; nothing was half-parsed.
+	picturesEntry := addBookEntry(t, app, "OL5W")
+	status, body = app.req(t, http.MethodGet, "/api/media/files?kind=epub&unattached=true", nil)
+	if status != http.StatusOK {
+		t.Fatalf("files: status %d: %v", status, body)
+	}
+	picturesID := fileIDByPath(t, body["files"].([]any), "pictures/Pictures.pdf")
+	status, body = app.req(t, http.MethodPost, "/api/books/"+picturesEntry+"/files",
+		map[string]any{"file_ids": []float64{picturesID}, "kind": "epub"})
+	if status != http.StatusCreated {
+		t.Fatalf("attach image-only pdf: status %d: %v", status, body)
+	}
+	var picturesParsed int
+	if err := app.store.DB().QueryRow(
+		`SELECT COUNT(*) FROM epub_texts et JOIN media_files mf ON mf.id = et.media_file_id
+		 WHERE mf.path = 'pictures/Pictures.pdf'`).Scan(&picturesParsed); err != nil {
+		t.Fatalf("probe pictures epub_texts: %v", err)
+	}
+	if picturesParsed != 0 {
+		t.Errorf("image-only pdf wrote %d canonical-text rows; want 0, never a half-parse", picturesParsed)
+	}
+	status, body = app.req(t, http.MethodGet, "/api/books/"+picturesEntry+"/text/chapters", nil)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("image-only pdf chapters: status %d, want 422: %v", status, body)
+	}
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "no readable text layer") {
+		t.Errorf("image-only refusal = %q, want the honest interim label", msg)
 	}
 
 	// Attached files leave the review queue.
@@ -427,8 +551,8 @@ func TestAttachErrors(t *testing.T) {
 		t.Fatalf("ignore = (%d, %v)", status, body)
 	}
 	status, body = app.req(t, http.MethodGet, "/api/media/candidates", nil)
-	if got := len(body["candidates"].([]any)); got != 2 {
-		t.Fatalf("%d candidates after ignoring Project Hail Mary, want 2 (the epub and the mobi): %v", got, body)
+	if got := len(body["candidates"].([]any)); got != 4 {
+		t.Fatalf("%d candidates after ignoring Project Hail Mary, want 4 (the epub, the mobi and the two pdfs): %v", got, body)
 	}
 	for _, c := range body["candidates"].([]any) {
 		if c.(map[string]any)["dir_path"] == "Andy Weir" {
@@ -441,8 +565,8 @@ func TestAttachErrors(t *testing.T) {
 		t.Errorf("unignore status = %d", status)
 	}
 	status, body = app.req(t, http.MethodGet, "/api/media/candidates", nil)
-	if got := len(body["candidates"].([]any)); got != 3 {
-		t.Errorf("%d candidates after unignore, want 3", got)
+	if got := len(body["candidates"].([]any)); got != 5 {
+		t.Errorf("%d candidates after unignore, want 5", got)
 	}
 
 	// Anonymous access is refused.

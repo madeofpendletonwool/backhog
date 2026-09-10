@@ -28,9 +28,11 @@ import (
 // but it is counted *with a reason* (see recordSkip). DRM of any form is
 // deliberately out of scope: this tool is DRM-free by decision.
 //
-// The text side carries two containers: EPUB natively, and MOBI/AZW/AZW3
-// through the pure-Go mobi-go parser. Both land in kind 'epub' — the
-// text-side slot — and parse into the same canonical-text model.
+// The text side carries three containers: EPUB natively, MOBI/AZW/AZW3
+// through the pure-Go mobi-go parser, and PDF through the pure-Go pdf
+// parser. All land in kind 'epub' — the text-side slot, which is about the
+// book being prose rather than audio, not about the container format — and
+// parse into the same canonical-text model.
 var supportedExtensions = map[string]string{
 	".mp3":  models.MediaFileAudio,
 	".m4a":  models.MediaFileAudio,
@@ -40,22 +42,28 @@ var supportedExtensions = map[string]string{
 	".mobi": models.MediaFileEpub,
 	".azw":  models.MediaFileEpub,
 	".azw3": models.MediaFileEpub,
+	".pdf":  models.MediaFileEpub,
 }
 
 // metaVersion is the version of the metadata extraction the scanner performs:
-// embedded audio tags, an epub's own OPF package metadata, and a
-// mobi/azw/azw3's EXTH block. It joins (size, mtime) in the fast-path
-// comparison, so bumping it here re-reads every file's metadata exactly once
-// on the next scan and then goes quiet. Without it, improving the extractor
-// would only ever affect files that happened to change afterwards. This is
-// books.ParserVersion's trick, applied to the inventory rather than to the
-// canonical text.
+// embedded audio tags, an epub's own OPF package metadata, a mobi/azw/azw3's
+// EXTH block, and a pdf's Info dictionary / XMP packet. It joins (size,
+// mtime) in the fast-path comparison, so bumping it here re-reads every
+// file's metadata exactly once on the next scan and then goes quiet.
+// Without it, improving the extractor would only ever affect files that
+// happened to change afterwards. This is books.ParserVersion's trick,
+// applied to the inventory rather than to the canonical text.
 //
 // 1: audio container tags; epub OPF title/author/series/identifiers; mobi
 // EXTH title/authors/language/date/ISBN. The mobi extractor was added in the
 // same release that first inventories those files, so no existing row holds
 // a pre-mobi read of one — no bump needed.
-const metaVersion = 1
+// 2: pdf Info/XMP title/authors/language/date/ISBN. Unlike the mobi case,
+// pdf files were counted as unsupported before this release, so no row
+// holds a v1 read of a pdf either — but the bump is still required, because
+// metaVersion is one value shared by every kind and the epub/mobi/audio
+// rows must not be confused with rows the pdf extractor never touched.
+const metaVersion = 2
 
 // ScanResult summarises one scan, live while it runs and frozen as the last
 // result once it finishes.
@@ -358,13 +366,23 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 			// eagerly or refuses whole, so a book whose text will not
 			// decompress is a container we could not determine DRM status for:
 			// refusing to inventory it is the DRM-respecting answer, same as
-			// an epub container that will not open.
+			// an epub container that will not open. A PDF is read structurally
+			// only — trailer, Info, XMP — so a pdf that will not open is one
+			// whose /Encrypt status could not be checked: refused the same
+			// way.
 			var encrypted bool
 			var tags bookTags
 			if mobiExtensions[ext] {
 				encrypted, tags, err = readMobiMetadata(path)
 				if err != nil {
 					slog.Warn("media scan mobi", "path", path, "error", err)
+					s.mutate(func(l *ScanResult) { l.Failed++ })
+					return nil
+				}
+			} else if pdfExtension[ext] {
+				encrypted, tags, err = readPDFMetadata(path)
+				if err != nil {
+					slog.Warn("media scan pdf", "path", path, "error", err)
 					s.mutate(func(l *ScanResult) { l.Failed++ })
 					return nil
 				}
@@ -385,8 +403,11 @@ func (s *scan) walkRoot(ctx context.Context, root string) {
 				// of the seen set, so an existing row is flagged missing by
 				// the end-of-scan pass instead of being deleted.
 				reason := models.MediaSkipDRM
-				if mobiExtensions[ext] {
+				switch {
+				case mobiExtensions[ext]:
 					reason = models.MediaSkipDRMMobi
+				case pdfExtension[ext]:
+					reason = models.MediaSkipDRMPDF
 				}
 				s.recordSkip(root, rel, ext, reason, size, mtime)
 				s.mutate(func(l *ScanResult) { l.Unsupported++ })

@@ -123,9 +123,12 @@ func (s *Store) ListEpubChapters(ctx context.Context, epubTextID string) ([]mode
 // survives the trip to canonical text. An EPUB is structured XHTML the
 // parser reads directly; AZW3 is the same content in a Kindle wrapper; AZW
 // and MOBI are the older PalmDOC lineage, where the spine is reconstructed
-// from fragments and the TOC is whatever the EXTH block preserved. When a
-// book arrives as more than one of them, the highest-fidelity container is
-// the one worth measuring positions against.
+// from fragments and the TOC is whatever the EXTH block preserved; a PDF
+// is a text extraction — running heads stripped, pages its only structure —
+// so it ranks last among the containers that parse at all, ahead only of
+// files this query cannot classify. When a book arrives as more than one
+// of them, the highest-fidelity container is the one worth measuring
+// positions against.
 //
 // It is a tiebreak, never an override: a primary the user designated wins
 // outright, and this only decides books that have never had one.
@@ -136,7 +139,8 @@ const TextFormatRank = `CASE
 		WHEN mf.path LIKE '%.azw3' THEN 1
 		WHEN mf.path LIKE '%.azw'  THEN 2
 		WHEN mf.path LIKE '%.mobi' THEN 3
-		ELSE 4
+		WHEN mf.path LIKE '%.pdf'  THEN 4
+		ELSE 5
 	END`
 
 // primaryTextIs is the single predicate for "this media_files row (aliased

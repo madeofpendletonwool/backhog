@@ -16,6 +16,7 @@ import (
 
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
 	"github.com/collinpendleton/backhog/api/internal/books/passage"
+	"github.com/collinpendleton/backhog/api/internal/books/pdf"
 	"github.com/collinpendleton/backhog/api/internal/db"
 	"github.com/collinpendleton/backhog/api/internal/fixtures"
 	"github.com/collinpendleton/backhog/api/internal/models"
@@ -810,5 +811,198 @@ func TestPassageMatchingOverMOBIText(t *testing.T) {
 	want := "the first section reassembles from a skeleton and its fragments fragments splice at insert offsets even mid tag"
 	if got != want {
 		t.Errorf("matched span = %q (offset %d)", got, res.Match.CharOffset)
+	}
+}
+
+// --- PDF ingest ----------------------------------------------------------------
+//
+// The third container, held to the mobi playbook: same canonicalize, same
+// chapter rows, same partition property, same companion files — plus the
+// quality gate's routing, which is the pdf's alone.
+
+func TestEnsureForMediaFilePDF(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+
+	file := insertBookFile(t, st, root, "book.pdf", fixtures.BuildProsePDF())
+	et, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if et.ParserVersion != ParserVersion {
+		t.Errorf("parser version = %q", et.ParserVersion)
+	}
+
+	// Three chapters from the outline bookmarks, page four absorbed by
+	// chapter three; each titled, partitioning the text exactly.
+	chapters, err := st.ListEpubChapters(context.Background(), et.ID)
+	if err != nil {
+		t.Fatalf("chapters: %v", err)
+	}
+	if len(chapters) != 3 {
+		t.Fatalf("got %d chapters, want 3: %+v", len(chapters), chapters)
+	}
+	for i, want := range []string{"Chapter One", "Chapter Two", "Chapter Three"} {
+		if chapters[i].Title != want {
+			t.Errorf("chapter %d title = %q, want %q", i, chapters[i].Title, want)
+		}
+		if chapters[i].TitleSource != TitleSourceTOC {
+			t.Errorf("chapter %d title source = %q, want the outline's", i, chapters[i].TitleSource)
+		}
+	}
+	assertContiguous(t, chapters, et.CharCount)
+
+	// The reader's ranged fetch: every chapter's canonical slice reads back
+	// as the canonical text's own bytes, and the dehyphenated words the
+	// parser rejoined are single words in the stored text — Normalize's
+	// dash rule would have frozen them as two.
+	text, err := ing.ReadText(context.Background(), et, 0, et.CharCount)
+	if err != nil {
+		t.Fatalf("read text: %v", err)
+	}
+	if len(text) != et.CharCount {
+		t.Errorf("text length %d != char count %d", len(text), et.CharCount)
+	}
+	for _, ch := range chapters {
+		slice, err := ing.ReadText(context.Background(), et, ch.CharStart, ch.CharEnd)
+		if err != nil {
+			t.Fatalf("read chapter %d: %v", ch.SpineIndex, err)
+		}
+		if slice != text[ch.CharStart:ch.CharEnd] {
+			t.Errorf("chapter %d ranged read disagrees with the canonical text", ch.SpineIndex)
+		}
+	}
+	for _, want := range []string{"extraordinary", "twentythree", "ordinary across the page boundary"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("canonical text missing %q: %q", want, text)
+		}
+	}
+	// The running heads the parser strips must not have come back.
+	if strings.Contains(text, "the synthetic book") {
+		t.Errorf("canonical text kept a running head: %q", text)
+	}
+
+	// The block index resolves an offset inside chapter 3 to that chapter —
+	// the "which chapter am I in" query invariant 7 backs, over a
+	// pdf-sourced text exactly like an epub-sourced one.
+	index, err := ing.LoadIndex(context.Background(), et)
+	if err != nil {
+		t.Fatalf("load index: %v", err)
+	}
+	last := chapters[len(chapters)-1]
+	loc, ok := index.Resolve(last.CharStart)
+	if !ok {
+		t.Fatal("resolve last chapter start")
+	}
+	if loc.SpineIndex != last.SpineIndex {
+		t.Errorf("resolved spine index = %d, want %d", loc.SpineIndex, last.SpineIndex)
+	}
+
+	// Re-ensure with a current parse must not re-parse, and a stale version
+	// must re-parse in place keeping the row id.
+	again, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("re-ensure: %v", err)
+	}
+	if !again.ParsedAt.Equal(et.ParsedAt) {
+		t.Error("unchanged pdf was re-parsed")
+	}
+	if _, err := st.DB().Exec(`UPDATE epub_texts SET parser_version = '0' WHERE media_file_id = ?`, file.ID); err != nil {
+		t.Fatalf("age the version: %v", err)
+	}
+	refreshed, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if refreshed.ID != et.ID || refreshed.ParserVersion != ParserVersion {
+		t.Errorf("re-parse = id %q version %q; want %q / %q", refreshed.ID, refreshed.ParserVersion, et.ID, ParserVersion)
+	}
+}
+
+// The quality gate's routing, as the issue states it: image-native → no
+// canonical text row with a named refusal, never a half-parse; drm → the
+// drm refusal, again whole. Both leave epub_texts empty for the file.
+func TestEnsureForMediaFilePDFRefusals(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+
+	imageFile := insertBookFile(t, st, root, "comic.pdf", fixtures.BuildImageOnlyPDF())
+	_, err = ing.EnsureForMediaFile(context.Background(), imageFile)
+	if !errors.Is(err, pdf.ErrImageNative) {
+		t.Fatalf("image-native error = %v, want pdf.ErrImageNative", err)
+	}
+	if _, err := st.GetEpubText(context.Background(), imageFile.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("epub_texts row after image-native refusal: %v", err)
+	}
+
+	locked, err := fixtures.BuildEncryptedPDF(true)
+	if err != nil {
+		t.Fatalf("build encrypted pdf: %v", err)
+	}
+	drmFile := insertBookFile(t, st, root, "locked.pdf", locked)
+	_, err = ing.EnsureForMediaFile(context.Background(), drmFile)
+	if !errors.Is(err, pdf.ErrDRM) {
+		t.Fatalf("drm error = %v, want pdf.ErrDRM", err)
+	}
+	if _, err := st.GetEpubText(context.Background(), drmFile.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("epub_texts row after DRM refusal: %v", err)
+	}
+}
+
+// Passage matching over a pdf-sourced canonical text: the dehyphenated,
+// running-head-stripped extraction canonicalizes through the same pinned
+// Normalize, so a photographed sentence of the printed page lands on its
+// offset — the same construction argument the mobi test makes.
+func TestPassageMatchingOverPDFText(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+	file := insertBookFile(t, st, root, "book.pdf", fixtures.BuildProsePDF())
+	et, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	matcher := passage.New(func(ctx context.Context, id string) (string, error) {
+		data, err := os.ReadFile(ing.TextPath(id))
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	})
+
+	// The query as the paper copy reads — including the hyphen the printed
+	// page breaks on ("extraordi-nary"), which the parser must have
+	// rejoined before Normalize ever ran.
+	res, err := matcher.Find(context.Background(), et.ID,
+		`The FIRST paragraph opens the book with plain words in sentences that a reader can follow, and nothing here is EXTRAORDI-nary until the hyphen joins.`)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	text, err := ing.ReadText(context.Background(), et, 0, et.CharCount)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := text[res.Match.CharOffset:res.Match.CharEnd]
+	// The sentence from the first paragraph — rejoined "extraordinary"
+	// included, the property this test exists for.
+	for _, want := range []string{
+		"the first paragraph opens the book with plain words",
+		"and nothing here is extraordinary until the hyphen joins",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("matched span = %q (offset %d), missing %q", got, res.Match.CharOffset, want)
+		}
 	}
 }

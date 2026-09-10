@@ -14,6 +14,7 @@ import (
 
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
 	"github.com/collinpendleton/backhog/api/internal/books/mobi"
+	"github.com/collinpendleton/backhog/api/internal/books/pdf"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -381,14 +382,24 @@ func anchorImages(images []epub.Image, kept []int) []IndexedImage {
 	return out
 }
 
-// parseBookFile opens and parses a text-side ebook from disk: an EPUB, or a
-// MOBI/AZW/AZW3 through the mobi parser. Both return the same spine
-// structure, so canonicalization — and every offset the arena stores — is
-// one code path for every ebook format.
+// parseBookFile opens and parses a text-side ebook from disk: an EPUB, a
+// MOBI/AZW/AZW3 through the mobi parser, or a PDF through the pdf parser.
+// All three return the same spine structure, so canonicalization — and
+// every offset the arena stores — is one code path for every ebook format.
+//
+// A PDF adds the quality gate's routing on top of the parse: DRM fails
+// with pdf.ErrDRM and a file whose text layer is absent or garbage fails
+// with pdf.ErrImageNative — both refused whole, never half-parsed, because
+// a plausible-wrong canonical text would silently poison search, alignment
+// and the knowledge layer. Until the paged reader exists (stage 2), the
+// image-native refusal is the honest interim answer for comics, scans and
+// picture books.
 func parseBookFile(path string) (*epub.Document, error) {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mobi", ".azw", ".azw3":
 		return parseMobiFile(path)
+	case ".pdf":
+		return parsePDFFile(path)
 	default:
 		return parseEpubFile(path)
 	}
@@ -426,6 +437,28 @@ func parseMobiFile(path string) (*epub.Document, error) {
 		return nil, fmt.Errorf("books: stat mobi: %w", err)
 	}
 	doc, err := mobi.Parse(f, info.Size())
+	if err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// parsePDFFile opens and parses a PDF from disk. The quality gate routes
+// before any text is trusted: DRM (pdf.ErrDRM) and an absent or garbage
+// text layer (pdf.ErrImageNative) fail the parse whole; only a text-native
+// file returns a document, and it canonicalizes exactly like any other
+// container.
+func parsePDFFile(path string) (*epub.Document, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("books: open pdf: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("books: stat pdf: %w", err)
+	}
+	doc, err := pdf.Parse(f, info.Size())
 	if err != nil {
 		return nil, err
 	}

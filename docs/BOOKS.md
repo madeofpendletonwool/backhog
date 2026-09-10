@@ -39,11 +39,12 @@ text, which is why one translator serves both.
 
 ## The canonical text
 
-A book's **designated text file** — an EPUB, or a MOBI/AZW/AZW3 through
-the mobi parser — is parsed exactly once into a canonical text: the
-book's prose as one normalized UTF-8 string, in reading order, with every
-position in the arena measured as a **byte offset** into it (Go string
-indexing — bytes, not runes, not pages, not percentages).
+A book's **designated text file** — an EPUB, a MOBI/AZW/AZW3 through the
+mobi parser, or a text-native PDF through the pdf parser — is parsed
+exactly once into a canonical text: the book's prose as one normalized
+UTF-8 string, in reading order, with every position in the arena measured
+as a **byte offset** into it (Go string indexing — bytes, not runes, not
+pages, not percentages).
 
 *Designated*, because a book can have several text files attached and
 only one of them can be the coordinate system. Owning the same title as
@@ -77,12 +78,13 @@ honest answer, and it heals on the next scan.
 
 The pipeline (`api/internal/books/`):
 
-1. **Extract** (`epub/`, `mobi/`) walks the book in reading order — the
-   EPUB spine documents or the mobi chapters (KF8 sections; MOBI6 TOC
-   filepos ranges, else pagebreak sections) — and emits the book as a
+1. **Extract** (`epub/`, `mobi/`, `pdf/`) walks the book in reading order —
+   the EPUB spine documents, the mobi chapters (KF8 sections; MOBI6 TOC
+   filepos ranges, else pagebreak sections), or the PDF's pages with their
+   reading-order clustering — and emits the book as a
    sequence of blocks (paragraph-ish units), carrying each block's
-   source position. The NCX/nav TOC supplies chapter titles and depth;
-   the two parsers share one block-extraction implementation so the
+   source position. The NCX/nav/outline TOC supplies chapter titles and
+   depth; the parsers share block-extraction conventions so the
    rules cannot drift between formats.
 2. **Normalize** (`api/booktext/normalize.go`) folds every block through
    the pinned rules (below). The result contains only letters, digits
@@ -134,9 +136,12 @@ in the arena.
 spine contract as `epub/` and `mobi/`: `Parse(io.ReaderAt, size)` returns
 an `*epub.Document`, one Doc per page (`pdf:page:N`), blocks in reading
 order, outline titles and depth, per-page image inventories, heading
-evidence from display type. It is pure parsing, and it is not yet wired
-into the scanner or the ingester — stage 1 wires it after the parser
-earns its fixtures.
+evidence from display type. It is pure parsing, and it is wired into the
+arena end to end: the scanner inventories `.pdf` in the text-side kind
+(reading the Info dictionary and XMP packet for matcher evidence, refusing
+`/Encrypt` files with `drm_pdf`), the ingester routes `.pdf` through this
+parser in `parseBookFile`, and a text-native PDF lands in
+`epub_texts`/`epub_chapters` exactly like any other container.
 
 Two things live in the parser that must never move into the shared
 normalizer:
@@ -165,6 +170,15 @@ language the word list doesn't cover can never be refused) — and the
 outcome is one of `text-native`, `image-native`, `drm`, `corrupt`, surfaced
 to the caller because an image-native file (comics, scans, garbage
 victims) must route down a paged path instead of storing a fake text.
+
+The ingester routes on that classification: text-native parses into the
+canonical tables; `drm` is refused whole (the parse-time twin of the
+scanner's `drm_pdf` skip); `corrupt` fails and is reported; and
+**image-native is refused with a named label** — the text endpoints answer
+422 saying the file is pages, not prose — because the paged position model
+is stage 2 and the honest interim answer is a refusal, never a
+half-parse. No `epub_texts` row exists for an image-native PDF, so
+nothing downstream can mistake it for a book it can read.
 
 DRM is refused whole: any `/Encrypt` dictionary is an `ErrDRM` the caller
 maps to a `drm_pdf` skip reason — including owner-password-only
@@ -304,12 +318,12 @@ Two shapes worth internalising:
 - **Files that are not inventoried are counted and shown, not hidden**:
   `media_skipped` records each with a reason, so a user whose library is
   half Audible sees *why* those files aren't there. The reason
-  distinguishes five different statements: `drm_epub` and `drm_mobi`
-  (refusals named for the lock they found), `unsupported_extension`
-  (which covers `.aax`/`.aaxc` and genuinely unrecognised files),
-  `format_unhandled` for `.kfx`, the one Kindle format this tool
-  recognises and chose not to parse, and `sidecar_metadata` for a
-  `.opf`, which is not a book at all.
+  distinguishes six different statements: `drm_epub`, `drm_mobi` and
+  `drm_pdf` (refusals named for the lock they found),
+  `unsupported_extension` (which covers `.aax`/`.aaxc` and genuinely
+  unrecognised files), `format_unhandled` for `.kfx`, the one Kindle
+  format this tool recognises and chose not to parse, and
+  `sidecar_metadata` for a `.opf`, which is not a book at all.
 - **`.opf` sidecars are mined, not skipped**: `media_sidecars` holds the
   parsed metadata block of every `.opf` found next to the books — title,
   author, series, ISBN, work key. Rows are replaced per root on each scan
@@ -328,8 +342,9 @@ Two shapes worth internalising:
   proposes (book, confidence) suggestions. Evidence is a
   ladder, expressed as ordering rather than arithmetic — the first source
   that yields a title wins: an OPF metadata block (a `.opf` beside the
-  files, or an epub's own package document), then ID3/MP4/Vorbis tags,
-  then directory layout, then the bare filename. Above 0.72 the UI offers
+  files, or an epub's own package document, or a pdf's Info dictionary /
+  XMP packet), then ID3/MP4/Vorbis tags, then directory layout, then the
+  bare filename. Above 0.72 the UI offers
   them for bulk confirmation; nothing auto-attaches.
 - **A sibling is an answer already given.** A text file whose stem is
   already attached to a book — `Carrie.mobi` beside the `Carrie.epub`
@@ -625,12 +640,12 @@ the attach flow, the audio streamer and the alignment worker only ever
 service that gets them. Backhog inventories the NAS; it does not own
 it. Path containment is re-checked on every served request.
 
-**4. Supported formats are epub / mobi / azw / azw3 / mp3 / m4a / m4b /
-opus, and both DRM and KFX are out of scope by decision.** `.aax`,
-`.aaxc`, DRM-wrapped epubs (`drm_epub`) and DRM-wrapped Kindle files
-(`drm_mobi`) are skipped and *reported* (`media_skipped`), never
-half-supported. This tool is for the DRM-free crowd; do not add "just
-one container" of DRM circumvention.
+**4. Supported formats are epub / mobi / azw / azw3 / pdf / mp3 / m4a /
+m4b / opus, and both DRM and KFX are out of scope by decision.** `.aax`,
+`.aaxc`, DRM-wrapped epubs (`drm_epub`), DRM-wrapped Kindle files
+(`drm_mobi`) and DRM-wrapped PDFs (`drm_pdf`) are skipped and *reported*
+(`media_skipped`), never half-supported. This tool is for the DRM-free
+crowd; do not add "just one container" of DRM circumvention.
 
 `.mobi` / `.azw` / `.azw3` are parsed — by
 [mobi-go](https://github.com/madeofpendletonwool/mobi-go), the pure-Go
@@ -639,10 +654,23 @@ decompression, KF8 reassembly, INDX NCX tables of contents. A Kindle
 file inventories like an EPUB (same text-side kind, same EXTH-driven
 matcher evidence), parses into the same canonical text through the same
 `Canonicalize`, and its DRM'd siblings are detected at scan *and* at
-parse time and refused whole. `.kfx` is the remaining refusal and is
-labelled as one (`format_unhandled`): no open reader exists for it, and
-the honest answer is to name the format and point at the EPUB or MOBI
-of the same book. Do not half-implement it inside the scanner.
+parse time and refused whole.
+
+`.pdf` is parsed too — and it is two populations wearing one extension.
+A **text-native** PDF (rare ebooks, RPG books, technical titles) is just
+a third container parser: it inventories in the text-side kind with its
+Info/XMP metadata feeding the matcher, parses through
+`internal/books/pdf` into the same canonical text, and gets the whole
+arena — reader, search, passage matching, alignment eligibility —
+unchanged. An **image-native** PDF (comics, manga, picture books, scans)
+has no text layer to trust, so the parser's quality gate classifies it
+at parse time and the ingester refuses it a canonical text with a named
+label; its honest position is a page index, which is the stage-2 paged
+position model, not a faked `char_count`. Never half-parse either
+population into the canonical tables. `.kfx` is the remaining refusal
+and is labelled as one (`format_unhandled`): no open reader exists for
+it, and the honest answer is to name the format and point at the EPUB or
+MOBI of the same book. Do not half-implement it inside the scanner.
 
 Every container parser in the API is hand-rolled pure Go and stays that
 way: the image is distroless with `CGO_ENABLED=0`, so there is no

@@ -65,10 +65,12 @@ const sidecarOPF = `<?xml version='1.0' encoding='utf-8'?>
 </package>`
 
 // fixtureLibrary builds a NAS-like tree: an audiobooks root and an ebooks
-// root, with supported files (including an .opus), unsupported files (.aax,
-// .pdf), a DRM-wrapped epub, a Calibre directory carrying a .mobi and a
-// metadata sidecar, Kindle files in the other text-side containers (.azw,
-// .azw3), a DRM-wrapped .mobi, a .kfx, and NAS housekeeping clutter.
+// root, with supported files (including an .opus and the pdf text side —
+// a text-native book, a titled one and an image-only comic), unsupported
+// files (.aax), a DRM-wrapped epub, a Calibre directory carrying a .mobi
+// and a metadata sidecar, Kindle files in the other text-side containers
+// (.azw, .azw3), a DRM-wrapped .mobi, a DRM-wrapped .pdf, a .kfx, and NAS
+// housekeeping clutter.
 func fixtureLibrary(t *testing.T) (audioDir, booksDir string) {
 	t.Helper()
 	base := t.TempDir()
@@ -81,7 +83,13 @@ func fixtureLibrary(t *testing.T) (audioDir, booksDir string) {
 	writeFile(t, filepath.Join(audioDir, "locked.aax"), []byte("audible DRM bytes"))
 	writeFile(t, filepath.Join(booksDir, "novel.epub"), buildEPUB(false))
 	writeFile(t, filepath.Join(booksDir, "wrapped.epub"), buildEPUB(true))
-	writeFile(t, filepath.Join(booksDir, "cover.pdf"), []byte("%PDF-1.4 not a book"))
+	writeFile(t, filepath.Join(booksDir, "cover.pdf"), fixtures.BuildTitledPDF())
+	writeFile(t, filepath.Join(booksDir, "pictures.pdf"), fixtures.BuildImageOnlyPDF())
+	lockedPDF, err := fixtures.BuildEncryptedPDF(true)
+	if err != nil {
+		t.Fatalf("build encrypted pdf: %v", err)
+	}
+	writeFile(t, filepath.Join(booksDir, "locked.pdf"), lockedPDF)
 	writeFile(t, filepath.Join(booksDir, ".hidden.epub"), buildEPUB(false))
 	writeFile(t, filepath.Join(booksDir, calibreDir, "metadata.opf"), []byte(sidecarOPF))
 	writeFile(t, filepath.Join(booksDir, calibreDir, "Breakfast of Champions.epub"), buildEPUB(false))
@@ -103,11 +111,14 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan: %v (result %+v)", err, res)
 	}
-	// 8 inventoried (m4b, mp3, opus, two epubs, .mobi, .azw, .azw3); 6 not
-	// (aax, pdf, DRM epub, the .opf sidecar, the DRM .mobi and the .kfx);
-	// 1 of those 6 parsed as a sidecar.
-	if res.Found != 8 || res.New != 8 || res.Unsupported != 6 || res.Sidecars != 1 {
-		t.Errorf("counts = found %d, new %d, unsupported %d, sidecars %d; want 8, 8, 6, 1",
+	// 10 inventoried (m4b, mp3, opus, two epubs, .mobi, .azw, .azw3, the
+	// titled .pdf and the image-only .pdf); 6 not (aax, DRM epub, the .opf
+	// sidecar, the DRM .mobi, the DRM .pdf and the .kfx); 1 of those 6
+	// parsed as a sidecar. The image-only pdf inventories like any other:
+	// the scanner is a cheap inventory pass, and its pages-not-prose
+	// verdict is the parser's to make at attach time.
+	if res.Found != 10 || res.New != 10 || res.Unsupported != 6 || res.Sidecars != 1 {
+		t.Errorf("counts = found %d, new %d, unsupported %d, sidecars %d; want 10, 10, 6, 1",
 			res.Found, res.New, res.Unsupported, res.Sidecars)
 	}
 	if res.Missing != 0 || res.Failed != 0 {
@@ -118,8 +129,8 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(files) != 8 {
-		t.Fatalf("got %d files, want 8: %+v", len(files), files)
+	if len(files) != 10 {
+		t.Fatalf("got %d files, want 10: %+v", len(files), files)
 	}
 
 	type fileClass struct{ kind, root string }
@@ -145,6 +156,14 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	// The Kindle containers share the text-side kind: an .azw is a MOBI6
 	// container, an .azw3 a KF8 one, and both inventoried like an epub.
 	for _, rel := range []string{mobiRel, "kindle.azw", "kindle.azw3"} {
+		if byPath[rel].kind != "epub" {
+			t.Errorf("%s classified wrong: %+v", rel, byPath[rel])
+		}
+	}
+	// The pdf side shares it too — the slot is *the text side*, not the
+	// format — whatever the quality gate will later say about the file's
+	// text layer.
+	for _, rel := range []string{"cover.pdf", "pictures.pdf"} {
 		if byPath[rel].kind != "epub" {
 			t.Errorf("%s classified wrong: %+v", rel, byPath[rel])
 		}
@@ -227,6 +246,33 @@ func TestScanInventoriesLibrary(t *testing.T) {
 				t.Errorf("mobi isbn = %v, want the normalized EXTH ISBN", tags["isbn"])
 			}
 		}
+		if f.Path == "cover.pdf" {
+			// A pdf speaks about itself through its Info dictionary and
+			// XMP packet: title, author, language and — when it declares
+			// one — an ISBN the matcher may treat as an identity. The
+			// fixture writes the same title into both places, the ISBN
+			// into XMP only, exactly the split real producers leave.
+			if f.DurationSeconds != nil {
+				t.Errorf("pdf should have no duration: %+v", f)
+			}
+			var tags map[string]any
+			if err := json.Unmarshal(f.ContainerMetadata, &tags); err != nil {
+				t.Fatalf("pdf metadata not JSON: %v", err)
+			}
+			if tags["title"] != "The Titled Synthetic Book" {
+				t.Errorf("pdf title = %v", tags["title"])
+			}
+			authors, _ := tags["authors"].([]any)
+			if len(authors) == 0 || authors[0] != "Fixture Author" {
+				t.Errorf("pdf authors = %v", tags["authors"])
+			}
+			if tags["language"] != "en" {
+				t.Errorf("pdf language = %v", tags["language"])
+			}
+			if tags["isbn"] != "9780000000002" {
+				t.Errorf("pdf isbn = %v, want the normalized XMP identifier", tags["isbn"])
+			}
+		}
 	}
 	if m4bTags["title"] != "Project Hail Mary" || m4bTags["album_artist"] != "Andy Weir" {
 		t.Errorf("m4b tags = %v", m4bTags)
@@ -249,9 +295,6 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if skipReason["locked.aax"] != "unsupported_extension" {
 		t.Errorf("locked.aax reason = %q", skipReason["locked.aax"])
 	}
-	if skipReason["cover.pdf"] != "unsupported_extension" {
-		t.Errorf("cover.pdf reason = %q", skipReason["cover.pdf"])
-	}
 	if skipReason["wrapped.epub"] != "drm_epub" {
 		t.Errorf("wrapped.epub reason = %q", skipReason["wrapped.epub"])
 	}
@@ -260,6 +303,11 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	// than sharing the "we don't know what this is" bucket.
 	if got := skipReason["locked.mobi"]; got != "drm_mobi" {
 		t.Errorf("locked.mobi reason = %q, want drm_mobi", got)
+	}
+	// An encrypted pdf is refused with the pdf's own name for the lock —
+	// the same honesty drm_epub and drm_mobi give their containers.
+	if got := skipReason["locked.pdf"]; got != "drm_pdf" {
+		t.Errorf("locked.pdf reason = %q, want drm_pdf", got)
 	}
 	if got := skipReason["newer.kfx"]; got != "format_unhandled" {
 		t.Errorf("newer.kfx reason = %q, want format_unhandled", got)
@@ -290,12 +338,12 @@ func TestScanInventoriesLibrary(t *testing.T) {
 	if status.Running || status.Last == nil {
 		t.Fatalf("status after scan: %+v", status)
 	}
-	if status.Last.Found != 8 || status.Last.New != 8 || status.Last.Unsupported != 6 || status.Last.Missing != 0 {
+	if status.Last.Found != 10 || status.Last.New != 10 || status.Last.Unsupported != 6 || status.Last.Missing != 0 {
 		t.Errorf("status last counts: %+v", status.Last)
 	}
 
 	// A skip that goes away disappears from the inventory on rescan.
-	if err := os.Remove(filepath.Join(booksDir, "cover.pdf")); err != nil {
+	if err := os.Remove(filepath.Join(booksDir, "locked.pdf")); err != nil {
 		t.Fatalf("remove pdf: %v", err)
 	}
 	if _, err := runner.Run(context.Background()); err != nil {
@@ -306,8 +354,8 @@ func TestScanInventoriesLibrary(t *testing.T) {
 		t.Fatalf("list skipped again: %v", err)
 	}
 	for _, f := range skipped {
-		if f.Path == "cover.pdf" {
-			t.Error("cover.pdf still listed as skipped after removal")
+		if f.Path == "locked.pdf" {
+			t.Error("locked.pdf still listed as skipped after removal")
 		}
 	}
 }
@@ -339,8 +387,8 @@ func TestScanTwiceIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second scan: %v (result %+v)", err, res)
 	}
-	if res.Found != 8 || res.New != 0 || res.Changed != 0 || res.Failed != 0 {
-		t.Errorf("second scan counts = %+v; want found 8, nothing new/changed/failed", res)
+	if res.Found != 10 || res.New != 0 || res.Changed != 0 || res.Failed != 0 {
+		t.Errorf("second scan counts = %+v; want found 10, nothing new/changed/failed", res)
 	}
 
 	after, err := st.ListMediaFiles(context.Background(), store.MediaFileFilter{})
@@ -471,8 +519,8 @@ func TestMediaRootsAreNeverWritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan over read-only roots: %v (result %+v)", err, res)
 	}
-	if res.Found != 8 || res.Failed != 0 {
-		t.Errorf("counts over read-only roots = %+v; want found 8, failed 0", res)
+	if res.Found != 10 || res.Failed != 0 {
+		t.Errorf("counts over read-only roots = %+v; want found 10, failed 0", res)
 	}
 
 	after := treeSnapshot(t, audioDir, booksDir)
@@ -513,8 +561,8 @@ func TestAbsentRootKeepsRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(files) != 8 {
-		t.Fatalf("got %d files after absent-root scan, want 8", len(files))
+	if len(files) != 10 {
+		t.Fatalf("got %d files after absent-root scan, want 10", len(files))
 	}
 
 	// But a present root with a really deleted file does flag it.

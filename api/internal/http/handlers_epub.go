@@ -14,6 +14,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/auth"
 	"github.com/collinpendleton/backhog/api/internal/books"
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
+	"github.com/collinpendleton/backhog/api/internal/books/pdf"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -74,6 +75,17 @@ func (s *Server) ensureBookText(w http.ResponseWriter, r *http.Request) (models.
 	case errors.Is(err, epub.ErrDRM):
 		fail(w, errorf(http.StatusUnprocessableEntity,
 			"this EPUB is DRM-protected and cannot be parsed"))
+	case errors.Is(err, pdf.ErrDRM):
+		fail(w, errorf(http.StatusUnprocessableEntity,
+			"this PDF is DRM-protected (/Encrypt) and cannot be parsed"))
+	case errors.Is(err, pdf.ErrImageNative):
+		// The quality gate's verdict, not a parse failure: comics, scans
+		// and picture books are pages, not prose, and a plausible-wrong
+		// text would silently poison every offset downstream. The paged
+		// reader for them is stage 2; until then this label is the honest
+		// interim answer.
+		fail(w, errorf(http.StatusUnprocessableEntity,
+			"this PDF has no readable text layer — it is pages, not prose (a comic, scan or picture book); paged reading for those is not here yet"))
 	case err != nil:
 		slog.ErrorContext(r.Context(), "epub parse failed", "error", err)
 		fail(w, errorf(http.StatusInternalServerError, "could not parse this ebook"))

@@ -71,6 +71,20 @@ const (
 	Corrupt Classification = "corrupt"
 )
 
+// Class sentinels, so a caller holding only an error can route on the
+// verdict with errors.Is — the ingester and the text endpoints name each
+// refusal by its class, not by string-matching the message.
+var (
+	// ErrImageNative is wrapped by every image-native NotTextError: the
+	// file is pages, not prose, and no canonical text may be built from
+	// it. Until the paged reader exists the honest answer is a named
+	// refusal, never a half-parse.
+	ErrImageNative = errors.New("pdf: image-native file with no trustworthy text layer")
+	// ErrCorrupt is wrapped by every corrupt NotTextError: the file could
+	// not be read structurally at all.
+	ErrCorrupt = errors.New("pdf: structurally corrupt file")
+)
+
 // NotTextError reports a parse that cannot yield a trustworthy text layer.
 // Class says which skip path the caller takes; Reason is human-readable
 // detail for the skip report.
@@ -81,6 +95,18 @@ type NotTextError struct {
 
 func (e *NotTextError) Error() string {
 	return fmt.Sprintf("pdf: %s: %s", e.Class, e.Reason)
+}
+
+// Unwrap exposes the class as a sentinel, so errors.Is(err, ErrImageNative)
+// and errors.Is(err, ErrCorrupt) answer without knowing the type.
+func (e *NotTextError) Unwrap() error {
+	switch e.Class {
+	case ImageNative:
+		return ErrImageNative
+	case Corrupt:
+		return ErrCorrupt
+	}
+	return nil
 }
 
 // ParseResult carries the spine document together with the quality gate's

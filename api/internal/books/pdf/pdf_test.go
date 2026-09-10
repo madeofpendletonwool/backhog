@@ -1,4 +1,4 @@
-package pdf
+package pdf_test
 
 import (
 	"bytes"
@@ -9,23 +9,33 @@ import (
 
 	"github.com/collinpendleton/backhog/api/internal/books"
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
+	"github.com/collinpendleton/backhog/api/internal/books/pdf"
+	"github.com/collinpendleton/backhog/api/internal/fixtures"
 )
 
 // The tests run every fixture through the same spine contract the EPUB and
 // MOBI parsers feed: parse to *epub.Document, canonicalize with the real
 // books.Canonicalize, and assert the chapter partition invariant 7 backs.
+// The fixture bytes come from internal/fixtures, shared with the scanner
+// and ingester suites so every layer tests the same files.
 
 func readerAt(t *testing.T, data []byte) *bytes.Reader {
 	t.Helper()
 	return bytes.NewReader(data)
 }
 
+// parseResult runs the parser under test over fixture bytes.
+func parseResult(t *testing.T, data []byte) (*pdf.ParseResult, error) {
+	t.Helper()
+	return pdf.ParseWithQuality(bytes.NewReader(data), int64(len(data)))
+}
+
 func TestParseProse(t *testing.T) {
-	res, err := parseResult(t, buildProsePDF(t))
+	res, err := parseResult(t, fixtures.BuildProsePDF())
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if res.Class != TextNative {
+	if res.Class != pdf.TextNative {
 		t.Fatalf("class = %q (%s), want text-native", res.Class, res.Reason)
 	}
 	doc := res.Doc
@@ -82,8 +92,34 @@ func TestParseProse(t *testing.T) {
 	}
 }
 
+// The class sentinels are the routing contract: the ingester and the text
+// endpoints name each refusal with errors.Is, never by matching message
+// text.
+func TestNotTextErrorSentinels(t *testing.T) {
+	_, imageErr := parseResult(t, fixtures.BuildImageOnlyPDF())
+	if !errors.Is(imageErr, pdf.ErrImageNative) {
+		t.Errorf("image-native error = %v, want errors.Is pdf.ErrImageNative", imageErr)
+	}
+	if errors.Is(imageErr, pdf.ErrCorrupt) {
+		t.Errorf("image-native error also claims corrupt: %v", imageErr)
+	}
+	corruptErr := func() error {
+		res, err := parseResult(t, fixtures.BuildCorruptPDF())
+		if res != nil {
+			t.Fatal("corrupt parse returned a result")
+		}
+		return err
+	}()
+	if !errors.Is(corruptErr, pdf.ErrCorrupt) {
+		t.Errorf("corrupt error = %v, want errors.Is pdf.ErrCorrupt", corruptErr)
+	}
+	if !errors.Is(fmt.Errorf("wrapped: %w", imageErr), pdf.ErrImageNative) {
+		t.Error("sentinel does not survive wrapping")
+	}
+}
+
 func TestParseTwoColumnReadingOrder(t *testing.T) {
-	res, err := parseResult(t, buildTwoColumnPDF(t))
+	res, err := parseResult(t, fixtures.BuildTwoColumnPDF())
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -104,7 +140,7 @@ func TestParseTwoColumnReadingOrder(t *testing.T) {
 // joins ("extraordi-/nary", "twenty-/three") and the cross-page join
 // ("ordi-"/"nary") must all come out as single words.
 func TestDehyphenationFrozen(t *testing.T) {
-	res, err := parseResult(t, buildProsePDF(t))
+	res, err := parseResult(t, fixtures.BuildProsePDF())
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -122,16 +158,16 @@ func TestDehyphenationFrozen(t *testing.T) {
 }
 
 func TestParseImageOnly(t *testing.T) {
-	data := buildImageOnlyPDF(t)
+	data := fixtures.BuildImageOnlyPDF()
 	res, err := parseResult(t, data)
 	if err == nil {
 		t.Fatal("image-only parse returned no gate error")
 	}
-	var nte *NotTextError
-	if !errors.As(err, &nte) || nte.Class != ImageNative {
+	var nte *pdf.NotTextError
+	if !errors.As(err, &nte) || nte.Class != pdf.ImageNative {
 		t.Fatalf("error = %v, want image-native NotTextError", err)
 	}
-	if res == nil || res.Class != ImageNative {
+	if res == nil || res.Class != pdf.ImageNative {
 		t.Fatalf("result class = %+v, want image-native", res)
 	}
 	if len(res.Doc.Docs) != 2 {
@@ -146,18 +182,18 @@ func TestParseImageOnly(t *testing.T) {
 		}
 	}
 	// The plain Parse entry point refuses rather than returning the doc.
-	if _, err := Parse(readerAt(t, data), int64(len(data))); !errors.As(err, &nte) || nte.Class != ImageNative {
+	if _, err := pdf.Parse(readerAt(t, data), int64(len(data))); !errors.As(err, &nte) || nte.Class != pdf.ImageNative {
 		t.Fatalf("Parse error = %v, want image-native refusal", err)
 	}
 }
 
 func TestParseGarbageToUnicode(t *testing.T) {
-	res, err := parseResult(t, buildGarbagePDF(t))
+	res, err := parseResult(t, fixtures.BuildGarbagePDF())
 	if err == nil {
 		t.Fatal("garbage parse returned no gate error")
 	}
-	var nte *NotTextError
-	if !errors.As(err, &nte) || nte.Class != ImageNative {
+	var nte *pdf.NotTextError
+	if !errors.As(err, &nte) || nte.Class != pdf.ImageNative {
 		t.Fatalf("error = %v, want image-native NotTextError", err)
 	}
 	if !strings.Contains(nte.Reason, "unmapped") {
@@ -179,28 +215,31 @@ func TestParseGarbageToUnicode(t *testing.T) {
 func TestParseEncryptedRefused(t *testing.T) {
 	for name, locked := range map[string]bool{"locked": true, "restricted": false} {
 		t.Run(name, func(t *testing.T) {
-			data := buildEncryptedPDF(t, locked)
+			data, err := fixtures.BuildEncryptedPDF(locked)
+			if err != nil {
+				t.Fatal(err)
+			}
 			res, err := parseResult(t, data)
-			if !errors.Is(err, ErrDRM) {
-				t.Fatalf("error = %v, want ErrDRM", err)
+			if !errors.Is(err, pdf.ErrDRM) {
+				t.Fatalf("error = %v, want pdf.ErrDRM", err)
 			}
 			if res != nil {
 				t.Errorf("result = %+v, want nil", res)
 			}
-			if _, err := Parse(readerAt(t, data), int64(len(data))); !errors.Is(err, ErrDRM) {
-				t.Fatalf("Parse error = %v, want ErrDRM", err)
+			if _, err := pdf.Parse(readerAt(t, data), int64(len(data))); !errors.Is(err, pdf.ErrDRM) {
+				t.Fatalf("Parse error = %v, want pdf.ErrDRM", err)
 			}
 		})
 	}
 }
 
 func TestParseCorrupt(t *testing.T) {
-	res, err := parseResult(t, buildCorruptPDF())
+	res, err := parseResult(t, fixtures.BuildCorruptPDF())
 	if err == nil {
 		t.Fatal("corrupt parse returned no error")
 	}
-	var nte *NotTextError
-	if !errors.As(err, &nte) || nte.Class != Corrupt {
+	var nte *pdf.NotTextError
+	if !errors.As(err, &nte) || nte.Class != pdf.Corrupt {
 		t.Fatalf("error = %v, want corrupt NotTextError", err)
 	}
 	if res != nil {
@@ -215,11 +254,11 @@ func TestParseCorrupt(t *testing.T) {
 // gapless, non-overlapping, reassembling the canonical text. The same
 // property assertions the mobi parse runs.
 func TestSpineContractAndPartition(t *testing.T) {
-	prose, err := parseResult(t, buildProsePDF(t))
+	prose, err := parseResult(t, fixtures.BuildProsePDF())
 	if err != nil {
 		t.Fatalf("prose: %v", err)
 	}
-	columns, err := parseResult(t, buildTwoColumnPDF(t))
+	columns, err := parseResult(t, fixtures.BuildTwoColumnPDF())
 	if err != nil {
 		t.Fatalf("columns: %v", err)
 	}
@@ -278,7 +317,7 @@ func runPartition(t *testing.T, doc *epub.Document) {
 // TestUnnamedPDFFallsBackToPages: with no outline, the page documents are
 // the book's only structure — the fallback chapter marks the issue names.
 func TestUnnamedPDFFallsBackToPages(t *testing.T) {
-	res, err := parseResult(t, buildTwoColumnPDF(t))
+	res, err := parseResult(t, fixtures.BuildTwoColumnPDF())
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

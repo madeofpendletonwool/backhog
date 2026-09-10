@@ -62,9 +62,11 @@ func (ing *Ingester) OpenAsset(ctx context.Context, userID, entryID, href string
 		return Asset{}, ErrNoEpub
 	}
 
-	// Assets are an EPUB concept: the block index only ever records image
-	// hrefs for zip-backed books, so a MOBI-sourced text has none to fetch —
-	// but a hand-built URL against one must not turn into a zip error.
+	// Assets are an EPUB-zip concept: only a zip-backed book's image hrefs
+	// are fetchable here. A MOBI-sourced text records none, and a
+	// PDF-sourced one records its page images behind hrefs only the future
+	// paged reader will serve — so for both, and any hand-built URL against
+	// them, the answer is ErrNotAsset rather than a zip error.
 	if strings.ToLower(path.Ext(f.Path)) != ".epub" {
 		return Asset{}, ErrNotAsset
 	}

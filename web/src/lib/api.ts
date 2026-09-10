@@ -7,6 +7,7 @@ import type {
   Book,
   BookFacets,
   BookPosition,
+  BookPages,
   BookSearchResult,
   BookStats,
   BookTextChapters,
@@ -526,6 +527,9 @@ export const api = {
   bookTextDisplay: (entryId: string, spineIndex: number) =>
     request<BookTextDisplay>(`/books/${entryId}/text/display?spine=${spineIndex}`),
 
+  /** The paged reader's manifest: an image-native PDF's page axis. */
+  bookPages: (entryId: string) => request<BookPages>(`/books/${entryId}/pages`),
+
   // --- audiobook playback -----------------------------------------------
   /** The attached audiobook as one continuous timeline; 404 when there is none. */
   bookAudio: (entryId: string) => request<AudioTimeline>(`/books/${entryId}/audio`),
@@ -679,6 +683,14 @@ export const audioTrackUrl = (entryId: string, trackId: number) =>
  */
 export const bookAssetUrl = (entryId: string, href: string) =>
   `/api/books/${entryId}/text/asset?href=${encodeURIComponent(href)}`;
+
+/**
+ * One page of a paged book (an image-native PDF), served from our own API.
+ * The endpoint re-checks who is asking on every request, so this URL is a
+ * request rather than a capability — the asset endpoint's rule, verbatim.
+ */
+export const bookPageImageUrl = (entryId: string, page: number) =>
+  `/api/books/${entryId}/pages/${page}`;
 
 /**
  * The last position write of a session, sent while the page is going away.

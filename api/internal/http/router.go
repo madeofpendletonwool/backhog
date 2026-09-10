@@ -168,6 +168,14 @@ func (s *Server) Routes() http.Handler {
 			// a book's images reach the page — nothing loads off-origin.
 			r.Get("/books/{entryID}/text/asset", s.handleBookTextAsset)
 
+			// The paged reader: an image-native PDF's page manifest and
+			// one page's raster, extracted lazily and served through the
+			// same containment rules. The paged twin of the text routes
+			// above — an entry answers on one side or the other, by its
+			// classification.
+			r.Get("/books/{entryID}/pages", s.handleBookPages)
+			r.Get("/books/{entryID}/pages/{page}", s.handleBookPageImage)
+
 			// The audiobook as one continuous timeline, and its tracks
 			// streamed from the NAS with byte-range support so a browser
 			// can seek into the middle of a 400MB m4b.

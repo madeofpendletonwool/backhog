@@ -26,12 +26,16 @@ import (
 // spaces are reachable from one entry. The comic entry holds an image-only
 // PDF — the paged population — and the dual entry holds an EPUB beside an
 // image-only PDF, so a primary switch across the text/page axis is
-// exercisable from one book.
+// exercisable from one book. The prose entry holds a text-native PDF (the
+// paged reader must refuse it) and the vector entry a drawing-only PDF
+// (image-native with no images to serve).
 const (
 	positionEntry     = "pe1"
 	positionAudioOnly = "pe2"
 	positionComic     = "pe3"
 	positionDual      = "pe4"
+	positionProse     = "pe5"
+	positionVector    = "pe6"
 	positionEpubFile  = 101
 	positionTrackOne  = 102
 	positionTrackTwo  = 103
@@ -39,6 +43,8 @@ const (
 	positionComicPDF  = 105
 	positionDualEpub  = 106
 	positionDualPDF   = 107
+	positionProsePDF  = 108
+	positionVectorPDF = 109
 
 	positionTrackOneSeconds = 90.0
 	positionTrackTwoSeconds = 45.0
@@ -88,6 +94,10 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 	comicSize := write("pictures.pdf", fixtures.BuildImageOnlyPDF())
 	dualEpubSize := write("dual.epub", apiEpubFixture(t))
 	dualPDFSize := write("dual.pdf", fixtures.BuildImageOnlyPDF())
+	prosePDFSize := write("prose.pdf", fixtures.BuildProsePDF())
+	vectorPDFSize := write("vector.pdf", fixtures.BuildPDF(fixtures.PDFFixture{Pages: []fixtures.PDFPage{{
+		Content: "0 0 1 rg 100 100 300 500 re f\n",
+	}}}))
 
 	database, err := db.Open(filepath.Join(t.TempDir(), "position.db"))
 	if err != nil {
@@ -127,12 +137,15 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 		}
 	}
 	exec(`INSERT INTO books (id, title) VALUES
-		('OL1W', 'Anathem'), ('OL2W', 'Tape Only'), ('OL3W', 'Pictures'), ('OL4W', 'Both Ways')`)
+		('OL1W', 'Anathem'), ('OL2W', 'Tape Only'), ('OL3W', 'Pictures'), ('OL4W', 'Both Ways'),
+		('OL5W', 'Novel'), ('OL6W', 'Diagram')`)
 	exec(`INSERT INTO library_entries (id, user_id, media_type, book_id, status)
 	      VALUES (?, ?, 'book', 'OL1W', 'backlog'), (?, ?, 'book', 'OL2W', 'backlog'),
-	             (?, ?, 'book', 'OL3W', 'backlog'), (?, ?, 'book', 'OL4W', 'backlog')`,
+	             (?, ?, 'book', 'OL3W', 'backlog'), (?, ?, 'book', 'OL4W', 'backlog'),
+	             (?, ?, 'book', 'OL5W', 'backlog'), (?, ?, 'book', 'OL6W', 'backlog')`,
 		positionEntry, app.userID, positionAudioOnly, app.userID,
-		positionComic, app.userID, positionDual, app.userID)
+		positionComic, app.userID, positionDual, app.userID,
+		positionProse, app.userID, positionVector, app.userID)
 	insertFile := func(id int, name, kind string, size int, bookID string, track any) {
 		exec(`INSERT INTO media_files (id, root, path, kind, size_bytes, mtime, book_id, track_number, scanned_at)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -145,11 +158,13 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 	insertFile(positionComicPDF, "pictures.pdf", "epub", comicSize, "OL3W", nil)
 	insertFile(positionDualEpub, "dual.epub", "epub", dualEpubSize, "OL4W", nil)
 	insertFile(positionDualPDF, "dual.pdf", "epub", dualPDFSize, "OL4W", nil)
+	insertFile(positionProsePDF, "prose.pdf", "epub", prosePDFSize, "OL5W", nil)
+	insertFile(positionVectorPDF, "vector.pdf", "epub", vectorPDFSize, "OL6W", nil)
 	// The flag the attach flow writes, so the fixture books look like
 	// attached ones: one designated primary each (the comic is the only
 	// text file of its book; the dual book's epub outranks the pdf).
-	exec(`UPDATE media_files SET is_primary_text = 1 WHERE id IN (?, ?)`,
-		positionComicPDF, positionDualEpub)
+	exec(`UPDATE media_files SET is_primary_text = 1 WHERE id IN (?, ?, ?, ?)`,
+		positionComicPDF, positionDualEpub, positionProsePDF, positionVectorPDF)
 
 	// Hand-inserted rows still have to look like attached ones: audio that
 	// belongs to a book belongs to one of that book's designated editions,

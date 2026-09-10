@@ -310,7 +310,10 @@ function BookFacts({ book }: { book: Book }) {
  *
  * The chapters query is the parse-on-demand one, so a book whose EPUB has
  * never been opened pays for it here rather than on the reader's first
- * paint — and a book with no EPUB attached simply has no button.
+ * paint — and a book with no readable text attached simply has no button.
+ * A paged book (an image-native PDF primary) is the other reading
+ * population: its position answers in page mode and the button opens the
+ * paged reader.
  */
 function ReadButton({ entry }: { entry: BookEntry }) {
   const { data: text } = useQuery({
@@ -324,9 +327,10 @@ function ReadButton({ entry }: { entry: BookEntry }) {
     queryFn: () => api.bookPosition(entry.id),
   });
 
-  if (!text || text.char_count === 0) return null;
+  const paged = position?.position_mode === "page";
+  if ((!text || text.char_count === 0) && !paged) return null;
 
-  const into = position?.char_offset ?? 0;
+  const into = paged ? (position?.page_index ?? 0) : (position?.char_offset ?? 0);
 
   return (
     <Link to={`/books/${entry.id}/read`}>

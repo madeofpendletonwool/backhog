@@ -1190,6 +1190,25 @@ export interface PositionWrite {
   source?: string;
 }
 
+/**
+ * GET /api/books/{entryId}/pages — the paged reader's manifest. One entry
+ * per page of an image-native PDF: whether the page has a servable image
+ * and, when it does, the pixel shape a reader lays out against before the
+ * bytes arrive. A page with `has_image: false` is vector art or blank —
+ * shown as a labeled refusal, never a hole.
+ */
+export interface BookPages {
+  page_count: number;
+  pages: BookPageInfo[];
+}
+
+export interface BookPageInfo {
+  index: number;
+  width: number;
+  height: number;
+  has_image: boolean;
+}
+
 /** The PUT response: the new position, plus any status the write moved. */
 export interface PositionWriteResult {
   position: BookPosition;

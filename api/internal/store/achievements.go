@@ -1731,20 +1731,23 @@ func (s *Store) ReadingSeason(ctx context.Context, userID string, year int) (mod
 
 	// Pages and hours come straight from the instrumented sessions, the
 	// same source the reading pace is measured from: characters the reader
-	// actually advanced, and seconds the narrator actually ran. A year's
-	// listening shows up here even when nothing got finished — the card
-	// reports the year as it was spent, not only where it landed.
-	var readChars, listenSeconds float64
+	// actually advanced, pages actually turned on a paged book, and seconds
+	// the narrator actually ran. A year's listening shows up here even when
+	// nothing got finished — the card reports the year as it was spent, not
+	// only where it landed. A paged finish counts like any finish, and its
+	// pages count like any pages.
+	var readChars, listenSeconds, readPages float64
 	err = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(CASE WHEN mode = 'read' THEN chars_advanced ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN mode = 'listen' THEN seconds ELSE 0 END), 0)
+		       COALESCE(SUM(CASE WHEN mode = 'listen' THEN seconds ELSE 0 END), 0),
+		       COALESCE(SUM(pages_turned), 0)
 		FROM reading_sessions
 		WHERE user_id = ? AND date(started_at) >= ? AND date(started_at) < ?`,
-		userID, start, end).Scan(&readChars, &listenSeconds)
+		userID, start, end).Scan(&readChars, &listenSeconds, &readPages)
 	if err != nil {
 		return season, err
 	}
-	season.PagesRead = int(math.Round(readChars / charsPerPage))
+	season.PagesRead = int(math.Round(readChars/charsPerPage + readPages))
 	season.HoursListened = round1(listenSeconds / 3600)
 
 	// An author is cleared the year the last of their owned books was

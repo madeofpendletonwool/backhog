@@ -12,13 +12,15 @@ import (
 )
 
 // bookAchievementSizing is the per-entry projection the book snapshots read:
-// the canonical text length of the book's designated text file, the page count
+// the canonical text length of the book's designated text file, the page
+// count of a paged primary (an image-native PDF), the printing's page count
 // (the entry's own edition, else the work's earliest one with a count), and
-// the three format flags — paper (a physical copy), ebook (an attached EPUB),
-// audio (an attached audiobook). The same sizing facts the reading debt
-// reasons about, reduced to what the predicates need.
+// the three format flags — paper (a physical copy), ebook (an attached
+// EPUB), audio (an attached audiobook). The same sizing facts the reading
+// debt reasons about, reduced to what the predicates need.
 const bookAchievementSizing = `
 	COALESCE(` + primaryTextCharCount + `, 0),
+	COALESCE(` + primaryTextPageCount + `, 0),
 	COALESCE(ed.page_count,
 		(SELECT ed2.page_count FROM book_editions ed2
 		 WHERE ed2.book_id = e.book_id AND ed2.page_count IS NOT NULL
@@ -36,8 +38,7 @@ const bookAchievementSizing = `
 func evaluateBookEventTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind string, droppedAtFallback *time.Time) ([]unlockStub, error) {
 	var e achievements.Entry
 	var finishedAt, startedAt sql.NullTime
-	var chars int64
-	var pages int64
+	var chars, pdfPages, pages int64
 	var paper, ebook, audio bool
 	err := tx.QueryRowContext(ctx, `
 		SELECT e.status, e.created_at, e.finished_at, e.started_at, `+bookAchievementSizing+`
@@ -45,7 +46,7 @@ func evaluateBookEventTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind 
 		LEFT JOIN book_editions ed ON ed.id = e.edition_id
 		WHERE e.user_id = ? AND e.id = ?`, userID, entryID).
 		Scan(&e.Status, &e.CreatedAt, &finishedAt, &startedAt,
-			&chars, &pages, &paper, &ebook, &audio)
+			&chars, &pdfPages, &pages, &paper, &ebook, &audio)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -63,10 +64,15 @@ func evaluateBookEventTx(ctx context.Context, tx *sql.Tx, userID, entryID, kind 
 		e.StartedAt = &t
 	}
 	// The canonical text is measured rather than reported, so it wins on
-	// page counts — the same precedence the reading debt uses.
+	// page counts; a paged primary's own page count is measured too and
+	// comes next — the same precedence the reading debt uses. A paged
+	// finish counts like any finish: a 32-page picture book read cover to
+	// cover is a finished book of 32 pages, not of zero.
 	switch {
 	case chars > 0:
 		e.PageCount = int(chars) / charsPerPage
+	case pdfPages > 0:
+		e.PageCount = int(pdfPages)
 	default:
 		e.PageCount = int(pages)
 	}
@@ -167,10 +173,10 @@ func (s *Store) backfillBookAchievementsTx(ctx context.Context, tx *sql.Tx, user
 	played := []achievements.Entry{}
 	for rows.Next() {
 		var e achievements.Entry
-		var chars, pages int64
+		var chars, pdfPages, pages int64
 		var paper, ebook, audio bool
 		var finishedAt string
-		if err := rows.Scan(&e.ID, &e.CreatedAt, &finishedAt, &chars, &pages,
+		if err := rows.Scan(&e.ID, &e.CreatedAt, &finishedAt, &chars, &pdfPages, &pages,
 			&paper, &ebook, &audio); err != nil {
 			rows.Close()
 			return err
@@ -181,9 +187,12 @@ func (s *Store) backfillBookAchievementsTx(ctx context.Context, tx *sql.Tx, user
 		} else {
 			e.At = e.CreatedAt
 		}
-		if chars > 0 {
+		switch {
+		case chars > 0:
 			e.PageCount = int(chars) / charsPerPage
-		} else {
+		case pdfPages > 0:
+			e.PageCount = int(pdfPages)
+		default:
 			e.PageCount = int(pages)
 		}
 		for _, has := range []bool{paper, ebook, audio} {

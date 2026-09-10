@@ -438,6 +438,31 @@ func TestAttachFlow(t *testing.T) {
 	if picturesParsed != 0 {
 		t.Errorf("image-only pdf wrote %d canonical-text rows; want 0, never a half-parse", picturesParsed)
 	}
+	// The refusal left its fact behind: the classification row is what the
+	// paged position model reads, and it says image-native, two pages.
+	var class string
+	var pages int
+	if err := app.store.DB().QueryRow(
+		`SELECT classification, page_count FROM pdf_files pf
+		 JOIN media_files mf ON mf.id = pf.media_file_id
+		 WHERE mf.path = 'pictures/Pictures.pdf'`).Scan(&class, &pages); err != nil {
+		t.Fatalf("probe pictures classification: %v", err)
+	}
+	if class != "image-native" || pages != 2 {
+		t.Errorf("pictures classification = %s / %d pages, want image-native / 2", class, pages)
+	}
+	// And the paged position answers on the page axis.
+	status, body = app.req(t, http.MethodGet, "/api/books/"+picturesEntry+"/position", nil)
+	if status != http.StatusOK {
+		t.Fatalf("pictures position: status %d: %v", status, body)
+	}
+	if body["position_mode"] != "page" || body["page_count"] != float64(2) || body["page_index"] != float64(0) {
+		t.Errorf("pictures position = %v, want page mode / 2 pages / page 0", body)
+	}
+	if status, body = app.req(t, http.MethodPut, "/api/books/"+picturesEntry+"/position",
+		map[string]any{"page_index": 1}); status != http.StatusOK {
+		t.Fatalf("pictures page put: status %d: %v", status, body)
+	}
 	status, body = app.req(t, http.MethodGet, "/api/books/"+picturesEntry+"/text/chapters", nil)
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("image-only pdf chapters: status %d, want 422: %v", status, body)

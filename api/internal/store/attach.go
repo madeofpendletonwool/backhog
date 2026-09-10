@@ -419,6 +419,14 @@ func promoteAfterDetachTx(ctx context.Context, tx *sql.Tx, bookID string, before
 		ORDER BY (mf.missing_at IS NOT NULL), `+TextFormatRank+`, mf.id
 		LIMIT 1`, bookID).Scan(&newID)
 	if errors.Is(err, sql.ErrNoRows) {
+		// No survivor. Text offsets stay put for whenever a file is
+		// attached again, but a page index cannot: it points into a paged
+		// file the book no longer has, and a future attach may bring a
+		// text instead. The page axis is dropped the same honest way a
+		// switch drops it.
+		if before.paged {
+			return resetProgressToTextTx(ctx, tx, bookID)
+		}
 		return nil
 	}
 	if err != nil {

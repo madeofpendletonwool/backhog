@@ -1120,6 +1120,20 @@ const (
 	ReadingModeListen = "listen"
 )
 
+// Which axis a stored position lives on. Text is the normal case — the
+// char offset into the canonical text. Page is the honest exception for a
+// book with no text (an image-native PDF): its position is a page index,
+// flagged as such rather than faked into the char axis.
+const (
+	PositionModeText = "text"
+	PositionModePage = "page"
+)
+
+// ValidPositionMode reports whether s is a tracked position mode.
+func ValidPositionMode(s string) bool {
+	return s == PositionModeText || s == PositionModePage
+}
+
 // ValidReadingMode reports whether s is a tracked consumption mode.
 func ValidReadingMode(s string) bool {
 	switch s {
@@ -1130,21 +1144,31 @@ func ValidReadingMode(s string) bool {
 }
 
 // BookProgress is a library entry's stored reading position. CharOffset is
-// the only truth: the audio timestamp and printed page in an API response are
-// derived from it on read, so they cannot drift apart.
+// the only truth on the text axis: the audio timestamp and printed page in
+// an API response are derived from it on read, so they cannot drift apart.
 //
 // RawAudioSeconds/RawAudioFileID are the fallback for a book with no
 // alignment yet — a listening position that genuinely cannot be expressed as
 // a character offset. They are track-relative (seconds within that file), not
 // global, so re-measuring or re-ordering the timeline cannot move them.
+//
+// PositionMode names the axis the position lives on. It is 'page' — with
+// PageIndex set and CharOffset pinned to 0 — only for a book whose designated
+// text file is an image-native PDF: a comic, scan or picture book with no
+// canonical text to offset into. The page axis is the second honest
+// exception, flagged the same way the raw audio pair is, never faked into
+// the char axis.
 type BookProgress struct {
 	EntryID          string   `json:"entry_id"`
+	PositionMode     string   `json:"position_mode"`
 	CharOffset       int      `json:"char_offset"`
 	CharOffsetSource string   `json:"char_offset_source"`
+	PageIndex        *int     `json:"page_index,omitempty"`
 	RawAudioSeconds  *float64 `json:"raw_audio_seconds,omitempty"`
 	RawAudioFileID   *int64   `json:"raw_audio_file_id,omitempty"`
-	// PercentComplete is 0–100 against the canonical text's length, or
-	// against the audiobook's total duration for a book with no EPUB.
+	// PercentComplete is 0–100 against the canonical text's length, against
+	// the audiobook's total duration for a book with no EPUB, or against
+	// the page count in page mode.
 	PercentComplete float64   `json:"percent_complete"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -1152,7 +1176,9 @@ type BookProgress struct {
 // ReadingSession is one stretch of reading or listening, the books-arena
 // mirror of Session. Unlike a play session — typed in after the fact against
 // a whole day — it is instrumented, so it carries real endpoints and how far
-// the position actually moved.
+// the position actually moved. PagesTurned is the paged counterpart of
+// CharsAdvanced: a session over an image-native PDF advances pages, never
+// fake characters.
 type ReadingSession struct {
 	ID            string    `json:"id"`
 	EntryID       string    `json:"entry_id"`
@@ -1160,8 +1186,37 @@ type ReadingSession struct {
 	EndedAt       time.Time `json:"ended_at"`
 	Mode          string    `json:"mode"`
 	CharsAdvanced int       `json:"chars_advanced"`
+	PagesTurned   int       `json:"pages_turned"`
 	Seconds       int       `json:"seconds"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// The quality gate's persisted verdicts for a PDF. DRM and corrupt files
+// never earn a row — they are refused whole at parse time.
+const (
+	// PDFTextNative means the text layer extracted cleanly and the
+	// canonical text was built from it.
+	PDFTextNative = "text-native"
+	// PDFImageNative means the file's content is its pages: comics, scans,
+	// picture books, garbage-extraction victims. No canonical text exists;
+	// the position axis is the page index.
+	PDFImageNative = "image-native"
+)
+
+// PDFFile is the persisted classification of one parsed PDF media file: the
+// quality gate's verdict, the file's page count, and whether any page
+// carried a text layer at all. It is what lets the position endpoints and
+// the sizing queries read a stored fact instead of re-parsing, and what
+// names a paged primary as a file the book is genuinely read from.
+type PDFFile struct {
+	ID             string    `json:"id"`
+	MediaFileID    int64     `json:"media_file_id"`
+	Classification string    `json:"classification"`
+	PageCount      int       `json:"page_count"`
+	HasTextLayer   bool      `json:"has_text_layer"`
+	Reason         string    `json:"reason"`
+	ClassifiedAt   time.Time `json:"classified_at"`
+	ParserVersion  string    `json:"parser_version"`
 }
 
 // Sources for a recorded page anchor: how the (page, char offset) pair

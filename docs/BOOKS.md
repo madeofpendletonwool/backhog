@@ -30,6 +30,13 @@ maps of sampled anchors. A reader that stops at offset 412,900 and a car
 ride that resumes from "the same place" cannot drift apart, because
 there is nothing to drift: one number, three derivations.
 
+And a book that has no text says so. Comics, manga, picture books and
+scans have no canonical text to offset into — faking one is precisely the
+plausible-wrong-answer failure this arena exists to prevent — so their
+position is an honest page index, stored on a flagged second axis (see
+[the paged position model](#the-paged-position-model)). One number is the
+truth *per axis*, and exactly one book shape needs the second axis.
+
 The maps that make the derivations possible are built by the two
 pipelines this document covers: forced alignment (audio ↔ text) and page
 anchoring (paper ↔ text). Both produce anchors into the *same* canonical
@@ -171,14 +178,23 @@ outcome is one of `text-native`, `image-native`, `drm`, `corrupt`, surfaced
 to the caller because an image-native file (comics, scans, garbage
 victims) must route down a paged path instead of storing a fake text.
 
+The verdict does not stay a return value: every parsed PDF gets a
+`pdf_files` row — classification, page count, whether a text layer existed
+at all, the parser version — keyed by `media_file_id`, replacing any
+previous verdict the way a re-parse replaces a canonical text. That row is
+what the position endpoints read to know a book answers on the page axis,
+and what the sizing queries read to count a 32-page picture book as 32
+pages. Text-native rows are kept too: their page count is the seed a
+future page-map-from-PDF will want.
+
 The ingester routes on that classification: text-native parses into the
-canonical tables; `drm` is refused whole (the parse-time twin of the
-scanner's `drm_pdf` skip); `corrupt` fails and is reported; and
-**image-native is refused with a named label** — the text endpoints answer
-422 saying the file is pages, not prose — because the paged position model
-is stage 2 and the honest interim answer is a refusal, never a
-half-parse. No `epub_texts` row exists for an image-native PDF, so
-nothing downstream can mistake it for a book it can read.
+canonical tables (and its `pdf_files` row records the fact); `drm` is
+refused whole (the parse-time twin of the scanner's `drm_pdf` skip);
+`corrupt` fails and is reported; and **image-native is refused a canonical
+text with a named label** — the text endpoints answer 422 saying the file
+is pages, not prose — while the classification row routes the book onto
+the paged position model. No `epub_texts` row exists for an image-native
+PDF, so nothing downstream can mistake it for a book it can read.
 
 DRM is refused whole: any `/Encrypt` dictionary is an `ErrDRM` the caller
 maps to a `drm_pdf` skip reason — including owner-password-only
@@ -254,6 +270,82 @@ with no bytes behind it.
 
 ---
 
+## The paged position model
+
+Some books only exist as pages: comics, manga, picture books, scans. The
+parser's quality gate classifies their PDFs **image-native**, and
+everything the arena knows about position assumes a canonical text that
+these books deliberately do not have. A `char_count` of zero with a stored
+offset is the plausible-wrong-answer failure mode invariant 5 exists to
+prevent, so the model says the honest thing out loud instead: **their
+position is a page index.**
+
+**The shape follows the `raw_audio_*` precedent: one row, one honest
+exception, flagged.** `book_progress` carries a `position_mode` —
+`'text' | 'page'` — and a nullable `page_index`: text rows are
+byte-identical to everything that existed before the migration (mode
+text, page NULL, char offset the truth); page rows carry the page index
+and pin `char_offset` to 0, because there is no text axis to collect a
+number on. The pairing is enforced by the store before it reaches SQLite,
+the same way the raw-audio half-pair is. A separate `paged_progress`
+table was the alternative and was rejected for the reason the raw audio
+pair's shape was: a second table splits the "one row per entry" contract
+every position-reading path already leans on — each one would have to
+remember to check it, and the ones that forgot would silently serve
+char zero as "the beginning" of a book that has no such coordinate.
+
+What each piece of the arena does with it:
+
+- **Classification home.** `pdf_files` (one row per parsed PDF, keyed by
+  `media_file_id`) persists the gate's verdict — text-native or
+  image-native, page count, has-text-layer, reason, parser version. The
+  primary-text designation holds for a paged primary unchanged: a PDF
+  with no text is still the file the book is *read* from, and the arena's
+  primary predicate answers for it — `is_primary_text` points at it, the
+  format rank orders it, only the axis it contributes differs.
+- **Position.** `GET/PUT /api/books/{entry}/position` answers in page
+  mode for a paged entry: `position_mode: "page"`, `page_index`,
+  `page_count`; the chapter/audio-derived views that need a text are
+  absent. Writes take `page_index` with `0 ≤ page < page_count` validated
+  against the classified count; `char_offset` writes on a paged book are
+  refused (422) rather than stored beside a meaning they cannot have.
+  Percent is the page you are on over the reading span — page one is 0%,
+  the last page is 100% — the same convention the char axis uses.
+- **Sessions.** `reading_sessions` gains `pages_turned`; `mode` stays
+  `read`, `chars_advanced` stays 0. No fake char deltas, ever.
+- **Sizing.** The debt, insights and achievement sizing read the paged
+  primary's `page_count` through the same predicate that reads
+  `char_count`, one rung lower in the honesty ladder: measured chars,
+  then measured pages, then the catalogue's page count. A 32-page picture
+  book is a 32-page book, not the 12 words its absent text layer would
+  have counted. The Reading Season rollup counts a paged finish like any
+  finish, and its pages-read sums `pages_turned` beside the
+  chars-to-pages conversion.
+- **Text-side refusals stay refusals.** The reader's text endpoints
+  (chapters, ranged text, display, search, passage matching, alignment
+  eligibility) all answer 422 for an image-native primary. The paged book
+  never enters a text-mode code path; there is no half-parse to find.
+
+**Switching primary across an axis drops the old axis; it never
+translates.** A page index and a char offset are not two encodings of one
+position — they are positions in different spaces, and any mapping
+between them would be an invented one that answers every query
+confidently and wrongly. So switching between a text sibling and a paged
+sibling (or detaching one into the other) mirrors the alignment-deletion
+stance: entering page mode resets every entry of the book to page one,
+deletes the paper page anchors (they are char offsets into the departed
+text) and the alignment; leaving page mode resets to offset zero. The
+percentage goes with the axis — unpositioned is honest, a rescaled guess
+is not. What survives is the raw listening position, which was never
+measured against any text. The text↔text rules (SHA-identical carries
+everything; otherwise percent-recompute and anchor scaling) are
+untouched.
+
+The paged *reader* — serving page images, page-turn UI, peek-to-page — is
+the stage-2 reader task; this model is the keystone it stands on.
+
+---
+
 ## The data model
 
 The arena rides the games spine (`library_entries`), it does not build a
@@ -286,8 +378,9 @@ The book-specific hierarchy, one table per concept:
 | `audio_editions` | one **recording** of a work | per book, `is_primary` unique per book | The set of audio files that behave as one tape. `media_files.audio_edition_id` points here; only the designated edition is a timeline. Label, length and narrator are derived from the files, never stored |
 | `media_sidecars` | parsed `.opf` metadata | `(root, path)` UNIQUE | Replaced per root each scan; the matcher's best evidence |
 | `epub_texts` / `epub_chapters` | parsed canonical text | per media file | Only the designated primary is parsed. See above |
-| `book_progress` | position | entry PK | One row per entry: `char_offset` is the truth |
-| `reading_sessions` | consumption log | per user, per entry | `mode` ∈ read/listen; `chars_advanced` |
+| `pdf_files` | the quality gate's verdict on a PDF | per media file, UNIQUE | text-native / image-native, page count, has-text-layer. The paged model's fact source; never a text |
+| `book_progress` | position | entry PK | One row per entry: `char_offset` is the truth — or, flagged `position_mode: 'page'` for a book with no text, `page_index` is |
+| `reading_sessions` | consumption log | per user, per entry | `mode` ∈ read/listen; `chars_advanced`, `pages_turned` |
 | `alignment_jobs` / `alignments` / `alignment_anchors` | audio↔text map | per entry | See [alignment](#the-alignment-pipeline) |
 | `page_anchors` | paper↔text map | `(physical_copy_id, printed_page)` PK | See [page anchors](#the-page-anchor-map) |
 
@@ -299,12 +392,15 @@ Two shapes worth internalising:
   metadata about a printing. You can own the paperback of printing A,
   the EPUB, and the audiobook, all of one work — three ways to consume,
   one position.
-- **`book_progress` stores one number and admits one honest exception.**
+- **`book_progress` stores one number and admits two honest exceptions.**
   `char_offset` + `char_offset_source` (`read` / `listen` / `scan` /
   `manual`) is the truth. Before an alignment exists there is no map
   from a listening position to a char offset, so those writes land in
   track-relative `raw_audio_seconds` / `raw_audio_file_id` and the API
-  reports `derived: false` rather than fabricating an offset.
+  reports `derived: false` rather than fabricating an offset. And a book
+  with no text (an image-native PDF primary) stores `page_index` with
+  `position_mode: 'page'` and `char_offset` pinned to 0 — flagged as a
+  different axis, never a faked offset.
 
 ### The NAS inventory
 
@@ -664,10 +760,10 @@ Info/XMP metadata feeding the matcher, parses through
 arena — reader, search, passage matching, alignment eligibility —
 unchanged. An **image-native** PDF (comics, manga, picture books, scans)
 has no text layer to trust, so the parser's quality gate classifies it
-at parse time and the ingester refuses it a canonical text with a named
-label; its honest position is a page index, which is the stage-2 paged
-position model, not a faked `char_count`. Never half-parse either
-population into the canonical tables. `.kfx` is the remaining refusal
+at parse time, the ingester refuses it a canonical text with a named
+label, and the persisted verdict routes it onto the paged position
+model: its honest position is a page index, never a faked `char_count`.
+Never half-parse either population into the canonical tables. `.kfx` is the remaining refusal
 and is labelled as one (`format_unhandled`): no open reader exists for
 it, and the honest answer is to name the format and point at the EPUB or
 MOBI of the same book. Do not half-implement it inside the scanner.
@@ -681,12 +777,16 @@ it. (Ogg Opus needs Safari 17.4 or newer on the client; that is a
 browser limitation, not a reason to transcode files we promised never to
 write to.)
 
-**5. One position, and it's the char offset.** Audio seconds and pages
-are derived views, never independently stored truths — the single
-exception is the pre-alignment `raw_audio_*` fallback, which is flagged
-`derived: false` precisely because it isn't one. Audio anchors are on
-the **global** timeline; track-relative offsets exist only inside the
-audio package.
+**5. One position per axis, and the text axis's is the char offset.**
+Audio seconds and pages are derived views, never independently stored
+truths — the exceptions are both flagged: the pre-alignment
+`raw_audio_*` fallback (marked `derived: false` precisely because it
+isn't a derivation) and the page axis of a book with no canonical text
+(`position_mode: 'page'`, page index stored because a char offset
+cannot exist). Audio anchors are on the **global** timeline;
+track-relative offsets exist only inside the audio package. The axes
+are never translated into each other — a text↔paged primary switch
+drops the old axis rather than mistranslating it.
 
 **6. Page numbers belong to an edition.** Page anchors attach to
 `physical_copies` (user, entry, *edition*) — never to a work, never to
@@ -715,7 +815,7 @@ handoff degrades, by asking the user to say where they were.
 | `PUT /api/books/{entryID}/files/{fileID}/primary`, `PUT …/audio-editions/{editionID}/primary` | choose the canonical text / the audiobook that plays |
 | `GET /api/books/{entryID}/text[/chapters\|/display\|/asset]` | canonical text ranged reads |
 | `GET /api/books/{entryID}/audio`, `GET …/audio/{trackID}` | timeline + track bytes (Range) |
-| `GET/PUT /api/books/{entryID}/position`, `GET/POST …/sessions` | the one position, and reading sessions |
+| `GET/PUT /api/books/{entryID}/position`, `GET/POST …/sessions` | the one position, and reading sessions — in text mode (char offset) or page mode (page index of a paged book) |
 | `POST/GET/DELETE /api/books/{entryID}/align` | alignment enqueue / status / delete |
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
 | `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode |

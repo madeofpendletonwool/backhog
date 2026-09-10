@@ -3,10 +3,13 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,17 +32,26 @@ import (
 // map — false means at least one of them is a separately stored raw value
 // that may have drifted, and confidence is then 0 because nothing was
 // interpolated.
+//
+// A paged book (position_mode "page" — an image-native PDF primary) answers
+// on the page axis instead: page_index and page_count carry it, the text
+// spaces are absent because no canonical text exists to derive them from,
+// and percent is measured against the page count.
 type positionResponse struct {
-	CharOffset int          `json:"char_offset"`
-	Source     string       `json:"source"`
-	Percent    float64      `json:"percent"`
-	CharCount  int          `json:"char_count"`
-	Chapter    *chapterView `json:"chapter"`
-	Audio      *audioView   `json:"audio"`
-	Page       *pageView    `json:"page"`
-	Derived    bool         `json:"derived"`
-	Confidence float64      `json:"confidence"`
-	UpdatedAt  *time.Time   `json:"updated_at"`
+	PositionMode string       `json:"position_mode"`
+	CharOffset   int          `json:"char_offset"`
+	Source       string       `json:"source"`
+	Percent      float64      `json:"percent"`
+	CharCount    int          `json:"char_count"`
+	Chapter      *chapterView `json:"chapter"`
+	Audio        *audioView   `json:"audio"`
+	Page         *pageView    `json:"page"`
+	// PageIndex is the stored page position, present only in page mode.
+	PageIndex  *int    `json:"page_index"`
+	PageCount  int     `json:"page_count"`
+	Derived    bool    `json:"derived"`
+	Confidence float64 `json:"confidence"`
+	UpdatedAt  *time.Time `json:"updated_at"`
 }
 
 // chapterView locates a position in the spine, so a client can say "Chapter
@@ -111,36 +123,46 @@ func newPageView(tr position.Translation) *pageView {
 	return out
 }
 
-// positionRequest carries exactly one of the three ways to say where you are.
+// positionRequest carries exactly one of the four ways to say where you are.
 // The server translates whatever it is given into a character offset when it
-// can, and stores the raw value when it cannot.
+// can, and stores the raw value when it cannot. page is a printed page of
+// the entry's edition (placed through the page-anchor map); page_index is a
+// PDF's own page, the axis of a book with no text.
 type positionRequest struct {
 	CharOffset   *int     `json:"char_offset"`
 	AudioSeconds *float64 `json:"audio_seconds"`
 	AudioFileID  *int64   `json:"audio_file_id"`
 	Page         *int     `json:"page"`
+	PageIndex    *int     `json:"page_index"`
 	// Source overrides what produced the offset. It defaults per shape:
-	// 'read' for a char offset, 'listen' for audio, 'manual' for a page.
+	// 'read' for a char offset or a page index, 'listen' for audio,
+	// 'manual' for a printed page.
 	Source string `json:"source"`
 }
 
 // readingSessionRequest logs a stretch of reading or listening. Seconds may
 // be omitted, in which case the wall-clock span between the endpoints is
 // used; a client that pauses mid-session sends its own smaller total.
+// pages_turned is the paged-book counterpart of chars_advanced — the reader
+// sends one, never both, and never fake characters for pages.
 type readingSessionRequest struct {
 	StartedAt     *time.Time `json:"started_at"`
 	EndedAt       *time.Time `json:"ended_at"`
 	Mode          string     `json:"mode"`
 	CharsAdvanced int        `json:"chars_advanced"`
+	PagesTurned   int        `json:"pages_turned"`
 	Seconds       int        `json:"seconds"`
 }
 
 // bookViews is everything needed to render or write a position for one entry:
 // the canonical text's length and spine (absent until the EPUB has been
-// parsed), the audio timeline (absent until an audiobook is attached), and
-// the translator holding this entry's anchor maps.
+// parsed), the page count of a paged primary (an image-native PDF — the
+// book's axis when its designated text file has no text), the audio timeline
+// (absent until an audiobook is attached), and the translator holding this
+// entry's anchor maps.
 type bookViews struct {
 	charCount   int
+	pageCount   int
 	chapters    []models.EpubChapter
 	timeline    bookaudio.Timeline
 	hasTimeline bool
@@ -152,6 +174,11 @@ type bookViews struct {
 // position read happens on every page turn and every player tick, and paying
 // a full parse for it would make the cheap endpoint the expensive one. A book
 // whose text has never been parsed simply has no percentage and no chapter.
+//
+// The one lazy work it does allow itself is the PDF classification: a paged
+// book's page count is a fact the position needs, the classification parse
+// runs once (the row answers afterwards), and without it a comic would have
+// no axis to answer on at all.
 //
 // `files` is the caller's file access from bookEntryOwned. Without it the
 // text and the audiobook are simply not read: a reader tracking their
@@ -177,7 +204,21 @@ func (s *Server) loadBookViews(ctx context.Context, userID, entryID, bookID stri
 			} else {
 				slog.ErrorContext(ctx, "position: list chapters", "entry", entryID, "error", err)
 			}
-		} else if !errors.Is(err, store.ErrNotFound) {
+		} else if errors.Is(err, store.ErrNotFound) {
+			// No canonical text. A PDF primary may be image-native — pages,
+			// not prose — which is a classification the gate persisted (or
+			// will, once, here). Resolving it gives the position endpoints
+			// the page axis without the book ever entering a text-mode path.
+			if s.epubs != nil && strings.EqualFold(filepath.Ext(f.Path), ".pdf") {
+				if pf, err := s.epubs.EnsurePDFFile(ctx, f); err == nil {
+					if pf.Classification == models.PDFImageNative {
+						v.pageCount = pf.PageCount
+					}
+				} else {
+					slog.WarnContext(ctx, "position: classify pdf", "entry", entryID, "error", err)
+				}
+			}
+		} else {
 			return v, err
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -334,6 +375,11 @@ func (s *Server) translateBookPosition(w http.ResponseWriter, r *http.Request,
 		fail(w, errorf(http.StatusBadRequest, "char must be a non-negative character offset"))
 		return
 	}
+	if views.pageCount > 0 {
+		fail(w, errorf(http.StatusUnprocessableEntity,
+			"this book is pages, not prose — there is no text to place a character offset in"))
+		return
+	}
 	if views.charCount > 0 && charOffset > views.charCount {
 		fail(w, errorf(http.StatusBadRequest, "char is outside this book's text"))
 		return
@@ -417,9 +463,9 @@ func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if n := given(body.CharOffset != nil, body.AudioSeconds != nil, body.Page != nil); n != 1 {
+	if n := given(body.CharOffset != nil, body.AudioSeconds != nil, body.Page != nil, body.PageIndex != nil); n != 1 {
 		fail(w, errorf(http.StatusBadRequest,
-			"send exactly one of char_offset, audio_seconds or page"))
+			"send exactly one of char_offset, audio_seconds, page or page_index"))
 		return
 	}
 	if body.Source != "" && !models.ValidPositionSource(body.Source) {
@@ -442,10 +488,15 @@ func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
 	// cannot be translated leaves the other coordinates alone instead of
 	// resetting the reader to page one.
 	write := store.ProgressWrite{
+		Mode:            current.PositionMode,
 		CharOffset:      current.CharOffset,
 		Source:          current.CharOffsetSource,
+		PageIndex:       current.PageIndex,
 		RawAudioSeconds: current.RawAudioSeconds,
 		RawAudioFileID:  current.RawAudioFileID,
+	}
+	if write.Mode == "" {
+		write.Mode = models.PositionModeText
 	}
 	if write.Source == "" {
 		write.Source = models.PositionSourceManual
@@ -453,10 +504,17 @@ func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case body.CharOffset != nil:
+		if views.pageCount > 0 {
+			fail(w, errorf(http.StatusUnprocessableEntity,
+				"this book is pages, not prose — its position is a page index, not a text offset"))
+			return
+		}
 		if *body.CharOffset < 0 || (views.charCount > 0 && *body.CharOffset > views.charCount) {
 			fail(w, errorf(http.StatusBadRequest, "char_offset is outside this book's text"))
 			return
 		}
+		write.Mode = models.PositionModeText
+		write.PageIndex = nil
 		write.CharOffset = *body.CharOffset
 		write.Source = defaultSource(body.Source, models.PositionSourceRead)
 		// A known-good text offset supersedes any raw audio fallback: the
@@ -479,9 +537,31 @@ func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
 				"no page map exists for this printing yet, so a page number cannot be placed in the text"))
 			return
 		}
+		write.Mode = models.PositionModeText
+		write.PageIndex = nil
 		write.CharOffset = offset
 		write.Source = defaultSource(body.Source, models.PositionSourceManual)
 		write.RawAudioSeconds, write.RawAudioFileID = nil, nil
+
+	case body.PageIndex != nil:
+		if views.pageCount == 0 {
+			fail(w, errorf(http.StatusUnprocessableEntity,
+				"this book's position is not a page index — it has a text (or nothing) to read, not pages"))
+			return
+		}
+		if *body.PageIndex < 0 || *body.PageIndex >= views.pageCount {
+			fail(w, errorf(http.StatusBadRequest,
+				fmt.Sprintf("page_index must be between 0 and %d for this %d-page book",
+					views.pageCount-1, views.pageCount)))
+			return
+		}
+		// A paged book has no text axis to supersede anything on: the raw
+		// audio pair (a listening position beside a comic's pages) survives
+		// exactly as an unaligned audio write leaves a text offset alone.
+		write.Mode = models.PositionModePage
+		write.PageIndex = body.PageIndex
+		write.CharOffset = 0
+		write.Source = defaultSource(body.Source, models.PositionSourceRead)
 	}
 
 	write.PercentComplete = percentComplete(write, views)
@@ -578,6 +658,7 @@ func (s *Server) handleAddReadingSession(w http.ResponseWriter, r *http.Request)
 		EndedAt:       *body.EndedAt,
 		Mode:          body.Mode,
 		CharsAdvanced: body.CharsAdvanced,
+		PagesTurned:   body.PagesTurned,
 		Seconds:       body.Seconds,
 	})
 	if errors.Is(err, store.ErrNotFound) {
@@ -674,19 +755,37 @@ func (s *Server) bookEntryOwned(w http.ResponseWriter, r *http.Request) (userID,
 }
 
 // renderPosition derives the audio and page views from the stored character
-// offset and assembles the response.
+// offset and assembles the response. For a paged book (a paged primary, no
+// canonical text) the response names the page axis as the position's mode
+// regardless of what a stale row says: the book's axis is a property of its
+// designated file, not of the last write, and an unpositioned paged reader
+// is honestly "page one of N" rather than a char offset of zero.
 func renderPosition(p models.BookProgress, v bookViews) positionResponse {
 	out := positionResponse{
-		CharOffset: p.CharOffset,
-		Source:     p.CharOffsetSource,
-		Percent:    p.PercentComplete,
-		CharCount:  v.charCount,
-		Chapter:    chapterAt(v.chapters, p.CharOffset),
-		Audio:      audioAt(p, v),
-		Page:       pageAt(p, v),
+		PositionMode: p.PositionMode,
+		CharOffset:   p.CharOffset,
+		Source:       p.CharOffsetSource,
+		Percent:      p.PercentComplete,
+		CharCount:    v.charCount,
+		Chapter:      chapterAt(v.chapters, p.CharOffset),
+		Audio:        audioAt(p, v),
+		Page:         pageAt(p, v),
+		PageCount:    v.pageCount,
+	}
+	if out.PositionMode == "" {
+		out.PositionMode = models.PositionModeText
 	}
 	if out.Source == "" {
 		out.Source = models.PositionSourceManual
+	}
+	if v.pageCount > 0 {
+		out.PositionMode = models.PositionModePage
+		out.CharOffset = 0
+		idx := 0
+		if p.PageIndex != nil {
+			idx = *p.PageIndex
+		}
+		out.PageIndex = &idx
 	}
 	if !p.UpdatedAt.IsZero() {
 		t := p.UpdatedAt
@@ -845,12 +944,20 @@ func newChapterView(ch models.EpubChapter, number int) *chapterView {
 }
 
 // percentComplete measures progress against the canonical text when it has
-// been parsed, and falls back to the audiobook's duration for a book that is
-// audio-only. A book with neither has no denominator, so it reports 0 rather
-// than a made-up number.
+// been parsed, against the page count for a paged book, and falls back to
+// the audiobook's duration for a book that is audio-only. A book with none
+// of the three has no denominator, so it reports 0 rather than a made-up
+// number.
+//
+// The page measure is the page you are ON as a fraction of the reading
+// span: page one is 0%, the last page is 100% — the same convention the
+// char axis uses, where offset 0 is nothing and the end is the end.
 func percentComplete(w store.ProgressWrite, v bookViews) float64 {
 	if v.charCount > 0 {
 		return math.Min(100, float64(w.CharOffset)/float64(v.charCount)*100)
+	}
+	if v.pageCount > 1 && w.Mode == models.PositionModePage && w.PageIndex != nil {
+		return math.Min(100, float64(*w.PageIndex)/float64(v.pageCount-1)*100)
 	}
 	if v.hasTimeline && v.timeline.TotalDuration > 0 && w.RawAudioSeconds != nil && w.RawAudioFileID != nil {
 		if global, err := v.timeline.Global(*w.RawAudioFileID, *w.RawAudioSeconds); err == nil {

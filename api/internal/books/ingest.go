@@ -83,6 +83,13 @@ func (ing *Ingester) EnsureForEntry(ctx context.Context, userID, entryID string)
 // present). It is the attach-time hook: MAD-403 calls it when an EPUB is
 // attached, and the text endpoints call it lazily. Concurrent calls may
 // both parse; the result is idempotent and the DB write is transactional.
+//
+// A PDF additionally has its quality-gate classification persisted first,
+// whatever the verdict is — text-native or image-native, the row records
+// what the file turned out to be — and only a text-native file continues
+// into the canonical tables. Image-native fails with pdf.ErrImageNative
+// after its row is written, so the paged model has its fact and the text
+// pipeline has its refusal, never a half-parse.
 func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile) (models.EpubText, error) {
 	if existing, err := ing.store.GetEpubText(ctx, f.ID); err == nil {
 		if existing.ParserVersion == ParserVersion &&
@@ -98,9 +105,28 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 	if err != nil {
 		return models.EpubText{}, err
 	}
-	parsed, err := parseBookFile(path)
-	if err != nil {
-		return models.EpubText{}, err
+
+	var parsed *epub.Document
+	if strings.EqualFold(filepath.Ext(path), ".pdf") {
+		res, err := parsePDFWithQuality(path)
+		if err != nil && (res == nil || res.Class == pdf.Corrupt || errors.Is(err, pdf.ErrDRM)) {
+			return models.EpubText{}, err
+		}
+		// An image-native verdict arrives as (result, error) — the error is
+		// the gate's ruling, the result is the inventory. Persist the
+		// classification either way, then refuse the canonical text.
+		if _, err := ing.persistPDFClassification(ctx, f, res); err != nil {
+			return models.EpubText{}, err
+		}
+		if res.Class != pdf.TextNative {
+			return models.EpubText{}, &pdf.NotTextError{Class: res.Class, Reason: res.Reason}
+		}
+		parsed = res.Doc
+	} else {
+		parsed, err = parseBookFile(path)
+		if err != nil {
+			return models.EpubText{}, err
+		}
 	}
 
 	canonical, display, chapters, index := Canonicalize(parsed)
@@ -391,9 +417,10 @@ func anchorImages(images []epub.Image, kept []int) []IndexedImage {
 // with pdf.ErrDRM and a file whose text layer is absent or garbage fails
 // with pdf.ErrImageNative — both refused whole, never half-parsed, because
 // a plausible-wrong canonical text would silently poison search, alignment
-// and the knowledge layer. Until the paged reader exists (stage 2), the
-// image-native refusal is the honest interim answer for comics, scans and
-// picture books.
+// and the knowledge layer. An image-native file lives on the paged position
+// model instead: its classification is persisted separately (see
+// EnsurePDFFile) and this text-side refusal is what keeps it out of the
+// canonical tables.
 func parseBookFile(path string) (*epub.Document, error) {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mobi", ".azw", ".azw3":
@@ -463,6 +490,75 @@ func parsePDFFile(path string) (*epub.Document, error) {
 		return nil, err
 	}
 	return doc, nil
+}
+
+// parsePDFWithQuality opens and parses a PDF with the classification
+// surfaced, for the paths that persist the verdict rather than only route
+// on it.
+func parsePDFWithQuality(path string) (*pdf.ParseResult, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("books: open pdf: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("books: stat pdf: %w", err)
+	}
+	return pdf.ParseWithQuality(f, info.Size())
+}
+
+// EnsurePDFFile returns a media file's persisted quality-gate
+// classification, classifying lazily when no current row exists. It is the
+// paged model's half of EnsureForMediaFile: the position endpoints need to
+// know a book's page count and axis without canonicalizing anything, and an
+// image-native file answers here as a fact, not a failure. DRM and corrupt
+// files still error — they were refused whole and have no classification to
+// give.
+func (ing *Ingester) EnsurePDFFile(ctx context.Context, f models.MediaFile) (models.PDFFile, error) {
+	if existing, err := ing.store.GetPDFFile(ctx, f.ID); err == nil {
+		if existing.ParserVersion == ParserVersion {
+			return existing, nil
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return models.PDFFile{}, err
+	}
+
+	path, err := resolveWithinRoot(f.Root, f.Path)
+	if err != nil {
+		return models.PDFFile{}, err
+	}
+	res, err := parsePDFWithQuality(path)
+	if err != nil && (res == nil || res.Class == pdf.Corrupt || errors.Is(err, pdf.ErrDRM)) {
+		return models.PDFFile{}, err
+	}
+	// An image-native verdict is the answer this method exists to give,
+	// not a failure: the error is the gate's ruling, the result is the
+	// classification to persist and return.
+	return ing.persistPDFClassification(ctx, f, res)
+}
+
+// persistPDFClassification records the gate's verdict for a media file,
+// replacing any previous one (the ReplaceEpubText rule: same file, same row,
+// new truth). Both text-native and image-native verdicts are kept — the
+// classification is a fact about the file, and the text-native row's page
+// count is what a future page-map seed will want.
+func (ing *Ingester) persistPDFClassification(ctx context.Context, f models.MediaFile, res *pdf.ParseResult) (models.PDFFile, error) {
+	class := string(res.Class)
+	if class != models.PDFTextNative && class != models.PDFImageNative {
+		// drm and corrupt never reach here — they fail the parse before a
+		// result exists — but a parser that grows a new verdict should not
+		// be able to write it past the schema's CHECK by accident.
+		class = models.PDFImageNative
+	}
+	return ing.store.ReplacePDFFile(ctx, models.PDFFile{
+		MediaFileID:    f.ID,
+		Classification: class,
+		PageCount:      res.PageCount,
+		HasTextLayer:   res.PagesWithText > 0,
+		Reason:         res.Reason,
+		ParserVersion:  ParserVersion,
+	})
 }
 
 // resolveWithinRoot joins a media file's root-relative path and verifies

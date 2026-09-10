@@ -82,10 +82,10 @@ func (s *Server) ensureBookText(w http.ResponseWriter, r *http.Request) (models.
 		// The quality gate's verdict, not a parse failure: comics, scans
 		// and picture books are pages, not prose, and a plausible-wrong
 		// text would silently poison every offset downstream. The paged
-		// reader for them is stage 2; until then this label is the honest
-		// interim answer.
+		// position model answers for these books; the text endpoints
+		// never do.
 		fail(w, errorf(http.StatusUnprocessableEntity,
-			"this PDF has no readable text layer — it is pages, not prose (a comic, scan or picture book); paged reading for those is not here yet"))
+			"this PDF has no readable text layer — it is pages, not prose (a comic, scan or picture book); its position is a page index, served by the position endpoints"))
 	case err != nil:
 		slog.ErrorContext(r.Context(), "epub parse failed", "error", err)
 		fail(w, errorf(http.StatusInternalServerError, "could not parse this ebook"))

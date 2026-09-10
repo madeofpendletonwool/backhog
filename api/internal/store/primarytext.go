@@ -9,10 +9,11 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
 
-// ErrTextNotParsed marks a promotion whose target has no canonical text yet.
+// ErrTextNotParsed marks a promotion whose target has no coordinate system
+// yet: no canonical text was parsed and no paged classification exists.
 // Switching onto a text nobody has read means switching onto a length nobody
 // knows, and every stored offset would have to be migrated blind. Callers
-// parse first and retry; the handler does exactly that.
+// parse (or classify) first and retry; the handler does exactly that.
 var ErrTextNotParsed = errors.New("text file has not been parsed yet")
 
 // SetPrimaryTextFile designates which of a book's attached text-side files is
@@ -67,12 +68,15 @@ func (s *Store) SetPrimaryTextFile(ctx context.Context, userID, entryID string, 
 		return f, nil
 	}
 
-	var parsed int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM epub_texts WHERE media_file_id = ?`, fileID).Scan(&parsed); err != nil {
+	var parsed, paged int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM epub_texts WHERE media_file_id = ?),
+		       (SELECT COUNT(*) FROM pdf_files
+		        WHERE media_file_id = ? AND classification = 'image-native')`,
+		fileID, fileID).Scan(&parsed, &paged); err != nil {
 		return models.MediaFile{}, err
 	}
-	if parsed == 0 {
+	if parsed == 0 && paged == 0 {
 		return models.MediaFile{}, ErrTextNotParsed
 	}
 
@@ -89,10 +93,14 @@ func (s *Store) SetPrimaryTextFile(ctx context.Context, userID, entryID string, 
 // textIdentity is what a canonical text is worth comparing by: the hash that
 // says whether two parses produced the same bytes, and the length every
 // offset in them is relative to. Both are zero when the file has never been
-// parsed.
+// parsed. `paged` says the coordinate system being described is a page axis
+// (an image-native PDF primary): it has no hash by construction, and the
+// flag is what tells the switch to drop the old axis rather than look for a
+// hash to compare.
 type textIdentity struct {
 	sha   string
 	chars int64
+	paged bool
 }
 
 func textIdentityTx(ctx context.Context, tx *sql.Tx, fileID int64) (textIdentity, error) {
@@ -101,7 +109,14 @@ func textIdentityTx(ctx context.Context, tx *sql.Tx, fileID int64) (textIdentity
 		`SELECT normalized_sha256, char_count FROM epub_texts WHERE media_file_id = ?`,
 		fileID).Scan(&t.sha, &t.chars)
 	if errors.Is(err, sql.ErrNoRows) {
-		return textIdentity{}, nil
+		err = tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM pdf_files
+			 WHERE media_file_id = ? AND classification = 'image-native')`,
+			fileID).Scan(&t.paged)
+		if err != nil {
+			return textIdentity{}, err
+		}
+		return t, nil
 	}
 	return t, err
 }
@@ -139,6 +154,13 @@ func switchPrimaryTextTx(ctx context.Context, tx *sql.Tx, bookID string, newID i
 // The flag is cleared before it is set: the partial unique index allows
 // exactly one primary per book and SQLite checks it statement by statement,
 // so the two updates cannot be reordered.
+//
+// A paged target (or a paged `before`) crosses an axis boundary, and axes
+// are never translated across each other — a page index and a char offset
+// are not two encodings of one position, they are positions in different
+// books-shaped spaces. Both directions drop the old axis and start the new
+// one unpositioned, mirroring the alignment-deletion stance: a plausible
+// mistranslation is worse than an honest reset.
 func designatePrimaryTx(ctx context.Context, tx *sql.Tx, bookID string, newID int64, before textIdentity) error {
 	after, err := textIdentityTx(ctx, tx, newID)
 	if err != nil {
@@ -155,6 +177,28 @@ func designatePrimaryTx(ctx context.Context, tx *sql.Tx, bookID string, newID in
 		return err
 	}
 
+	if after.paged {
+		// Switching onto a paged PDF: the char axis is dropped (not
+		// rescaled — there is nothing to scale onto), the page axis starts
+		// at page one, and the maps that lived in char space are deleted
+		// rather than reinterpreted. A raw listening position survives:
+		// it is track-relative and was never measured against the text.
+		if err := resetProgressToPageTx(ctx, tx, bookID); err != nil {
+			return err
+		}
+		if err := dropPageAnchorsTx(ctx, tx, bookID); err != nil {
+			return err
+		}
+		return dropAlignmentsTx(ctx, tx, bookID)
+	}
+	if before.paged {
+		// Leaving the page axis: no text coordinates were stored against
+		// the paged primary (its sha is empty by construction), and the
+		// page axis is dropped rather than guessed into an offset. The
+		// text axis starts unpositioned — page one's equivalent, offset 0.
+		return resetProgressToTextTx(ctx, tx, bookID)
+	}
+
 	// Nothing was measured against the old text (a first designation, or a
 	// text nobody ever parsed), or both texts are byte-identical: the
 	// coordinates carry over untouched.
@@ -162,6 +206,49 @@ func designatePrimaryTx(ctx context.Context, tx *sql.Tx, bookID string, newID in
 		return nil
 	}
 	return migrateOffsetsTx(ctx, tx, bookID, before, after)
+}
+
+// resetProgressToPageTx moves every entry of the book onto the page axis,
+// unpositioned: page one, no percentage, no char offset. Only the position
+// axes are touched — status, history and any raw listening position are
+// facts about the reader, not about the coordinate system.
+func resetProgressToPageTx(ctx context.Context, tx *sql.Tx, bookID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE book_progress
+		SET position_mode = 'page', page_index = 0,
+		    char_offset = 0, char_offset_source = 'manual',
+		    percent_complete = 0
+		WHERE entry_id IN (
+		      SELECT id FROM library_entries WHERE book_id = ? AND media_type = 'book')`,
+		bookID)
+	return err
+}
+
+// resetProgressToTextTx is the mirror of resetProgressToPageTx: the page
+// axis is dropped and the char axis starts at offset zero.
+func resetProgressToTextTx(ctx context.Context, tx *sql.Tx, bookID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE book_progress
+		SET position_mode = 'text', page_index = NULL,
+		    char_offset = 0, percent_complete = 0
+		WHERE entry_id IN (
+		      SELECT id FROM library_entries WHERE book_id = ? AND media_type = 'book')`,
+		bookID)
+	return err
+}
+
+// dropPageAnchorsTx deletes the paper↔text maps of every physical copy of
+// the book's entries. Page anchors are char offsets into a canonical text;
+// switched onto a paged primary there is no such text, and an anchor kept
+// would answer every translation query wrongly — the same reason alignments
+// are deleted rather than stretched.
+func dropPageAnchorsTx(ctx context.Context, tx *sql.Tx, bookID string) error {
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM page_anchors WHERE physical_copy_id IN (
+		      SELECT pc.id FROM physical_copies pc
+		      JOIN library_entries e ON e.id = pc.entry_id
+		      WHERE e.book_id = ? AND e.media_type = 'book')`, bookID)
+	return err
 }
 
 // migrateOffsetsTx rewrites the coordinates that were relative to `before` so

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -17,18 +18,27 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/books/position"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
+	"github.com/collinpendleton/backhog/api/internal/fixtures"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
 
 // The fixture book: an EPUB plus two audio tracks, so all three coordinate
-// spaces are reachable from one entry.
+// spaces are reachable from one entry. The comic entry holds an image-only
+// PDF — the paged population — and the dual entry holds an EPUB beside an
+// image-only PDF, so a primary switch across the text/page axis is
+// exercisable from one book.
 const (
 	positionEntry     = "pe1"
 	positionAudioOnly = "pe2"
+	positionComic     = "pe3"
+	positionDual      = "pe4"
 	positionEpubFile  = 101
 	positionTrackOne  = 102
 	positionTrackTwo  = 103
 	positionLoneTrack = 104
+	positionComicPDF  = 105
+	positionDualEpub  = 106
+	positionDualPDF   = 107
 
 	positionTrackOneSeconds = 90.0
 	positionTrackTwoSeconds = 45.0
@@ -75,6 +85,9 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 	trackOneSize := write("01.m4b", apiM4BFixture("Erasmas", positionTrackOneSeconds, 4096))
 	trackTwoSize := write("02.m4b", apiM4BFixture("Apert", positionTrackTwoSeconds, 4096))
 	loneSize := write("lone.m4b", apiM4BFixture("Lone", 60, 4096))
+	comicSize := write("pictures.pdf", fixtures.BuildImageOnlyPDF())
+	dualEpubSize := write("dual.epub", apiEpubFixture(t))
+	dualPDFSize := write("dual.pdf", fixtures.BuildImageOnlyPDF())
 
 	database, err := db.Open(filepath.Join(t.TempDir(), "position.db"))
 	if err != nil {
@@ -113,10 +126,13 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 			t.Fatalf("seed %q: %v", q, err)
 		}
 	}
-	exec(`INSERT INTO books (id, title) VALUES ('OL1W', 'Anathem'), ('OL2W', 'Tape Only')`)
+	exec(`INSERT INTO books (id, title) VALUES
+		('OL1W', 'Anathem'), ('OL2W', 'Tape Only'), ('OL3W', 'Pictures'), ('OL4W', 'Both Ways')`)
 	exec(`INSERT INTO library_entries (id, user_id, media_type, book_id, status)
-	      VALUES (?, ?, 'book', 'OL1W', 'backlog'), (?, ?, 'book', 'OL2W', 'backlog')`,
-		positionEntry, app.userID, positionAudioOnly, app.userID)
+	      VALUES (?, ?, 'book', 'OL1W', 'backlog'), (?, ?, 'book', 'OL2W', 'backlog'),
+	             (?, ?, 'book', 'OL3W', 'backlog'), (?, ?, 'book', 'OL4W', 'backlog')`,
+		positionEntry, app.userID, positionAudioOnly, app.userID,
+		positionComic, app.userID, positionDual, app.userID)
 	insertFile := func(id int, name, kind string, size int, bookID string, track any) {
 		exec(`INSERT INTO media_files (id, root, path, kind, size_bytes, mtime, book_id, track_number, scanned_at)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -126,6 +142,14 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 	insertFile(positionTrackOne, "01.m4b", "audio", trackOneSize, "OL1W", 1)
 	insertFile(positionTrackTwo, "02.m4b", "audio", trackTwoSize, "OL1W", 2)
 	insertFile(positionLoneTrack, "lone.m4b", "audio", loneSize, "OL2W", 1)
+	insertFile(positionComicPDF, "pictures.pdf", "epub", comicSize, "OL3W", nil)
+	insertFile(positionDualEpub, "dual.epub", "epub", dualEpubSize, "OL4W", nil)
+	insertFile(positionDualPDF, "dual.pdf", "epub", dualPDFSize, "OL4W", nil)
+	// The flag the attach flow writes, so the fixture books look like
+	// attached ones: one designated primary each (the comic is the only
+	// text file of its book; the dual book's epub outranks the pdf).
+	exec(`UPDATE media_files SET is_primary_text = 1 WHERE id IN (?, ?)`,
+		positionComicPDF, positionDualEpub)
 
 	// Hand-inserted rows still have to look like attached ones: audio that
 	// belongs to a book belongs to one of that book's designated editions,
@@ -803,5 +827,250 @@ func TestBookPositionTranslateRejectsBadQueries(t *testing.T) {
 	if status, _ := app.do(t, stranger, http.MethodGet,
 		"/api/books/"+positionEntry+"/position?char=1", nil); status != http.StatusNotFound {
 		t.Errorf("stranger translate = %d, want 404", status)
+	}
+}
+
+// --- the paged position model ---------------------------------------------
+//
+// A book whose designated text file is an image-native PDF answers on the
+// page axis: page_index stored, char_offset pinned to 0, sessions in turned
+// pages, and the text endpoints still refusing. Nothing enters a text-mode
+// code path.
+
+func TestBookPositionPagedRoundTrip(t *testing.T) {
+	app := newPositionTestApp(t, nil)
+
+	// The first read classifies lazily and answers on the page axis: the
+	// comic is two pages, unopened is page one of two.
+	status, got := app.api(t, http.MethodGet, "/api/books/"+positionComic+"/position", nil)
+	if status != http.StatusOK {
+		t.Fatalf("get status = %d: %v", status, got)
+	}
+	if got["position_mode"] != "page" || got["page_count"] != 2.0 {
+		t.Fatalf("unopened comic = mode %v / count %v, want page / 2", got["position_mode"], got["page_count"])
+	}
+	if got["page_index"] != 0.0 {
+		t.Errorf("unopened comic page_index = %v, want 0", got["page_index"])
+	}
+	if got["char_offset"] != 0.0 || got["chapter"] != nil || got["char_count"] != 0.0 {
+		t.Errorf("comic carries text-space fields: %v", got)
+	}
+
+	// A page turn round-trips: stored, percented against the page count,
+	// and reported back on the page axis.
+	status, body := app.api(t, http.MethodPut, "/api/books/"+positionComic+"/position",
+		map[string]any{"page_index": 1})
+	if status != http.StatusOK {
+		t.Fatalf("put page status = %d: %v", status, body)
+	}
+	if body["status"] != "playing" || body["status_changed"] != true {
+		t.Errorf("first page turn left status %v (changed %v), want playing/true",
+			body["status"], body["status_changed"])
+	}
+	// The last page of a two-page book is the end: the finish is offered,
+	// exactly as crossing 97% of a text does.
+	if body["offer_finished"] != true {
+		t.Errorf("offer_finished = %v on the last page, want true", body["offer_finished"])
+	}
+
+	status, got = app.api(t, http.MethodGet, "/api/books/"+positionComic+"/position", nil)
+	if status != http.StatusOK {
+		t.Fatalf("get after put = %d: %v", status, got)
+	}
+	if got["page_index"] != 1.0 || got["position_mode"] != "page" {
+		t.Errorf("stored page = %v (mode %v), want 1 / page", got["page_index"], got["position_mode"])
+	}
+	if p := got["percent"].(float64); p != 100.0 {
+		t.Errorf("percent on the last page = %v, want 100", p)
+	}
+	if got["source"] != "read" {
+		t.Errorf("source = %v, want read", got["source"])
+	}
+
+	// The classification is persisted — the paged model's fact source —
+	// and no canonical text exists for the comic.
+	var class string
+	var pageCount int
+	if err := app.store.DB().QueryRow(
+		`SELECT classification, page_count FROM pdf_files WHERE media_file_id = ?`, positionComicPDF).
+		Scan(&class, &pageCount); err != nil {
+		t.Fatalf("probe pdf_files: %v", err)
+	}
+	if class != "image-native" || pageCount != 2 {
+		t.Errorf("classification = %s / %d pages, want image-native / 2", class, pageCount)
+	}
+	var texts int
+	if err := app.store.DB().QueryRow(
+		`SELECT COUNT(*) FROM epub_texts WHERE media_file_id = ?`, positionComicPDF).Scan(&texts); err != nil {
+		t.Fatalf("probe epub_texts: %v", err)
+	}
+	if texts != 0 {
+		t.Errorf("comic wrote %d canonical-text rows; want 0", texts)
+	}
+
+	// A session logs turned pages; chars stay 0 — no fake char deltas.
+	start := time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC)
+	status, body = app.api(t, http.MethodPost, "/api/books/"+positionComic+"/sessions", map[string]any{
+		"started_at":   start,
+		"ended_at":     start.Add(10 * time.Minute),
+		"mode":         "read",
+		"pages_turned": 2,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("post paged session = %d: %v", status, body)
+	}
+	if s := body["session"].(map[string]any); s["pages_turned"] != 2.0 || s["chars_advanced"] != 0.0 {
+		t.Errorf("paged session = pages %v / chars %v, want 2 / 0", s["pages_turned"], s["chars_advanced"])
+	}
+
+	// The text endpoints still refuse: the comic is pages, not prose, and
+	// no text-mode path ever answers for it.
+	if status, body := app.api(t, http.MethodGet, "/api/books/"+positionComic+"/text/chapters", nil); status != http.StatusUnprocessableEntity {
+		t.Errorf("comic chapters = %d, want 422: %v", status, body)
+	}
+}
+
+func TestBookPositionPagedValidation(t *testing.T) {
+	app := newPositionTestApp(t, nil)
+
+	for _, tc := range []struct {
+		name string
+		path string
+		body map[string]any
+		want int
+	}{
+		{"negative page", "/api/books/" + positionComic + "/position", map[string]any{"page_index": -1}, http.StatusBadRequest},
+		{"page past the end", "/api/books/" + positionComic + "/position", map[string]any{"page_index": 2}, http.StatusBadRequest},
+		{"char offset on a paged book", "/api/books/" + positionComic + "/position", map[string]any{"char_offset": 10}, http.StatusUnprocessableEntity},
+		{"page index on a text book", "/api/books/" + positionEntry + "/position", map[string]any{"page_index": 1}, http.StatusUnprocessableEntity},
+		{"page index beside a char offset", "/api/books/" + positionComic + "/position",
+			map[string]any{"page_index": 1, "char_offset": 0}, http.StatusBadRequest},
+	} {
+		if status, body := app.api(t, http.MethodPut, tc.path, tc.body); status != tc.want {
+			t.Errorf("%s: status = %d, want %d: %v", tc.name, status, tc.want, body)
+		}
+	}
+	// The speculative lookup case uses GET, not PUT.
+	if status, body := app.api(t, http.MethodGet, "/api/books/"+positionComic+"/position?char=1", nil); status != http.StatusUnprocessableEntity {
+		t.Errorf("speculative char on a paged book = %d, want 422: %v", status, body)
+	}
+
+	// A text-mode book is untouched by all of this: byte-identical
+	// behaviour to before the paged model existed.
+	status, body := app.api(t, http.MethodPut, "/api/books/"+positionEntry+"/position",
+		map[string]any{"char_offset": 40})
+	if status != http.StatusOK {
+		t.Fatalf("text put = %d: %v", status, body)
+	}
+	if pos := body["position"].(map[string]any); pos["position_mode"] != "text" || pos["page_index"] != nil {
+		t.Errorf("text book position = mode %v / page %v, want text / null", pos["position_mode"], pos["page_index"])
+	}
+}
+
+// Switching the primary between a text sibling and a paged sibling cannot
+// translate positions across axes: the old axis is dropped, the new one
+// starts unpositioned, and the maps that lived in char space are deleted
+// rather than reinterpreted.
+func TestPrimarySwitchAcrossAxesDropsTheOldAxis(t *testing.T) {
+	app := newPositionTestApp(t, nil)
+
+	// Read into the dual book's text: offset 40, a percentage, a chapter.
+	status, body := app.api(t, http.MethodPut, "/api/books/"+positionDual+"/position",
+		map[string]any{"char_offset": 40})
+	if status != http.StatusOK {
+		t.Fatalf("text put = %d: %v", status, body)
+	}
+	if pos := body["position"].(map[string]any); pos["position_mode"] != "text" {
+		t.Fatalf("dual book starts as %v, want text", pos["position_mode"])
+	}
+
+	// Switch onto the comic PDF. The write succeeds, and the book now
+	// answers on the page axis, unpositioned: page one, no percentage, no
+	// chapter — nothing translated.
+	status, body = app.api(t, http.MethodPut,
+		fmt.Sprintf("/api/books/%s/files/%d/primary", positionDual, positionDualPDF), nil)
+	if status != http.StatusOK {
+		t.Fatalf("switch to paged = %d: %v", status, body)
+	}
+	status, got := app.api(t, http.MethodGet, "/api/books/"+positionDual+"/position", nil)
+	if status != http.StatusOK {
+		t.Fatalf("get after switch = %d: %v", status, got)
+	}
+	if got["position_mode"] != "page" || got["page_index"] != 0.0 || got["page_count"] != 2.0 {
+		t.Errorf("switched book = mode %v / page %v / count %v, want page / 0 / 2",
+			got["position_mode"], got["page_index"], got["page_count"])
+	}
+	if got["percent"] != 0.0 || got["chapter"] != nil {
+		t.Errorf("switched book carries %v percent / %v chapter, want nothing carried over",
+			got["percent"], got["chapter"])
+	}
+	// The char axis is dropped in storage too, not just in presentation.
+	var mode string
+	var charOffset int
+	var pageIndex any
+	if err := app.store.DB().QueryRow(
+		`SELECT position_mode, char_offset, page_index FROM book_progress WHERE entry_id = ?`, positionDual).
+		Scan(&mode, &charOffset, &pageIndex); err != nil {
+		t.Fatalf("probe progress: %v", err)
+	}
+	if mode != "page" || charOffset != 0 || pageIndex == nil {
+		t.Errorf("stored = %s / %d / %v, want page / 0 / a page index", mode, charOffset, pageIndex)
+	}
+
+	// Turning a page works on the new axis.
+	if status, body := app.api(t, http.MethodPut, "/api/books/"+positionDual+"/position",
+		map[string]any{"page_index": 1}); status != http.StatusOK {
+		t.Fatalf("page put after switch = %d: %v", status, body)
+	}
+
+	// Switch back onto the text: the page axis is dropped the same way,
+	// and the text axis starts unpositioned — not back at offset 40.
+	status, body = app.api(t, http.MethodPut,
+		fmt.Sprintf("/api/books/%s/files/%d/primary", positionDual, positionDualEpub), nil)
+	if status != http.StatusOK {
+		t.Fatalf("switch back to text = %d: %v", status, body)
+	}
+	status, got = app.api(t, http.MethodGet, "/api/books/"+positionDual+"/position", nil)
+	if status != http.StatusOK {
+		t.Fatalf("get after switch back = %d: %v", status, got)
+	}
+	if got["position_mode"] != "text" || got["char_offset"] != 0.0 || got["page_index"] != nil {
+		t.Errorf("switched-back book = %v, want text / offset 0 / no page", got)
+	}
+	if got["percent"] != 0.0 {
+		t.Errorf("switched-back percent = %v, want 0 — unpositioned, not rescaled", got["percent"])
+	}
+
+	// And the text answers normally again.
+	if status, _ := app.api(t, http.MethodGet, "/api/books/"+positionDual+"/text/chapters", nil); status != http.StatusOK {
+		t.Errorf("text chapters after switch back = %d, want 200", status)
+	}
+}
+
+// Detaching the last text file of a paged book drops the page axis: a page
+// index pointing into a file the book no longer has is not a position, and
+// whatever text attaches next starts unpositioned.
+func TestDetachPagedPrimaryDropsThePageAxis(t *testing.T) {
+	app := newPositionTestApp(t, nil)
+
+	if status, body := app.api(t, http.MethodPut, "/api/books/"+positionComic+"/position",
+		map[string]any{"page_index": 1}); status != http.StatusOK {
+		t.Fatalf("page put = %d: %v", status, body)
+	}
+
+	if status, body := app.api(t, http.MethodDelete,
+		fmt.Sprintf("/api/books/%s/files/%d", positionComic, positionComicPDF), nil); status != http.StatusOK {
+		t.Fatalf("detach = %d: %v", status, body)
+	}
+
+	var mode string
+	var pageIndex any
+	if err := app.store.DB().QueryRow(
+		`SELECT position_mode, page_index FROM book_progress WHERE entry_id = ?`, positionComic).
+		Scan(&mode, &pageIndex); err != nil {
+		t.Fatalf("probe progress: %v", err)
+	}
+	if mode != "text" || pageIndex != nil {
+		t.Errorf("progress after detach = %s / %v, want text / NULL — the page axis is gone with its file", mode, pageIndex)
 	}
 }

@@ -118,6 +118,15 @@ type ParseResult struct {
 	Class Classification
 	// Reason explains a non-text-native classification; empty when clean.
 	Reason string
+	// PageCount is the file's own page count — the paged counterpart of a
+	// canonical text's char count, and the sizing number an image-native
+	// book is measured by.
+	PageCount int
+	// PagesWithText is how many pages yielded text runs at all: the raw
+	// signal under the verdict, kept so a persisted classification can say
+	// whether a text layer existed and was judged garbage versus never
+	// existed.
+	PagesWithText int
 }
 
 // Parse reads a PDF held in r and returns its spine structure. A DRM
@@ -179,13 +188,20 @@ func ParseWithQuality(r io.ReaderAt, size int64) (res *ParseResult, err error) {
 	class, reason := ex.gate.verdict()
 	if class != TextNative {
 		return &ParseResult{
-				Doc:    &epub.Document{Docs: docs, TOC: report},
-				Class:  class,
-				Reason: reason,
+				Doc:           &epub.Document{Docs: docs, TOC: report},
+				Class:         class,
+				Reason:        reason,
+				PageCount:     ex.gate.pages,
+				PagesWithText: ex.gate.pagesWithText,
 			},
 			&NotTextError{Class: class, Reason: reason}
 	}
-	return &ParseResult{Doc: &epub.Document{Docs: docs, TOC: report}, Class: TextNative}, nil
+	return &ParseResult{
+		Doc:           &epub.Document{Docs: docs, TOC: report},
+		Class:         TextNative,
+		PageCount:     ex.gate.pages,
+		PagesWithText: ex.gate.pagesWithText,
+	}, nil
 }
 
 // isEncryptionError recognizes the reader's encrypted-file failures, which

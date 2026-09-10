@@ -55,14 +55,18 @@ var readingScenarios = []float64{2, 5, 10}
 
 // bookSize is how long one book entry is and how much of it is left. Exactly
 // one sizing wins per entry, in descending order of honesty: a real audiobook
-// duration, then the canonical text's own length, then the printing's page
-// count. A book with none of the three is unsized and contributes nothing,
-// the same way a game with no time-to-beat contributes nothing to the debt.
+// duration, then the canonical text's own length, then the page count of a
+// paged primary (an image-native PDF — measured pages, not a word count),
+// then the printing's page count. A book with none of the four is unsized
+// and contributes nothing, the same way a game with no time-to-beat
+// contributes nothing to the debt.
 type bookSize struct {
 	// pages is the printing's page count; chars is the canonical text length
-	// when an EPUB is attached. Either may be zero.
-	pages int
-	chars int
+	// when an EPUB is attached; pdfPages is the page count of a paged
+	// primary. Any may be zero.
+	pages    int
+	chars    int
+	pdfPages int
 	// audioSeconds is the summed duration of the attached audiobook, 0 when
 	// there is no audio or none of it has been measured yet.
 	audioSeconds float64
@@ -72,10 +76,15 @@ type bookSize struct {
 
 // effectivePages is the page count to reason about: derived from the
 // canonical text when there is one, since that is measured rather than
-// reported, and the printing's own count otherwise.
+// reported; then the paged primary's own page count, which is measured too —
+// a 32-page picture book is 32 pages, not the 12 words its absent text layer
+// would have counted; and the printing's own count otherwise.
 func (b bookSize) effectivePages() float64 {
 	if b.chars > 0 {
 		return float64(b.chars) / charsPerPage
+	}
+	if b.pdfPages > 0 {
+		return float64(b.pdfPages)
 	}
 	return float64(b.pages)
 }
@@ -232,6 +241,7 @@ const bookSizeSelect = `
 		 WHERE ed2.book_id = e.book_id AND ed2.page_count IS NOT NULL
 		 ORDER BY ed2.published_year, ed2.id LIMIT 1), 0),
 	COALESCE(` + primaryTextCharCount + `, 0),
+	COALESCE(` + primaryTextPageCount + `, 0),
 	COALESCE((SELECT SUM(mf2.duration_seconds) FROM media_files mf2
 	          JOIN audio_editions ae ON ae.id = mf2.audio_edition_id AND ae.is_primary = 1
 	          WHERE mf2.book_id = e.book_id AND mf2.kind = 'audio'
@@ -256,7 +266,8 @@ func (s *Store) bookSizes(ctx context.Context, userID string) (map[string]bookSi
 	for rows.Next() {
 		var entryID string
 		var size bookSize
-		if err := rows.Scan(&entryID, &size.pages, &size.chars, &size.audioSeconds, &size.percent); err != nil {
+		if err := rows.Scan(&entryID, &size.pages, &size.chars, &size.pdfPages,
+			&size.audioSeconds, &size.percent); err != nil {
 			return nil, err
 		}
 		out[entryID] = size
@@ -310,10 +321,13 @@ func (s *Store) ReadingInsights(ctx context.Context, userID string) (models.Read
 }
 
 // unopenedWhere selects shelf books with no logged reading and no stored
-// position past page one — bought, shelved, never opened.
+// position past page one — bought, shelved, never opened. A page-mode
+// position counts as opened once it is past the first page, exactly as a
+// char offset does once it is past zero.
 const unopenedWhere = `e.user_id = ? AND e.media_type = 'book' AND e.status = 'backlog'
 	AND NOT EXISTS (SELECT 1 FROM reading_sessions rs WHERE rs.entry_id = e.id)
-	AND NOT EXISTS (SELECT 1 FROM book_progress bp WHERE bp.entry_id = e.id AND bp.char_offset > 0)`
+	AND NOT EXISTS (SELECT 1 FROM book_progress bp
+	                WHERE bp.entry_id = e.id AND (bp.char_offset > 0 OR bp.page_index > 0))`
 
 // oldestUnopened finds the unopened book that has been on the shelf longest.
 func (s *Store) oldestUnopened(ctx context.Context, userID string) (*models.BookSuperlative, error) {
@@ -370,7 +384,7 @@ func (s *Store) longestUnread(ctx context.Context, userID string, pace models.Re
 	for rows.Next() {
 		var entryID, bookID string
 		var size bookSize
-		if err := rows.Scan(&entryID, &bookID, &size.pages, &size.chars,
+		if err := rows.Scan(&entryID, &bookID, &size.pages, &size.chars, &size.pdfPages,
 			&size.audioSeconds, &size.percent); err != nil {
 			return nil, err
 		}

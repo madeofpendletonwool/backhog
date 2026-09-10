@@ -942,6 +942,22 @@ func TestEnsureForMediaFilePDFRefusals(t *testing.T) {
 	if _, err := st.GetEpubText(context.Background(), imageFile.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("epub_texts row after image-native refusal: %v", err)
 	}
+	// The refusal persisted its verdict: the classification row is what
+	// the paged position model reads, and it says image-native, two pages,
+	// no text layer. EnsurePDFFile returns it as a fact, not a failure.
+	pf, err := ing.EnsurePDFFile(context.Background(), imageFile)
+	if err != nil {
+		t.Fatalf("EnsurePDFFile on the image-native file: %v", err)
+	}
+	if pf.Classification != models.PDFImageNative || pf.PageCount != 2 || pf.HasTextLayer {
+		t.Errorf("classification = %s / %d pages / text %v, want image-native / 2 / false",
+			pf.Classification, pf.PageCount, pf.HasTextLayer)
+	}
+	// Re-ensuring reads the row, not the file.
+	again, err := ing.EnsurePDFFile(context.Background(), imageFile)
+	if err != nil || again.ID != pf.ID {
+		t.Errorf("re-ensure = %v (id %q vs %q), want the same row back", err, again.ID, pf.ID)
+	}
 
 	locked, err := fixtures.BuildEncryptedPDF(true)
 	if err != nil {
@@ -954,6 +970,10 @@ func TestEnsureForMediaFilePDFRefusals(t *testing.T) {
 	}
 	if _, err := st.GetEpubText(context.Background(), drmFile.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("epub_texts row after DRM refusal: %v", err)
+	}
+	// DRM is refused whole: no classification row either.
+	if _, err := ing.EnsurePDFFile(context.Background(), drmFile); !errors.Is(err, pdf.ErrDRM) {
+		t.Errorf("EnsurePDFFile on DRM = %v, want the DRM refusal", err)
 	}
 }
 

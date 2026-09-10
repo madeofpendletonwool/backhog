@@ -1149,8 +1149,14 @@ export interface PageAnchor {
  * GET /api/books/{entryId}/position — one position seen from all three
  * angles. `char_offset` is the stored truth; `audio` and `page` are derived
  * from it, and are null when there is nothing to derive them onto.
+ *
+ * A book with no text (an image-native PDF — a comic, scan or picture book)
+ * answers on the page axis instead: `position_mode` is "page", `page_index`
+ * and `page_count` carry it, and the text spaces are absent because no
+ * canonical text exists to derive them from.
  */
 export interface BookPosition {
+  position_mode: "text" | "page";
   char_offset: number;
   source: string;
   percent: number;
@@ -1158,22 +1164,29 @@ export interface BookPosition {
   chapter: PositionChapter | null;
   audio: PositionAudio | null;
   page: PositionPage | null;
+  /** The stored page position; present only when position_mode is "page". */
+  page_index: number | null;
+  /** The paged book's page count; 0 when the book is not paged. */
+  page_count: number;
   derived: boolean;
   confidence: number;
   updated_at: string | null;
 }
 
 /**
- * A position write. Exactly one of the three coordinates may be sent; the
+ * A position write. Exactly one of the four coordinates may be sent; the
  * player always sends `audio_seconds` measured *inside one track*, with the
  * file id that names which one, and lets the server decide whether it can
- * translate that into a character offset.
+ * translate that into a character offset. `page_index` is a PDF's own page
+ * (0-based) — the position axis of a book with no text, where `page` is a
+ * printed page of the entry's edition placed through the page-anchor map.
  */
 export interface PositionWrite {
   audio_seconds?: number;
   audio_file_id?: number;
   char_offset?: number;
   page?: number;
+  page_index?: number;
   source?: string;
 }
 

@@ -5,11 +5,14 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/collinpendleton/backhog/api/internal/auth"
+	"github.com/collinpendleton/backhog/api/internal/books/pdf"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -99,6 +102,13 @@ func (s *Server) handleAttachFiles(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if _, perr := s.epubs.EnsureForMediaFile(r.Context(), f); perr != nil {
+				if errors.Is(perr, pdf.ErrImageNative) {
+					// Not a failure to warn about: the quality gate
+					// classified the file image-native and the row is
+					// written. The book is paged, its position lives on
+					// the page axis, and there is no text by design.
+					continue
+				}
 				// The attachment holds — the text endpoints parse lazily —
 				// but the failure is worth a log line, not silence.
 				slog.WarnContext(r.Context(), "epub parse on attach", "file", f.Path, "error", perr)
@@ -180,9 +190,35 @@ func (s *Server) handlePrimaryTextFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, errNotFound)
 		return
 	}
+	// The parse (or, for a PDF, the classification) happens before the
+	// switch, deliberately. Promoting onto a text nobody has read means
+	// promoting onto a length nobody knows, and the store refuses that
+	// rather than migrating positions blind; parsing here turns "not parsed
+	// yet" into a normal first switch instead of an error the user has to
+	// decode. A container that will not parse fails the request with the
+	// primary untouched, which is the right outcome: nothing was switched
+	// to. An image-native PDF is the deliberate exception: it is exactly
+	// what a paged switch is for, so its classification is what gets
+	// ensured and its refusal is success — a text-native PDF still parses
+	// into its canonical text first, the same as any other container.
 	if s.epubs != nil && !target.PrimaryText {
-		if _, perr := s.epubs.EnsureForMediaFile(r.Context(), *target); perr != nil {
-			slog.WarnContext(r.Context(), "epub parse on promote", "file", target.Path, "error", perr)
+		perr := func() error {
+			if !strings.EqualFold(filepath.Ext(target.Path), ".pdf") {
+				_, err := s.epubs.EnsureForMediaFile(r.Context(), *target)
+				return err
+			}
+			pf, err := s.epubs.EnsurePDFFile(r.Context(), *target)
+			if err != nil {
+				return err
+			}
+			if pf.Classification == models.PDFImageNative {
+				return nil
+			}
+			_, err = s.epubs.EnsureForMediaFile(r.Context(), *target)
+			return err
+		}()
+		if perr != nil {
+			slog.WarnContext(r.Context(), "parse on promote", "file", target.Path, "error", perr)
 			fail(w, errorf(http.StatusUnprocessableEntity,
 				"could not read "+path.Base(target.Path)+" as a book, so it cannot become the canonical text"))
 			return

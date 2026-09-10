@@ -594,3 +594,77 @@ func TestGroupThousands(t *testing.T) {
 		}
 	}
 }
+
+// A paged book is sized by its measured page count, not by a word count it
+// does not have or a catalogue number it beats: a 32-page picture book whose
+// printing claims 300 pages is a 32-page book, and the reading season counts
+// its turned pages and its finish like any other book's.
+func TestPagedBooksSizeByMeasuredPages(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "paged_sizing.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := New(database)
+
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	exec(`INSERT INTO users (id, email, username, password_hash) VALUES ('p1', 'p1@p.p', 'p1', 'x')`)
+	exec(`INSERT INTO books (id, title) VALUES ('opc', 'Pictures')`)
+	exec(`INSERT INTO book_editions (id, book_id, page_count, published_year) VALUES ('pc-ed', 'opc', 300, 2020)`)
+	exec(`INSERT INTO library_entries (id, user_id, media_type, book_id, edition_id, status, created_at)
+	      VALUES ('pc1', 'p1', 'book', 'opc', 'pc-ed', 'backlog', '2026-01-01 00:00:00')`)
+	exec(`INSERT INTO media_files (id, root, path, kind, size_bytes, mtime, book_id, is_primary_text, scanned_at)
+	      VALUES (300, '/nas', 'Pictures.pdf', 'epub', 1, 1, 'opc', 1, CURRENT_TIMESTAMP)`)
+	exec(`INSERT INTO pdf_files (id, media_file_id, classification, page_count, has_text_layer, parser_version)
+	      VALUES ('pf1', 300, 'image-native', 32, 0, '3')`)
+
+	// Unread: the whole 32 pages are owed, at the default pace.
+	debt, err := s.ReadingDebt(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("ReadingDebt: %v", err)
+	}
+	if debt.PagesOwed != 32 {
+		t.Fatalf("PagesOwed = %v, want 32 measured pages (not the edition's 300)", debt.PagesOwed)
+	}
+	if debt.PageHours != 0.8 {
+		t.Errorf("PageHours = %v, want 0.8 at the 40-pages-an-hour default", debt.PageHours)
+	}
+	if debt.UnsizedBooks != 0 {
+		t.Errorf("UnsizedBooks = %d, want 0 — a paged book is sized", debt.UnsizedBooks)
+	}
+
+	// Halfway (page 16 of 32): half the pages remain.
+	exec(`INSERT INTO book_progress (entry_id, position_mode, page_index, char_offset, percent_complete)
+	      VALUES ('pc1', 'page', 16, 0, 50)`)
+	debt, err = s.ReadingDebt(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("ReadingDebt after progress: %v", err)
+	}
+	if debt.PagesOwed != 16 {
+		t.Errorf("PagesOwed = %v, want 16 with half the pages turned", debt.PagesOwed)
+	}
+
+	// Finished, with its turned pages logged: the season counts the finish
+	// and the pages like any other book's.
+	exec(`UPDATE library_entries SET status = 'played', finished_at = '2026-02-01 00:00:00' WHERE id = 'pc1'`)
+	exec(`INSERT INTO reading_sessions (id, user_id, entry_id, started_at, ended_at, mode, chars_advanced, pages_turned, seconds)
+	      VALUES ('ps1', 'p1', 'pc1', '2026-02-01 19:00:00', '2026-02-01 19:30:00', 'read', 0, 32, 1800)`)
+	season, err := s.ReadingSeason(context.Background(), "p1", 2026)
+	if err != nil {
+		t.Fatalf("ReadingSeason: %v", err)
+	}
+	if season.BooksFinished != 1 {
+		t.Errorf("BooksFinished = %d, want 1 — a paged finish counts like any finish", season.BooksFinished)
+	}
+	if season.PagesRead != 32 {
+		t.Errorf("PagesRead = %d, want the 32 turned pages", season.PagesRead)
+	}
+}

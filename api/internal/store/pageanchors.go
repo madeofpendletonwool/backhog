@@ -100,6 +100,8 @@ func (s *Store) PhysicalCopies(ctx context.Context, userID, entryID string) ([]m
 		SELECT pc.id, pc.user_id, pc.entry_id, pc.edition_id, pc.notes,
 		       pc.acquisition, pc.due_at, pc.returned_at, pc.created_at,
 		       (SELECT COUNT(*) FROM page_anchors pa WHERE pa.physical_copy_id = pc.id),
+		       (SELECT COUNT(*) FROM page_anchors pa
+		        WHERE pa.physical_copy_id = pc.id AND pa.source = 'pdf'),
 		       (e.edition_id = pc.edition_id)
 		FROM physical_copies pc
 		JOIN library_entries e ON e.id = pc.entry_id
@@ -117,7 +119,7 @@ func (s *Store) PhysicalCopies(ctx context.Context, userID, entryID string) ([]m
 		var dueAt, returnedAt sql.NullTime
 		if err := rows.Scan(&c.ID, &c.UserID, &c.EntryID, &c.EditionID,
 			&c.Notes, &c.Acquisition, &dueAt, &returnedAt, &c.CreatedAt,
-			&c.AnchorCount, &drives); err != nil {
+			&c.AnchorCount, &c.SeededCount, &drives); err != nil {
 			return nil, err
 		}
 		c.DueAt = nullTimePtr(dueAt)
@@ -293,8 +295,8 @@ func (s *Store) SavePageAnchor(ctx context.Context, userID, entryID, copyID stri
 		a.Source = models.PageAnchorSourceManual
 	}
 	if !models.ValidPageAnchorSource(a.Source) {
-		return models.PageAnchor{}, fmt.Errorf("source must be %q or %q",
-			models.PageAnchorSourceOCR, models.PageAnchorSourceManual)
+		return models.PageAnchor{}, fmt.Errorf("source must be %q, %q or %q",
+			models.PageAnchorSourceOCR, models.PageAnchorSourceManual, models.PageAnchorSourcePDF)
 	}
 	if math.IsNaN(a.Confidence) || a.Confidence < 0 || a.Confidence > 1 {
 		return models.PageAnchor{}, errors.New("confidence must be between 0 and 1")

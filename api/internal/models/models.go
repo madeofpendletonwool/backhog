@@ -1222,18 +1222,32 @@ type PDFFile struct {
 // Sources for a recorded page anchor: how the (page, char offset) pair
 // was produced. An OCR scan matched through the passage matcher carries
 // the matcher's confidence; a manual anchor is a reader saying "page 40
-// starts here", which is exact by declaration.
+// starts here", which is exact by declaration; a PDF seed is a whole map
+// lifted from a text-native PDF's own pages — nobody has looked at this
+// copy's paper, so it yields to any real scan.
 const (
 	// PageAnchorSourceOCR is a camera scan matched into the text.
 	PageAnchorSourceOCR = "ocr"
 	// PageAnchorSourceManual is a reader-typed page position.
 	PageAnchorSourceManual = "manual"
+	// PageAnchorSourcePDF is a seed written from a text-native PDF's
+	// per-page char ranges.
+	PageAnchorSourcePDF = "pdf"
 )
+
+// PageSeedConfidence is what a seed is worth as an anchor. The
+// catalogue's page count and a PDF's own pagination are real numbers, but
+// nobody has looked at the paper: front matter, plates and a different
+// leading all push the true map away from them. Low enough that any
+// scanned anchor near a seed dominates the interpolation, high enough
+// that the map is usable before the first scan. Shared by the catalogue
+// stretch and the PDF seed so the two cannot drift apart.
+const PageSeedConfidence = 0.3
 
 // ValidPageAnchorSource reports whether s is a tracked anchor source.
 func ValidPageAnchorSource(s string) bool {
 	switch s {
-	case PageAnchorSourceOCR, PageAnchorSourceManual:
+	case PageAnchorSourceOCR, PageAnchorSourceManual, PageAnchorSourcePDF:
 		return true
 	}
 	return false
@@ -1281,6 +1295,11 @@ type PhysicalCopy struct {
 	// AnchorCount is computed on list, so the copy UI can say how much of
 	// a page map exists without fetching it.
 	AnchorCount int `json:"anchor_count"`
+	// SeededCount is the PDF-seeded share of AnchorCount (source 'pdf'),
+	// computed on list. It is the provenance half of the count: "12 pages
+	// mapped" means different things when all 12 are seeds nobody has
+	// verified and when all 12 came off the reader's own paper.
+	SeededCount int `json:"seeded_count"`
 	// DrivesPages reports whether this is the copy the position endpoints
 	// read: only the printing the entry itself is anchored to feeds them.
 	// A reader who holds two printings has two maps and one of them is
@@ -1324,6 +1343,38 @@ type PageMapSeed struct {
 // book whose EPUB has not been parsed, has no seed and simply waits for
 // real anchors.
 func (s PageMapSeed) Usable() bool { return s.PageCount > 1 && s.CharCount > 0 }
+
+// PDFPage is one page of a text-native PDF: where that page's text sits
+// in the file's canonical text. The pages partition the text exactly, one
+// level finer than epub_chapters; an image-only page inside a text-native
+// file owns an empty range at the boundary. A PDF is a printing — these
+// ranges are its own page map, the exact counterpart of the paper map a
+// copy accumulates through scans.
+type PDFPage struct {
+	PageNumber int `json:"page_number"`
+	CharStart  int `json:"char_start"`
+	CharEnd    int `json:"char_end"`
+}
+
+// PDFSeedInfo says whether a copy's page map can be seeded from a
+// text-native PDF attached to the book, and how many pages that PDF
+// carries. Reason names the honest no when Available is false — no parsed
+// PDF, or a primary text the PDF's canonicalization does not match, since
+// seeds are never rescaled onto a different text.
+type PDFSeedInfo struct {
+	Available bool   `json:"available"`
+	PageCount int    `json:"page_count"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// PDFSeedResult reports one seeding run: how many pages were seeded, how
+// many were dropped because a real scan already owns that printed page,
+// and the copy's page map as it stands after the write.
+type PDFSeedResult struct {
+	Seeded  int          `json:"seeded"`
+	Skipped int          `json:"skipped"`
+	Anchors []PageAnchor `json:"anchors"`
+}
 
 // Alignment job states. The first four are the worker pipeline's live
 // positions; the last three are terminal. 'low_confidence' is a *usable*

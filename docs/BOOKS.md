@@ -449,6 +449,7 @@ The book-specific hierarchy, one table per concept:
 | `media_sidecars` | parsed `.opf` metadata | `(root, path)` UNIQUE | Replaced per root each scan; the matcher's best evidence |
 | `epub_texts` / `epub_chapters` | parsed canonical text | per media file | Only the designated primary is parsed. See above |
 | `pdf_files` | the quality gate's verdict on a PDF | per media file, UNIQUE | text-native / image-native, page count, has-text-layer. The paged model's fact source; never a text |
+| `pdf_pages` | a PDF's own pagination | `(media_file_id, page_number)` PK | Per-page `[char_start, char_end)` of a text-native PDF's canonical text — the epub_chapters precedent one level finer; replaced wholesale with each parse. The seed a paper copy's map can be grown from |
 | `book_progress` | position | entry PK | One row per entry: `char_offset` is the truth — or, flagged `position_mode: 'page'` for a book with no text, `page_index` is |
 | `reading_sessions` | consumption log | per user, per entry | `mode` ∈ read/listen; `chars_advanced`, `pages_turned` |
 | `alignment_jobs` / `alignments` / `alignment_anchors` | audio↔text map | per entry | See [alignment](#the-alignment-pipeline) |
@@ -670,15 +671,39 @@ The flow, from a phone:
    the next scan, so the map self-heals instead of accumulating
    contradictions.
 
-The map is **seeded before the first scan**: the printing's own page
-count (from the edition metadata) stretches page 1 across the start of
-the text and the last page across the end, at a deliberately low
-confidence (0.3 — a real catalogue number, but nobody has looked at
-the paper). That is enough to answer "roughly where am I in the
-paperback" the day a copy is registered, and every real scan lands
-inside it and tightens the segments it falls between; a seed that
-would contradict a real scan is dropped, because the catalogue being
-wrong and the reader being right is exactly the case.
+The map is **seeded before the first scan**, from two places:
+
+- **The catalogue stretch.** The printing's own page count (from the
+  edition metadata) stretches page 1 across the start of the text and the
+  last page across the end, at a deliberately low confidence (0.3 — a
+  real catalogue number, but nobody has looked at the paper). That is
+  enough to answer "roughly where am I in the paperback" the day a copy
+  is registered, and every real scan lands inside it and tightens the
+  segments it falls between; a seed that would contradict a real scan is
+  dropped, because the catalogue being wrong and the reader being right
+  is exactly the case.
+- **The PDF seed** — *a PDF is a printing.* A text-native PDF's parse
+  yields exact per-page char ranges (`pdf_pages`, one level finer than
+  the chapters), and a "seed from PDF" action on a copy writes those
+  ranges as `page_anchors` rows: per-page text density known, not
+  stretched. The confidence is the same 0.3 class — the PDF's page N and
+  *this* printing's page N are usually offset by front matter, so the
+  slope is trustworthy and the intercept is not. The honesty rules match
+  the stretch's exactly: seeds yield to any real scan (a scan overwrites
+  its page's seed through the composite PK; a seed arriving on a scanned
+  page is dropped, never stacked), re-seeding replaces yesterday's seeds
+  wholesale so a re-parse can't leave stale offsets behind, and the
+  anchor's `source: 'pdf'` provenance is never presented as a scan — the
+  copy panel says "seeded from the PDF, unscanned" until paper
+  contradicts it.
+
+  The offsets are the *PDF's* canonical text's, so the seed writes only
+  when that text is the one the book's page anchors are measured against:
+  the PDF is the primary, or a sibling canonicalizing to the same
+  `normalized_sha256` (the converted-pair common case). A different text
+  is refused outright — rescaling a whole map onto another
+  canonicalization is exactly the plausible-wrong-answer move this arena
+  exists to prevent, and no rescale path exists to abuse.
 
 ### Why the error bar is always shown
 
@@ -828,7 +853,10 @@ a third container parser: it inventories in the text-side kind with its
 Info/XMP metadata feeding the matcher, parses through
 `internal/books/pdf` into the same canonical text, and gets the whole
 arena — reader, search, passage matching, alignment eligibility —
-unchanged. An **image-native** PDF (comics, manga, picture books, scans)
+unchanged. Its parse also records the file's own per-page char ranges
+(`pdf_pages`), because a PDF is a printing: those ranges are what seeds
+a paper sibling's page map (see [page anchors](#the-page-anchor-map)).
+An **image-native** PDF (comics, manga, picture books, scans)
 has no text layer to trust, so the parser's quality gate classifies it
 at parse time, the ingester refuses it a canonical text with a named
 label, and the persisted verdict routes it onto the paged position
@@ -890,7 +918,7 @@ handoff degrades, by asking the user to say where they were.
 | `POST/GET/DELETE /api/books/{entryID}/align` | alignment enqueue / status / delete |
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
 | `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode |
-| `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages` | physical copies (owned + borrowed) + page anchors |
+| `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages`, `POST …/copies/{copyID}/seed-from-pdf` | physical copies (owned + borrowed) + page anchors (scanned, pinned, or seeded from a text-native PDF) |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |
 
 ---

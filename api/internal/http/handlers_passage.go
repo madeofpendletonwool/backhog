@@ -156,7 +156,10 @@ func (s *Server) handleCreateBookCopy(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListBookCopies lists the caller's printings for one entry, each
-// with a count of its recorded page anchors.
+// with a count of its recorded page anchors, and says whether the page
+// map can be seeded from a text-native PDF attached to the book — the
+// offer the copy panel turns into a button. The seed answer is a fact to
+// display, not an error: most books own no PDF.
 func (s *Server) handleListBookCopies(w http.ResponseWriter, r *http.Request) {
 	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
@@ -171,7 +174,16 @@ func (s *Server) handleListBookCopies(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"copies": copies})
+	info, err := s.store.PDFSeedInfo(r.Context(), userID, entryID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fail(w, errNotFound)
+			return
+		}
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"copies": copies, "pdf_seed": info})
 }
 
 // parseCopyDueDate reads a due date from a raw PATCH body: a string the
@@ -361,7 +373,9 @@ type pageAnchorRequest struct {
 // re-scan of the same page corrects it rather than conflicting with it.
 // The offset is validated against the canonical text — an anchor into
 // nowhere would silently corrupt every interpolation over it — so the
-// text is parsed on demand here too.
+// text is parsed on demand here too. A 'pdf' source is refused: seeds
+// are the seed endpoint's to write, and a client marking its own pin as
+// one would put a scanned page's provenance on display.
 func (s *Server) handleSaveBookPageAnchor(w http.ResponseWriter, r *http.Request) {
 	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
 	if !ok {
@@ -377,6 +391,11 @@ func (s *Server) handleSaveBookPageAnchor(w http.ResponseWriter, r *http.Request
 	var body pageAnchorRequest
 	if err := decode(r, &body); err != nil {
 		fail(w, err)
+		return
+	}
+	if body.Source == models.PageAnchorSourcePDF {
+		fail(w, errorf(http.StatusBadRequest,
+			"source 'pdf' is written by seeding, not by a pin; scan or type the page instead"))
 		return
 	}
 	if body.CharOffset > et.CharCount {
@@ -403,6 +422,38 @@ func (s *Server) handleSaveBookPageAnchor(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"anchor": anchor})
+}
+
+// handleSeedBookCopyFromPDF grows one copy's page map from a text-native
+// PDF's own per-page ranges — a printing seeding a printing. The seeds
+// land at the catalogue stretch's confidence class and yield to any real
+// scan (pages a scan already owns are skipped on arrival); a PDF whose
+// canonical text differs from the book's primary is refused whole, never
+// rescaled.
+func (s *Server) handleSeedBookCopyFromPDF(w http.ResponseWriter, r *http.Request) {
+	userID, entryID, _, _, ok := s.bookEntryOwned(w, r)
+	if !ok {
+		return
+	}
+	copyID := chi.URLParam(r, "copyID")
+
+	res, err := s.store.SeedPageAnchorsFromPDF(r.Context(), userID, entryID, copyID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, errNotFound)
+		return
+	case errors.Is(err, store.ErrNoPDFPageRanges), errors.Is(err, store.ErrPDFSeedTextMismatch):
+		fail(w, errorf(http.StatusUnprocessableEntity, err.Error()))
+		return
+	case err != nil:
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"seeded":  res.Seeded,
+		"skipped": res.Skipped,
+		"anchors": res.Anchors,
+	})
 }
 
 // handleListBookCopyPages lists one copy's page map by page number.

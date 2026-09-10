@@ -343,7 +343,7 @@ func TestChapterPartitionProperty(t *testing.T) {
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
-			canonical, _, chapters, index := Canonicalize(doc)
+			canonical, _, chapters, index, _ := Canonicalize(doc)
 			assertContiguous(t, chapters, len(canonical))
 			if index.CharCount != len(canonical) {
 				t.Errorf("index char count %d != %d", index.CharCount, len(canonical))
@@ -385,7 +385,7 @@ func TestResolveMidBlock(t *testing.T) {
 	doc := &epub.Document{Docs: []epub.Doc{
 		{Href: "a.xhtml", Blocks: []string{"alpha beta gamma", "delta"}},
 	}}
-	canonical, _, _, index := Canonicalize(doc)
+	canonical, _, _, index, _ := Canonicalize(doc)
 	if canonical != "alpha beta gamma delta" {
 		t.Fatalf("canonical = %q", canonical)
 	}
@@ -558,7 +558,7 @@ func TestCanonicalizeAnchorsImages(t *testing.T) {
 		},
 	}}}
 
-	_, _, _, index := Canonicalize(doc)
+	_, _, _, index, _ := Canonicalize(doc)
 	if got := len(index.Documents[0].Blocks); got != 2 {
 		t.Fatalf("canonical blocks = %d, want 2", got)
 	}
@@ -1024,5 +1024,115 @@ func TestPassageMatchingOverPDFText(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("matched span = %q (offset %d), missing %q", got, res.Match.CharOffset, want)
 		}
+	}
+}
+
+// A PDF is a printing: the parse persists its own per-page ranges, the
+// page-map seed's raw material. The four pages of the prose fixture must
+// partition [0, char_count) exactly — the invariant-7 property one level
+// finer than chapters — and no other format may grow page rows.
+func TestPDFPageRangesPersisted(t *testing.T) {
+	st := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "books")
+	ing, err := NewIngester(st, filepath.Join(t.TempDir(), "epub_text"))
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+
+	file := insertBookFile(t, st, root, "book.pdf", fixtures.BuildProsePDF())
+	et, err := ing.EnsureForMediaFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("ensure pdf: %v", err)
+	}
+	pages, err := st.PDFPagesForFile(context.Background(), file.ID)
+	if err != nil {
+		t.Fatalf("pdf pages: %v", err)
+	}
+	if len(pages) != 4 {
+		t.Fatalf("pages = %d, want the fixture's 4: %+v", len(pages), pages)
+	}
+	if pages[0].PageNumber != 1 || pages[0].CharStart != 0 {
+		t.Errorf("page 1 = %+v, want the text's very start", pages[0])
+	}
+	for i, pg := range pages {
+		if pg.PageNumber != i+1 {
+			t.Errorf("pages[%d].PageNumber = %d, want %d", i, pg.PageNumber, i+1)
+		}
+		if pg.CharEnd < pg.CharStart {
+			t.Errorf("page %d range [%d,%d) is inverted", pg.PageNumber, pg.CharStart, pg.CharEnd)
+		}
+		if i > 0 && pg.CharStart != pages[i-1].CharEnd {
+			t.Errorf("page %d starts at %d but page %d ends at %d — not a partition",
+				pg.PageNumber, pg.CharStart, pages[i-1].PageNumber, pages[i-1].CharEnd)
+		}
+	}
+	if last := pages[len(pages)-1]; last.CharEnd != et.CharCount {
+		t.Errorf("last page ends at %d, want the text's %d", last.CharEnd, et.CharCount)
+	}
+
+	// Re-parse replaces the rows wholesale: same file, new truth, no
+	// stale offsets left behind.
+	if _, err := st.DB().Exec(`UPDATE epub_texts SET parser_version = '0' WHERE media_file_id = ?`, file.ID); err != nil {
+		t.Fatalf("age the version: %v", err)
+	}
+	if _, err := ing.EnsureForMediaFile(context.Background(), file); err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	again, err := st.PDFPagesForFile(context.Background(), file.ID)
+	if err != nil {
+		t.Fatalf("pdf pages after re-parse: %v", err)
+	}
+	if len(again) != len(pages) {
+		t.Fatalf("pages after re-parse = %d, want %d", len(again), len(pages))
+	}
+
+	// An EPUB canonicalizes to no page rows: the ranges are a fact about
+	// a printing, and a reflowable text has none.
+	epubFile := insertBookFile(t, st, root, "book.epub", fixtureNCX(t))
+	if _, err := ing.EnsureForMediaFile(context.Background(), epubFile); err != nil {
+		t.Fatalf("ensure epub: %v", err)
+	}
+	epubPages, err := st.PDFPagesForFile(context.Background(), epubFile.ID)
+	if err != nil {
+		t.Fatalf("pdf pages for epub: %v", err)
+	}
+	if len(epubPages) != 0 {
+		t.Errorf("epub grew %d page rows, want none", len(epubPages))
+	}
+}
+
+// pdfPageRanges over a synthetic per-document index: pdf:page:N hrefs map
+// one to one onto page numbers, empty pages keep their boundary range,
+// and a spine without the hrefs answers nothing.
+func TestPDFPageRangesFromPerDoc(t *testing.T) {
+	pages := pdfPageRanges([]IndexedDoc{
+		{Href: "pdf:page:1", CharStart: 0, CharEnd: 40},
+		{Href: "pdf:page:2", CharStart: 40, CharEnd: 40}, // image-only page
+		{Href: "pdf:page:3", CharStart: 40, CharEnd: 95},
+	})
+	if len(pages) != 3 {
+		t.Fatalf("pages = %d, want 3: %+v", len(pages), pages)
+	}
+	want := []models.PDFPage{
+		{PageNumber: 1, CharStart: 0, CharEnd: 40},
+		{PageNumber: 2, CharStart: 40, CharEnd: 40},
+		{PageNumber: 3, CharStart: 40, CharEnd: 95},
+	}
+	for i := range want {
+		if pages[i] != want[i] {
+			t.Errorf("pages[%d] = %+v, want %+v", i, pages[i], want[i])
+		}
+	}
+
+	if got := pdfPageRanges([]IndexedDoc{
+		{Href: "OEBPS/c1.xhtml", CharStart: 0, CharEnd: 10},
+	}); len(got) != 0 {
+		t.Errorf("epub spine grew pages: %+v", got)
+	}
+	if got := pdfPageRanges([]IndexedDoc{
+		{Href: "pdf:page:0", CharStart: 0, CharEnd: 5},
+		{Href: "pdf:page:x", CharStart: 5, CharEnd: 9},
+	}); len(got) != 0 {
+		t.Errorf("malformed page hrefs grew pages: %+v", got)
 	}
 }

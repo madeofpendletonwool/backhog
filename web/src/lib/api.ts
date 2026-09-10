@@ -25,6 +25,8 @@ import type {
   NamedRef,
   PageAnchor,
   PassageResult,
+  PDFSeedInfo,
+  PDFSeedResult,
   BookSearchResults,
   PhysicalCopy,
   PlayOrder,
@@ -595,7 +597,7 @@ export const api = {
 
   /** The printings of this book the reader holds, with their map sizes. */
   bookCopies: (entryId: string) =>
-    request<{ copies: PhysicalCopy[] }>(`/books/${entryId}/copies`),
+    request<{ copies: PhysicalCopy[]; pdf_seed: PDFSeedInfo }>(`/books/${entryId}/copies`),
 
   /**
    * Registers a printing, owned or checked out of the library. 409 means
@@ -657,6 +659,18 @@ export const api = {
     request<{ anchor: PageAnchor }>(`/books/${entryId}/copies/${copyId}/pages`, {
       method: "POST",
       body: body(anchor),
+    }),
+
+  /**
+   * Grows the printing's page map from a text-native PDF's own pages —
+   * a printing seeding a printing. Seeds land at the catalogue stretch's
+   * confidence and yield to any page a scan already owns (those come
+   * back in `skipped`). 422 means no seedable PDF, or one whose text
+   * doesn't match the book's primary — never rescaled.
+   */
+  seedBookCopyFromPDF: (entryId: string, copyId: string) =>
+    request<PDFSeedResult>(`/books/${entryId}/copies/${copyId}/seed-from-pdf`, {
+      method: "POST",
     }),
 };
 

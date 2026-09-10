@@ -22,7 +22,7 @@ func filler(n int) string { return strings.Repeat("word ", n) }
 // "title|source".
 func grouped(t *testing.T, d *epub.Document) []string {
 	t.Helper()
-	_, _, chapters, index := Canonicalize(d)
+	_, _, chapters, index, _ := Canonicalize(d)
 	if len(chapters) != len(index.Documents) {
 		t.Fatalf("chapters %d != index documents %d", len(chapters), len(index.Documents))
 	}

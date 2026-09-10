@@ -56,8 +56,10 @@ func (a alignmentAnchors) AudioAnchors(ctx context.Context, entryID string) ([]p
 // has looked at the paper: front matter, plates and a different leading
 // all push the true map away from the straight line between the covers.
 // Low enough that any scanned anchor near it dominates the interpolation,
-// high enough that the map is usable before the first scan.
-const pageSeedConfidence = 0.3
+// high enough that the map is usable before the first scan. The PDF seed
+// writes its rows at the same value — see models.PageSeedConfidence, the
+// one definition both share.
+const pageSeedConfidence = models.PageSeedConfidence
 
 func (a alignmentAnchors) PageAnchors(ctx context.Context, entryID string) ([]position.Anchor, error) {
 	stored, err := a.store.PageAnchorsForEntry(ctx, entryID)

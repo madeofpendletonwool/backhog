@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
@@ -38,6 +39,12 @@ const indexVersion = 2
 type Ingester struct {
 	store *store.Store
 	dir   string
+
+	// The paged reader's open extraction contexts (pages.go): a small LRU
+	// of validated pdfcpu sources keyed by media file id.
+	pageMu      sync.Mutex
+	pageSources map[int64]*pdf.PageSource
+	pageOrder   []int64
 }
 
 // NewIngester creates the companion-file directory alongside the database.
@@ -551,7 +558,7 @@ func (ing *Ingester) persistPDFClassification(ctx context.Context, f models.Medi
 		// be able to write it past the schema's CHECK by accident.
 		class = models.PDFImageNative
 	}
-	return ing.store.ReplacePDFFile(ctx, models.PDFFile{
+	pf, err := ing.store.ReplacePDFFile(ctx, models.PDFFile{
 		MediaFileID:    f.ID,
 		Classification: class,
 		PageCount:      res.PageCount,
@@ -559,6 +566,13 @@ func (ing *Ingester) persistPDFClassification(ctx context.Context, f models.Medi
 		Reason:         res.Reason,
 		ParserVersion:  ParserVersion,
 	})
+	if err != nil {
+		return models.PDFFile{}, err
+	}
+	// The row id is stable across re-classifications, so the old parse's
+	// page companions are stale the moment the new verdict lands.
+	ing.clearPageCompanions(pf.ID)
+	return pf, nil
 }
 
 // resolveWithinRoot joins a media file's root-relative path and verifies

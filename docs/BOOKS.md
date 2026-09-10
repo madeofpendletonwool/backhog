@@ -342,7 +342,77 @@ everything; otherwise percent-recompute and anchor scaling) are
 untouched.
 
 The paged *reader* — serving page images, page-turn UI, peek-to-page — is
-the stage-2 reader task; this model is the keystone it stands on.
+the next section.
+
+---
+
+## The paged reader
+
+Reading a comic is turning pages, and the two candidate ways to put a PDF's
+pages on a screen were evaluated and decided:
+
+**(a) Companion page images — chosen.** The page's embedded image XObject
+is extracted in the API and served as an ordinary raster; the reader is
+plain `<img>` elements. Extraction is **lazy, one page at a time**: the
+first request for a page decodes it and writes a companion file beside the
+canonical texts (`{pdf-file-id}.page-N.png|jpg`, the `ingest.go`
+companion pattern), and every later request is a disk read. Lazy is what
+bounds the disk — a companion exists only for a page someone actually
+looked at, and a comic read cover to cover costs at most roughly its own
+image payload once, never a multiple of it.
+
+**(b) Vendored PDF.js — declined, for now.** Streaming the raw file and
+rasterizing in the browser would render vector pages and cost no companion
+disk, but it ships a multi-megabyte vendored web dependency, moves the
+reading surface onto canvas code we do not own, and abandons the
+asset-endpoint containment model every other byte of a book flows through.
+The Tesseract-WASM vendoring precedent made it defensible; nothing in real
+libraries has yet made it necessary. The measured tradeoff under (a): the
+web bundle carries no new dependency and grows only by the reader
+component itself (+8.3 kB minified, +1.8 kB gzipped over the pre-paged
+build), and the cost is the named refusals below.
+
+pdfcpu does the extraction (`internal/books/pdf/pages.go`): it already
+reads outlines (the TOC half of stage 1) and it is the one pure-Go
+implementation that handles the real filter zoo — Flate, LZW, CCITT, DCT
+with SMask compositing, colorspace conversion. A bitmap source re-encodes
+as PNG; a DCT page passes through as its original JPEG bytes. The
+whole-file validate+optimize pdfcpu wants happens once per file per
+process (a four-entry LRU of open extraction contexts in the ingester);
+each page after that is a single decode. Invariant 4 holds — pure Go, no
+CGO, nothing new in the distroless image.
+
+**Refusals named, never broken images.** Vector-only PDFs — pages of
+drawings with no embedded images — cannot be served under (a), and a file
+with zero image-bearing pages is refused whole (the `.kfx` honesty). A
+*mixed* file opens; its image-less pages each render a labeled panel, as
+do pages whose codec a browser cannot render (JPX, JBIG2, TIFF). A
+multi-image page serves its **largest** image by pixel area — right for a
+scan or a comic plate, one slice short for a genuinely sliced page; full
+compositing would need content-stream placement tracking and has
+deliberately not been built.
+
+**The endpoints.** `GET /books/{entry}/pages` is the manifest — the
+classified page count plus every page's image shape from stub lookups, so
+"page N of M" and every placeholder are honest before any image bytes are
+paid for. `GET /books/{entry}/pages/{page}` is one raster through the
+asset-endpoint pattern (`handlers_epub.go`): authenticated per request,
+path-contained, ETagged, cached hard and private, sandboxed. An entry is
+dispatched by its classification, not its extension — `position_mode:
+"page"` opens the paged reader; a text-native PDF (even one whose pages
+are full of art) stays in the scrolled reader, and a paged book never
+enters a text-mode code path.
+
+**The reading rules.** Discrete page turns map one-to-one onto the paged
+model's position put — turn events write `page_index`, no
+scroll-percentage arithmetic anywhere. The position restores on reopen and
+on a second device exactly like the text reader's offset, because it is
+the same one-row store. And the MAD-441 peek rule holds on the page axis:
+`?page=N&peek=1` lands on a page view without a single position write —
+not the landing, not the checkpoint, not the leaving beacon — until the
+reader deliberately ends it. Re-classifying a file clears its page
+companions (a stale page image is a plausible-wrong answer with a
+filename).
 
 ---
 
@@ -814,6 +884,7 @@ handoff degrades, by asking the user to say where they were.
 | `GET/POST /api/books/{entryID}/files`, `DELETE …/files/{fileID}` | attach / detach EPUB & audio (the GET also carries the book's `audio_editions`) |
 | `PUT /api/books/{entryID}/files/{fileID}/primary`, `PUT …/audio-editions/{editionID}/primary` | choose the canonical text / the audiobook that plays |
 | `GET /api/books/{entryID}/text[/chapters\|/display\|/asset]` | canonical text ranged reads |
+| `GET /api/books/{entryID}/pages`, `GET …/pages/{page}` | the paged reader: page manifest + page rasters (image-native PDFs) |
 | `GET /api/books/{entryID}/audio`, `GET …/audio/{trackID}` | timeline + track bytes (Range) |
 | `GET/PUT /api/books/{entryID}/position`, `GET/POST …/sessions` | the one position, and reading sessions — in text mode (char offset) or page mode (page index of a paged book) |
 | `POST/GET/DELETE /api/books/{entryID}/align` | alignment enqueue / status / delete |

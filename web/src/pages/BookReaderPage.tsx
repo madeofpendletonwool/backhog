@@ -10,7 +10,7 @@ import { useAudioClock, useAudioPlayer } from "@/hooks/useAudioPlayer";
 import { useBook, useBookEntry } from "@/hooks/useBooks";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { useTheme, type Theme } from "@/hooks/useTheme";
-import { ApiError, api, beaconBookPosition, bookAssetUrl } from "@/lib/api";
+import { ApiError, api, beaconBookPosition, bookAssetUrl, bookPageImageUrl } from "@/lib/api";
 import {
   blockIndexAt,
   chapterAt,
@@ -35,34 +35,9 @@ import type {
 } from "@/lib/types";
 
 /**
- * The in-app EPUB reader — the other half of the reading/listening handoff.
- *
- * **Scrolled, not paginated, and deliberately.** The truth about where you
- * are is a canonical character offset, and a scrolled column keeps the
- * mapping from screen to offset direct: every paragraph is a real element
- * carrying its own offset, so "where am I" is a `getBoundingClientRect` and
- * "put me back" is a `scrollTo`. Pagination would need a measuring engine
- * that re-flows the whole book on every font-size, margin and viewport
- * change, and it would still have to fall back to offsets to say anything
- * about position — the pages would be a lossy view over the same number.
- * Scrolling gets the acceptance criteria for free: change the type and the
- * paragraph you were on is still the paragraph you are on.
- *
- * **Nothing here parses EPUB markup.** The server hands over two parallel
- * things: the canonical block offsets and the same blocks as prose. Both are
- * plain strings that become React text nodes — there is no
- * `dangerouslySetInnerHTML` on this page and no HTML from a book ever
- * reaches the DOM, so a book carrying `<script>` has nothing to run and a
- * book carrying `onclick=` has nothing to attach to. Illustrations are the
- * one thing with an address, and the address is always ours: the parser
- * drops remote, protocol-relative and `data:` references at ingest,
- * `isInternalHref` refuses them again here, and the bytes come from our own
- * authenticated asset endpoint. Design invariant 5 holds by construction.
- *
- * **Typography.** Body text of a book is long-form prose, so it uses a real
- * reading face — never Silkscreen, which is for labels and numbers. The
- * chrome around the column is the app's; the column itself is its own
- * high-contrast reading surface (see SURFACES).
+ * The in-app book reader: the scrolled column for prose (ScrolledReader,
+ * below) and the paged view for comics, manga and scans (PagedReader) —
+ * see Reader for how an entry picks its half.
  */
 export function BookReaderPage() {
   const { entryId } = useParams<{ entryId: string }>();
@@ -215,7 +190,60 @@ const FACES: Record<FaceName, { label: string; stack: string }> = {
   },
 };
 
+/**
+ * The reader route's front door. Which reader opens is a property of the
+ * entry's classification, not its file extension: an image-native PDF
+ * primary answers `position_mode: "page"` and reads as pages; every other
+ * book — EPUB, MOBI, a text-native PDF even when its pages are full of
+ * art — reads in the scrolled reader below.
+ *
+ * The position query is the dispatch, and the text fetch deliberately waits
+ * for it: hitting the text endpoints on a paged book would pay for a full
+ * quality-gate parse only to be refused by name, and one cheap position
+ * read buys the right door on the first try.
+ */
 function Reader({ entry }: { entry: BookEntry }) {
+  const position = useQuery({
+    queryKey: ["bookPosition", entry.id],
+    queryFn: () => api.bookPosition(entry.id),
+  });
+
+  if (position.data?.position_mode === "page") return <PagedReader entry={entry} />;
+  if (position.isLoading) return <ReaderSkeleton />;
+  return <ScrolledReader entry={entry} />;
+}
+
+/**
+ * The scrolled reader — the text half of the reading/listening handoff.
+ *
+ * **Scrolled, not paginated, and deliberately.** The truth about where you
+ * are is a canonical character offset, and a scrolled column keeps the
+ * mapping from screen to offset direct: every paragraph is a real element
+ * carrying its own offset, so "where am I" is a `getBoundingClientRect` and
+ * "put me back" is a `scrollTo`. Pagination would need a measuring engine
+ * that re-flows the whole book on every font-size, margin and viewport
+ * change, and it would still have to fall back to offsets to say anything
+ * about position — the pages would be a lossy view over the same number.
+ * Scrolling gets the acceptance criteria for free: change the type and the
+ * paragraph you were on is still the paragraph you are on.
+ *
+ * **Nothing here parses EPUB markup.** The server hands over two parallel
+ * things: the canonical block offsets and the same blocks as prose. Both are
+ * plain strings that become React text nodes — there is no
+ * `dangerouslySetInnerHTML` on this page and no HTML from a book ever
+ * reaches the DOM, so a book carrying `<script>` has nothing to run and a
+ * book carrying `onclick=` has nothing to attach to. Illustrations are the
+ * one thing with an address, and the address is always ours: the parser
+ * drops remote, protocol-relative and `data:` references at ingest,
+ * `isInternalHref` refuses them again here, and the bytes come from our own
+ * authenticated asset endpoint. Design invariant 5 holds by construction.
+ *
+ * **Typography.** Body text of a book is long-form prose, so it uses a real
+ * reading face — never Silkscreen, which is for labels and numbers. The
+ * chrome around the column is the app's; the column itself is its own
+ * high-contrast reading surface (see SURFACES).
+ */
+function ScrolledReader({ entry }: { entry: BookEntry }) {
   const queryClient = useQueryClient();
   const player = useAudioPlayer();
   // The work read carries the printings, which is where a page count lives.
@@ -1073,6 +1101,475 @@ function Reader({ entry }: { entry: BookEntry }) {
   );
 }
 
+/**
+ * The paged reader — the reading experience for books that are pages, not
+ * prose: comics, manga, picture books, scans. Where the scrolled reader's
+ * truth is a character offset, this one's is a page index, and the two are
+ * never translated between (the paged model's rule).
+ *
+ * **Discrete page turns, not a scroll.** A turn is an event that maps
+ * one-to-one onto the stored position — no IntersectionObserver arithmetic,
+ * no scroll-percentage mush — and the pages themselves are the book's own
+ * embedded images, extracted by the API and served from our origin (the
+ * asset endpoint's rules: authenticated per request, never a capability in
+ * the URL). Nothing renders but `<img>`: no PDF.js, no canvas, no
+ * third-party anything, so the reader stays ours and the bundle stays put.
+ *
+ * **The peek rule holds here too.** `?page=N&peek=1` lands on a page view
+ * without a single position write — not the turn, not the checkpoint, not
+ * the leaving beacon — until the reader deliberately ends it (turn, or the
+ * banner's two ways out), exactly the contract the text reader's peek
+ * carries. A jump without `peek` is a deliberate move and reads from there.
+ *
+ * **Honest refusals.** A page the manifest calls image-less, or whose image
+ * fails to load (a codec a browser cannot render), is a labeled panel —
+ * never a broken image, never a silent blank.
+ */
+function PagedReader({ entry }: { entry: BookEntry }) {
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // The reading surface is shared with the scrolled reader — the paper the
+  // page art sits on — so a reader's chosen paper follows them between the
+  // two readers.
+  const [stored] = usePersistentState<ReaderPrefs>("backhog:reader", DEFAULT_PREFS);
+  const prefs = migratePrefs(stored);
+  const { theme } = useTheme();
+
+  const position = useQuery({
+    queryKey: ["bookPosition", entry.id],
+    queryFn: () => api.bookPosition(entry.id),
+  });
+  const pages = useQuery({
+    queryKey: ["bookPages", entry.id],
+    queryFn: () => api.bookPages(entry.id),
+    staleTime: Infinity, // a parsed book does not change while you read it
+    retry: false,
+  });
+
+  const pageCount = pages.data?.page_count ?? position.data?.page_count ?? 0;
+
+  // Two kinds of arrival land as ?page=N: a deliberate jump, and a
+  // page-targeted look (?page=N&peek=1) — the shape a future OCR search
+  // hit will send. Consumed from the URL and stripped the moment they land.
+  const requestedPageParam = searchParams.get("page");
+  const requestedPage =
+    requestedPageParam !== null &&
+    Number.isFinite(Number(requestedPageParam)) &&
+    Number(requestedPageParam) >= 0
+      ? Math.floor(Number(requestedPageParam))
+      : null;
+  const requestedPeek = searchParams.get("peek") === "1";
+
+  const [peek, setPeek] = useState(false);
+  const peekRef = useRef(false);
+  const beginPeek = useCallback(() => {
+    peekRef.current = true;
+    setPeek(true);
+  }, []);
+  const endPeek = useCallback(() => {
+    peekRef.current = false;
+    setPeek(false);
+  }, []);
+
+  /** Where the reader is. A ref because writes read it from closures. */
+  const pageRef = useRef(0);
+  /** null until the restore has landed — nothing renders or writes before. */
+  const [page, setPage] = useState<number | null>(null);
+  const restoredRef = useRef(false);
+  const writtenRef = useRef<number | null>(null);
+  /** An image that failed to load on the current page (named refusal). */
+  const [broken, setBroken] = useState(false);
+
+  const clamp = useCallback(
+    (p: number) => Math.min(Math.max(p, 0), Math.max(0, pageCount - 1)),
+    [pageCount],
+  );
+
+  // --- reporting where you are -----------------------------------------
+  const save = useCallback(
+    (p: number) => {
+      writtenRef.current = p;
+      api
+        .putBookPosition(entry.id, { page_index: p, source: "read" })
+        .then((result) => queryClient.setQueryData(["bookPosition", entry.id], result.position))
+        .catch(() => {
+          writtenRef.current = null;
+        });
+    },
+    [entry.id, queryClient],
+  );
+
+  const flush = useCallback(() => {
+    if (peekRef.current) return;
+    if (!restoredRef.current) return;
+    if (pageRef.current === writtenRef.current) return;
+    save(pageRef.current);
+  }, [save]);
+
+  // The checkpoint cadence, plus the unmount flush — leaving the reader is
+  // itself a checkpoint, the scrolled reader's rule.
+  useEffect(() => {
+    const id = window.setInterval(flush, WRITE_EVERY_MS);
+    return () => {
+      window.clearInterval(id);
+      flush();
+    };
+  }, [flush]);
+
+  // A closing tab gets the beacon — the only write a browser promises to
+  // finish on the way out, and a peeked page is still only a look.
+  useEffect(() => {
+    const leave = () => {
+      if (peekRef.current) return;
+      if (!restoredRef.current) return;
+      if (pageRef.current === writtenRef.current) return;
+      writtenRef.current = pageRef.current;
+      beaconBookPosition(entry.id, { page_index: pageRef.current, source: "read" });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") leave();
+    };
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [entry.id]);
+
+  /** A deliberate move to a page: any peek it interrupts is over. */
+  const goTo = useCallback(
+    (next: number) => {
+      const at = clamp(next);
+      endPeek();
+      pageRef.current = at;
+      setPage(at);
+    },
+    [clamp, endPeek],
+  );
+
+  // --- opening the book ------------------------------------------------
+  // The stored page restores exactly; a ?page= overrides it exactly once.
+  useEffect(() => {
+    if (page !== null || pageCount === 0) return;
+    if (!position.data && !position.isError) return;
+    const home = position.data?.page_index ?? 0;
+    const at = requestedPage !== null ? clamp(requestedPage) : home;
+    pageRef.current = at;
+    restoredRef.current = true;
+    setPage(at);
+    if (requestedPage !== null) {
+      setSearchParams({}, { replace: true });
+      if (requestedPeek) beginPeek();
+    }
+  }, [
+    beginPeek,
+    clamp,
+    page,
+    pageCount,
+    position.data,
+    position.isError,
+    requestedPage,
+    requestedPeek,
+    setSearchParams,
+  ]);
+
+  // A jump landing while the book is already open moves straight to the
+  // page instead of waiting for a reopen — the scrolled reader's rule, on
+  // the page axis.
+  useEffect(() => {
+    if (requestedPage === null || page === null) return;
+    goTo(requestedPage);
+    setSearchParams({}, { replace: true });
+    if (requestedPeek) beginPeek();
+  }, [beginPeek, goTo, page, requestedPage, requestedPeek, setSearchParams]);
+
+  // A failed image is a named refusal for this page only; it resets with
+  // the page.
+  useEffect(() => {
+    setBroken(false);
+  }, [page]);
+
+  /** A page turn: deliberate by construction, so it ends a peek and writes. */
+  const turn = useCallback(
+    (delta: number) => {
+      const next = clamp(pageRef.current + delta);
+      endPeek();
+      pageRef.current = next;
+      setPage(next);
+      // Turn events are the position put — the honest progress signal.
+      if (restoredRef.current && next !== writtenRef.current) save(next);
+    },
+    [clamp, endPeek, save],
+  );
+
+  // --- keyboard ----------------------------------------------------------
+  // The scrolled reader leaves scrolling to the browser; a page reader has
+  // no scroll, so the same keys that would scroll now turn pages.
+  useEffect(() => {
+    if (page === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable) return;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      switch (event.key) {
+        case "ArrowRight":
+        case "ArrowDown":
+        case "PageDown":
+        case " ":
+          event.preventDefault();
+          turn(1);
+          break;
+        case "ArrowLeft":
+        case "ArrowUp":
+        case "PageUp":
+          event.preventDefault();
+          turn(-1);
+          break;
+        case "Home":
+          event.preventDefault();
+          goTo(0);
+          break;
+        case "End":
+          event.preventDefault();
+          goTo(pageCount - 1);
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goTo, page, pageCount, turn]);
+
+  // The next page is one turn away by definition; ask the browser for it
+  // now so the turn is instant on a slow link.
+  useEffect(() => {
+    if (page === null) return;
+    const next = page + 1;
+    if (next < pageCount) {
+      const img = new Image();
+      img.src = bookPageImageUrl(entry.id, next);
+    }
+  }, [entry.id, page, pageCount]);
+
+  // --- the states before the pages --------------------------------------
+  if (pages.isLoading || (pages.isSuccess && page === null)) return <ReaderSkeleton />;
+  if (pages.error) return <PagedReaderProblem entry={entry} error={pages.error} />;
+
+  const surface = SURFACES[resolveSurface(prefs.surface, theme)];
+  const pageInfo = pages.data?.pages[page ?? 0] ?? null;
+  const livePage = page ?? 0;
+  // The server's convention: page one is 0%, the last page is 100% — the
+  // page you are ON over the reading span, like the char axis's offset.
+  const percent = pageCount > 1 ? (livePage / (pageCount - 1)) * 100 : 0;
+  const storedPage = position.data?.page_index ?? null;
+  const storedPercent = position.data ? Math.round(position.data.percent) : null;
+
+  const backToMyPlace = () => goTo(position.data?.page_index ?? 0);
+
+  return (
+    <div style={{ background: surface.bg, color: surface.fg }} className="min-h-screen">
+      <div
+        className="sticky top-16 z-20 border-b backdrop-blur lg:top-0"
+        style={{ borderColor: surface.rule, background: `${surface.bg}f2` }}
+      >
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 px-4 py-2.5 sm:px-6">
+          <Link
+            to={`/books/${entry.id}`}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg text-sm transition-opacity hover:opacity-70 focus-visible:focus-ring"
+            style={{ color: surface.muted }}
+          >
+            <Gi name="arrow-left" className="size-4" />
+            <span className="hidden sm:inline">{entry.book.title}</span>
+          </Link>
+          <span className="min-w-0 flex-1 truncate text-sm sm:hidden">{entry.book.title}</span>
+          {/* Honest progress, the paged model's own: a page number, not a
+              scroll percentage. */}
+          <span className="shrink-0 text-sm tabular-nums" style={{ color: surface.muted }}>
+            page {livePage + 1} of {pageCount}
+          </span>
+        </div>
+        <div
+          className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs sm:px-6"
+          style={{ color: surface.muted }}
+        >
+          <div className="h-1 min-w-24 flex-1 overflow-hidden rounded-full" style={{ background: surface.rule }}>
+            <div
+              className="h-full rounded-full transition-[width] duration-300"
+              style={{ width: `${percent}%`, background: surface.muted }}
+            />
+          </div>
+          <span className="shrink-0 tabular-nums">{Math.round(percent)}%</span>
+        </div>
+
+        {/* The peek banner: what a page jump means while it lasts. Its
+            numbers are the stored place, never the one on screen. */}
+        {peek && (
+          <div
+            className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 border-t px-4 py-2 text-xs sm:px-6"
+            style={{ borderColor: surface.rule, color: surface.muted }}
+          >
+            <Gi name="search" className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              Viewing page {(page ?? 0) + 1} · your place is{" "}
+              {storedPage !== null ? `page ${storedPage + 1}` : "saved"}
+              {storedPercent !== null ? ` (${storedPercent}%)` : ""}
+            </span>
+            <button
+              type="button"
+              onClick={backToMyPlace}
+              className="shrink-0 rounded-lg px-2.5 py-1 font-medium transition-opacity hover:opacity-70 focus-visible:focus-ring"
+              style={{ color: surface.fg, background: surface.rule }}
+            >
+              Back to my place
+            </button>
+            <button
+              type="button"
+              onClick={endPeek}
+              className="shrink-0 rounded-lg px-2.5 py-1 transition-opacity hover:opacity-70 focus-visible:focus-ring"
+              style={{ color: surface.fg }}
+            >
+              Read from here
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="mx-auto flex max-w-5xl flex-col items-center gap-6 px-4 pb-12 pt-6 sm:px-6">
+        {pageInfo && !pageInfo.has_image ? (
+          <PageRefusal surface={surface} label="This page is vector art or blank — the reader can only show pages that carry an image." />
+        ) : broken ? (
+          <PageRefusal surface={surface} label="This page's image uses a format the reader can't show." />
+        ) : (
+          <img
+            key={livePage}
+            src={bookPageImageUrl(entry.id, livePage)}
+            alt={`Page ${livePage + 1} of ${pageCount}`}
+            width={pageInfo?.width || undefined}
+            height={pageInfo?.height || undefined}
+            onError={() => setBroken(true)}
+            className="mx-auto h-auto max-h-[calc(100dvh-12rem)] w-auto max-w-full object-contain shadow-lg"
+            style={pageInfo?.width && pageInfo?.height ? { aspectRatio: `${pageInfo.width} / ${pageInfo.height}` } : undefined}
+          />
+        )}
+
+        <div className="flex w-full items-center justify-between gap-3 text-sm">
+          <PageStep
+            surface={surface}
+            direction="back"
+            disabled={livePage === 0}
+            onClick={() => turn(-1)}
+          />
+          <PageStep
+            surface={surface}
+            direction="forward"
+            disabled={pageCount > 0 && livePage === pageCount - 1}
+            onClick={() => turn(1)}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A labeled refusal where a page should be — honesty over a blank. */
+function PageRefusal({ surface, label }: { surface: Surface; label: string }) {
+  return (
+    <div
+      className="flex w-full max-w-md flex-col items-center gap-3 rounded-xl border px-6 py-16 text-center text-sm"
+      style={{ borderColor: surface.rule, color: surface.muted }}
+    >
+      <Gi name="film" className="size-6" />
+      <p>{label}</p>
+    </div>
+  );
+}
+
+/** One end of the page strip: a turn button with its page number. */
+function PageStep({
+  surface,
+  direction,
+  disabled,
+  onClick,
+}: {
+  surface: Surface;
+  direction: "back" | "forward";
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-opacity focus-visible:focus-ring",
+        direction === "forward" && "ml-auto",
+        disabled ? "opacity-30" : "hover:opacity-70",
+      )}
+      style={{ color: surface.muted }}
+    >
+      <Gi name="arrow-left" className="size-4" />
+      {direction === "back" ? "Previous page" : "Next page"}
+    </button>
+  );
+}
+
+/** Why there are no pages. The named refusals say what the book is. */
+function PagedReaderProblem({ entry, error }: { entry: BookEntry; error: unknown }) {
+  const status = error instanceof ApiError ? error.status : 0;
+  const message = error instanceof Error ? error.message : "Something went wrong.";
+
+  if (status === 404) {
+    return (
+      <EmptyState
+        icon={<Gi name="book-pile" className="size-7" />}
+        title="No ebook attached"
+        description="This book has no ebook attached yet, so there is nothing to read here. Attach one from the scanned files and the reader opens."
+        action={
+          <Link to="/books/files">
+            <Button variant="primary">
+              <Gi name="full-folder" className="size-3.5" />
+              Book files
+            </Button>
+          </Link>
+        }
+      />
+    );
+  }
+
+  if (status === 422) {
+    // The endpoint's named refusals — prose, vector art, DRM — are the
+    // honest answer; they are shown as spoken.
+    return (
+      <EmptyState
+        icon={<Gi name="scroll-unfurled" className="size-7" />}
+        title="This book doesn't read as pages"
+        description={message}
+        action={
+          <Link to={`/books/${entry.id}`}>
+            <Button variant="secondary">Back to the book</Button>
+          </Link>
+        }
+      />
+    );
+  }
+
+  return (
+    <EmptyState
+      icon={<Gi name="x-circle" className="size-7" />}
+      title="Couldn't open this book"
+      description={message}
+      action={
+        <Link to={`/books/${entry.id}`}>
+          <Button variant="secondary">Back to the book</Button>
+        </Link>
+      }
+    />
+  );
+}
+
 type Surface = (typeof SURFACES)[SurfaceName];
 
 /**
@@ -1383,11 +1880,15 @@ function ReaderProblem({ entry, error }: { entry: BookEntry; error: unknown }) {
   }
 
   if (status === 422) {
+    // DRM is the refusal the text side can still meet — an encrypted EPUB
+    // or PDF (an image-native PDF never gets here; the dispatch opened the
+    // paged reader instead). The server names the file type; the stance is
+    // ours.
     return (
       <EmptyState
         icon={<Gi name="lock" className="size-7" />}
-        title="This EPUB is DRM-protected"
-        description="Backhog does not break DRM. A DRM-free copy of the same book will open here without any further setup."
+        title="This book is DRM-protected"
+        description={`${message} Backhog does not break DRM; a DRM-free copy of the same book will open here without any further setup.`}
         action={
           <Link to={`/books/${entry.id}`}>
             <Button variant="secondary">Back to the book</Button>

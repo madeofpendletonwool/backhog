@@ -26,10 +26,14 @@ func (s *Store) GetEpubText(ctx context.Context, mediaFileID int64) (models.Epub
 	return et, err
 }
 
-// ReplaceEpubText writes one canonical text and its chapters atomically,
-// replacing any previous parse of the same media file (same row id, so the
-// companion files keep their names across re-parses).
-func (s *Store) ReplaceEpubText(ctx context.Context, et models.EpubText, chapters []models.EpubChapter) error {
+// ReplaceEpubText writes one canonical text, its chapters and — for a
+// text-native PDF — its per-page ranges atomically, replacing any previous
+// parse of the same media file (same row id, so the companion files keep
+// their names across re-parses). The page rows are pdfPageRanges' view of
+// the same parse, keyed by media file like the classification; nil pages
+// (every non-PDF format) clears any stale rows a format change could
+// otherwise leave behind.
+func (s *Store) ReplaceEpubText(ctx context.Context, et models.EpubText, chapters []models.EpubChapter, pdfPages []models.PDFPage) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -91,6 +95,19 @@ func (s *Store) ReplaceEpubText(ctx context.Context, et models.EpubText, chapter
 				ch.TitleSource, ch.CharStart, ch.CharEnd, ch.Depth); err != nil {
 				return fmt.Errorf("insert chapter %d: %w", ch.SpineIndex, err)
 			}
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM pdf_pages WHERE media_file_id = ?`, et.MediaFileID); err != nil {
+		return err
+	}
+	for _, pg := range pdfPages {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO pdf_pages (media_file_id, page_number, char_start, char_end)
+			VALUES (?, ?, ?, ?)`,
+			et.MediaFileID, pg.PageNumber, pg.CharStart, pg.CharEnd); err != nil {
+			return fmt.Errorf("insert pdf page %d: %w", pg.PageNumber, err)
 		}
 	}
 	return tx.Commit()

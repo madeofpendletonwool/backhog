@@ -255,6 +255,11 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/books/{entryID}/copies/{copyID}/own", s.handleOwnBookCopy)
 			r.Get("/books/{entryID}/copies/{copyID}/pages", s.handleListBookCopyPages)
 			r.Post("/books/{entryID}/copies/{copyID}/pages", s.handleSaveBookPageAnchor)
+			// A PDF is a printing: grow the map from a text-native
+			// PDF's own per-page ranges instead of waiting for scans.
+			// Seeds land at the catalogue stretch's confidence and
+			// yield to any real anchor, exactly as the stretch does.
+			r.Post("/books/{entryID}/copies/{copyID}/seed-from-pdf", s.handleSeedBookCopyFromPDF)
 
 			r.Route("/series", func(r chi.Router) {
 				r.Get("/", s.handleSeriesIndex)

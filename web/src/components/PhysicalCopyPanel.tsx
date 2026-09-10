@@ -72,6 +72,13 @@ export function PhysicalCopyPanel({
     mutationFn: (copyId: string) => api.ownBookCopy(entryId, copyId),
     onSuccess: () => invalidate(),
   });
+  // A PDF is a printing: its own pages can grow this copy's map before any
+  // scan, at seed confidence. Scans still win — a seed never evicts one —
+  // and re-seeding after a re-parse refreshes the seeds wholesale.
+  const seedFromPDF = useMutation({
+    mutationFn: (copyId: string) => api.seedBookCopyFromPDF(entryId, copyId),
+    onSuccess: () => invalidate(),
+  });
   // Re-anchoring the entry to this copy's printing. The page map itself is
   // untouched — every copy keeps its own — so this only changes which one
   // the position endpoints read, and it is reversible from the Printings
@@ -95,17 +102,23 @@ export function PhysicalCopyPanel({
   // one, and the copy below says so rather than quietly mapping nothing.
   const offered = editions;
   const copy = copies.data?.copies.find((c) => c.drives_pages) ?? copies.data?.copies[0] ?? null;
+  const pdfSeed = copies.data?.pdf_seed ?? null;
   const page = position.data?.page ?? null;
   const pageCount = editions.find((edition) => edition.page_count)?.page_count ?? null;
 
   const borrowed = copy?.acquisition === "borrowed";
   const returned = copy?.returned_at != null;
+  // The provenance split behind "N pages mapped": how many came off the
+  // reader's own paper versus seeded from the PDF, unverified.
+  const seeded = copy?.seeded_count ?? 0;
+  const scanned = copy ? copy.anchor_count - seeded : 0;
   const actionError =
     register.error ??
     giveBack.error ??
     checkOutAgain.error ??
     buyIt.error ??
     drop.error ??
+    seedFromPDF.error ??
     readThisOne.error;
 
   if (editions.length === 0) return null;
@@ -253,9 +266,17 @@ export function PhysicalCopyPanel({
               : `${copy.anchor_count} page${copy.anchor_count === 1 ? "" : "s"} mapped`}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-ink-500">
-            {copy.anchor_count === 0
-              ? "Until you scan one, page numbers are stretched evenly across the text — right to a chapter or so, no better."
-              : "Accuracy improves as you scan more."}
+            {copy.anchor_count === 0 ? (
+              pdfSeed?.available
+                ? "Until you scan one, page numbers are stretched evenly across the text — or seeded from the PDF below, which knows where its own pages sit."
+                : "Until you scan one, page numbers are stretched evenly across the text — right to a chapter or so, no better."
+            ) : seeded === 0 ? (
+              "Accuracy improves as you scan more."
+            ) : seeded === copy.anchor_count ? (
+              "Seeded from the PDF, unscanned — a real page is a guess until you scan one. Any scan corrects its page on the spot."
+            ) : (
+              `${scanned} scanned, ${seeded} seeded from the PDF — where they disagree, the scan wins.`
+            )}
           </p>
 
           <div className="mt-3 flex flex-wrap gap-2">
@@ -263,6 +284,17 @@ export function PhysicalCopyPanel({
               <Gi name="camera" className="size-3.5" />
               Scan a page
             </Button>
+            {pdfSeed?.available && (
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={seedFromPDF.isPending}
+                onClick={() => seedFromPDF.mutate(copy.id)}
+              >
+                <Gi name="sparkles" className="size-3.5" />
+                {seeded > 0 ? "Seed again from PDF" : "Seed from PDF"}
+              </Button>
+            )}
             {borrowed && !returned && (
               <Button
                 size="sm"

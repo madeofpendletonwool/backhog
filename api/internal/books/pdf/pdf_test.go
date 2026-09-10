@@ -144,7 +144,7 @@ func TestDehyphenationFrozen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	canonical, _, _, _ := books.Canonicalize(res.Doc)
+	canonical, _, _, _, _ := books.Canonicalize(res.Doc)
 	for _, want := range []string{"extraordinary", "twentythree", "mid word ordinary"} {
 		if !strings.Contains(canonical, want) {
 			t.Errorf("canonical text missing %q:\n%q", want, canonical)
@@ -271,7 +271,7 @@ func TestSpineContractAndPartition(t *testing.T) {
 
 	// The prose fixture's chapter shape: three outline-titled chapters,
 	// page four absorbed by chapter three.
-	canonical, _, chapters, index := books.Canonicalize(prose.Doc)
+	canonical, _, chapters, index, _ := books.Canonicalize(prose.Doc)
 	if len(chapters) != 3 {
 		t.Fatalf("got %d chapters, want 3: %+v", len(chapters), chapters)
 	}
@@ -289,7 +289,7 @@ func TestSpineContractAndPartition(t *testing.T) {
 // cover [0, len) exactly and concatenate back to the canonical text.
 func runPartition(t *testing.T, doc *epub.Document) {
 	t.Helper()
-	canonical, _, chapters, _ := books.Canonicalize(doc)
+	canonical, _, chapters, _, _ := books.Canonicalize(doc)
 	if len(chapters) == 0 {
 		t.Fatal("no chapters")
 	}
@@ -324,7 +324,7 @@ func TestUnnamedPDFFallsBackToPages(t *testing.T) {
 	if res.Doc.TOC.Source != "pdf-page" {
 		t.Errorf("toc source = %q, want pdf-page", res.Doc.TOC.Source)
 	}
-	_, _, chapters, _ := books.Canonicalize(res.Doc)
+	_, _, chapters, _, _ := books.Canonicalize(res.Doc)
 	if len(chapters) != 1 {
 		t.Errorf("got %d chapters, want 1 for a single page: %+v", len(chapters), chapters)
 	}

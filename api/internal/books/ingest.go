@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,7 +137,7 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 		}
 	}
 
-	canonical, display, chapters, index := Canonicalize(parsed)
+	canonical, display, chapters, index, perDoc := Canonicalize(parsed)
 	et := models.EpubText{
 		MediaFileID:      f.ID,
 		CharCount:        len(canonical),
@@ -148,7 +149,7 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 		TOCEntries:       parsed.TOC.Entries,
 		TOCError:         parsed.TOC.Err,
 	}
-	if err := ing.store.ReplaceEpubText(ctx, et, chapters); err != nil {
+	if err := ing.store.ReplaceEpubText(ctx, et, chapters, pdfPageRanges(perDoc)); err != nil {
 		return models.EpubText{}, err
 	}
 	// The row id settles in ReplaceEpubText (re-parses keep the old id);
@@ -235,7 +236,13 @@ func (ing *Ingester) LoadIndex(ctx context.Context, et models.EpubText) (*BlockI
 // what the reader puts on the page. One pass because the two must agree
 // block for block: a block dropped from one is dropped from the other, or
 // every offset the reader reports lands on the wrong paragraph.
-func Canonicalize(doc *epub.Document) (string, string, []models.EpubChapter, *BlockIndex) {
+//
+// The fifth return is the per-document index before chapters fold runs of
+// documents together — one entry per spine document, in spine order. For a
+// PDF that is one entry per page, which is the granularity the page-map
+// seed is grown from; for every other format the caller has no use for it
+// and ignores it.
+func Canonicalize(doc *epub.Document) (string, string, []models.EpubChapter, *BlockIndex, []IndexedDoc) {
 	var canonical, display strings.Builder
 	// perDoc holds one entry per spine document while the text is built.
 	// Chapters are folded out of it afterwards, because a chapter may span
@@ -330,7 +337,48 @@ func Canonicalize(doc *epub.Document) (string, string, []models.EpubChapter, *Bl
 	chapters, docs := foldChapters(doc, perDoc, textLen)
 	index.Documents = docs
 	index.CharCount = canonical.Len()
-	return canonical.String(), display.String(), chapters, index
+	return canonical.String(), display.String(), chapters, index, perDoc
+}
+
+// pdfPageHref is the href prefix the PDF parser mints for its spine — one
+// Doc per page, "pdf:page:N" in document order (pdf/layout.go). It is the
+// marker that separates "this spine's documents are pages" from an EPUB's
+// zip paths or a MOBI's fragments.
+const pdfPageHref = "pdf:page:"
+
+// pdfPageRanges lifts a PDF's per-page char ranges out of the
+// per-document index: one [CharStart, CharEnd) per page, in page order,
+// exactly partitioning the canonical text the same parse produced. Only
+// PDF spines carry the hrefs, so any other format answers nil and no page
+// rows are written for it — the ranges are a fact about a printing, not
+// about a text.
+func pdfPageRanges(perDoc []IndexedDoc) []models.PDFPage {
+	var out []models.PDFPage
+	for _, d := range perDoc {
+		n, ok := pdfPageNumber(d.Href)
+		if !ok {
+			continue
+		}
+		out = append(out, models.PDFPage{
+			PageNumber: n,
+			CharStart:  d.CharStart,
+			CharEnd:    d.CharEnd,
+		})
+	}
+	return out
+}
+
+// pdfPageNumber reads the 1-based page number off a "pdf:page:N" href.
+func pdfPageNumber(href string) (int, bool) {
+	rest, ok := strings.CutPrefix(href, pdfPageHref)
+	if !ok || rest == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // foldChapters folds the per-document index into one entry per chapter,

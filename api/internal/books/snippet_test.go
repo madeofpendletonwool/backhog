@@ -14,7 +14,7 @@ import (
 // asserted is the one Canonicalize creates.
 func snippetsOver(t *testing.T, doc *epub.Document) (string, *Snippets) {
 	t.Helper()
-	canonical, display, _, index := Canonicalize(doc)
+	canonical, display, _, index, _ := Canonicalize(doc)
 	return canonical, &Snippets{index: index, display: []byte(display)}
 }
 

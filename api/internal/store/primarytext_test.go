@@ -47,7 +47,7 @@ func seedText(t *testing.T, s *Store, fileID int64, chars int, sha string) {
 		MediaFileID: fileID, CharCount: chars, WordCount: chars / 6,
 		NormalizedSHA256: sha, ParserVersion: "2",
 	}
-	if err := s.ReplaceEpubText(context.Background(), et, nil); err != nil {
+	if err := s.ReplaceEpubText(context.Background(), et, nil, nil); err != nil {
 		t.Fatalf("seed text for %d: %v", fileID, err)
 	}
 }

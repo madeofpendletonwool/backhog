@@ -1128,6 +1128,12 @@ export interface PhysicalCopy {
   /** How many pages have been mapped; the number the copy panel reports. */
   anchor_count: number;
   /**
+   * The PDF-seeded share of anchor_count — pages mapped from the book's
+   * text-native PDF rather than scanned. The provenance half of the count:
+   * "12 pages mapped" reads differently when all 12 are unverified seeds.
+   */
+  seeded_count: number;
+  /**
    * Whether this is the copy the position endpoints read. Only the printing
    * the entry is anchored to feeds them, so a reader who holds two printings
    * has two maps and exactly one of them is what "page 214" means.
@@ -1140,9 +1146,29 @@ export interface PhysicalCopy {
 export interface PageAnchor {
   printed_page: number;
   char_offset: number;
-  source: "ocr" | "manual";
+  /** How the pair was made: a camera scan, a typed pin, or a PDF seed. */
+  source: "ocr" | "manual" | "pdf";
   confidence: number;
   created_at: string;
+}
+
+/**
+ * Whether a copy's page map can be seeded from a text-native PDF attached
+ * to the book, and with how many pages. A no is a fact to display, not an
+ * error — `reason` says which no it was (no PDF, or one whose text doesn't
+ * match the book's primary: seeds are never rescaled across texts).
+ */
+export interface PDFSeedInfo {
+  available: boolean;
+  page_count: number;
+  reason?: string;
+}
+
+/** One seeding run: pages seeded, pages a scan already owned and kept. */
+export interface PDFSeedResult {
+  seeded: number;
+  skipped: number;
+  anchors: PageAnchor[];
 }
 
 /**

@@ -412,7 +412,8 @@ the same one-row store. And the MAD-441 peek rule holds on the page axis:
 not the landing, not the checkpoint, not the leaving beacon — until the
 reader deliberately ends it. Re-classifying a file clears its page
 companions (a stale page image is a plausible-wrong answer with a
-filename).
+filename). Search hits from the [OCR lettering corpus](#the-second-corpus-ocr-lettering-search)
+arrive as exactly this peek shape.
 
 ---
 
@@ -453,6 +454,7 @@ The book-specific hierarchy, one table per concept:
 | `book_progress` | position | entry PK | One row per entry: `char_offset` is the truth — or, flagged `position_mode: 'page'` for a book with no text, `page_index` is |
 | `reading_sessions` | consumption log | per user, per entry | `mode` ∈ read/listen; `chars_advanced`, `pages_turned` |
 | `alignment_jobs` / `alignments` / `alignment_anchors` | audio↔text map | per entry | See [alignment](#the-alignment-pipeline) |
+| `ocr_jobs` / `ocr_pages` | search-only lettering corpus | per media file | The second corpus: a paged book's drawn lettering, pinned per page to the image's sha256. Never canonical; the canonical pipeline cannot load it. See [the second corpus](#the-second-corpus-ocr-lettering-search) |
 | `page_anchors` | paper↔text map | `(physical_copy_id, printed_page)` PK | See [page anchors](#the-page-anchor-map) |
 
 Two shapes worth internalising:
@@ -801,6 +803,47 @@ The mechanics, in `api/internal/books/search/`:
   TTL cache for the same reason; every endpoint that reads or writes a real
   position still loads them fresh.
 
+### The second corpus: OCR lettering search
+
+A comic or picture book has no canonical text — that is the paged model's
+whole premise — but its pages carry drawn lettering, and "which page does he
+say X on" is a question that deserves an answer. So a second, **search-only**
+corpus exists, and it never pretends to be the first one:
+
+- **The worker is the align pattern applied a second time.** Tesseract lives
+  in an optional container (`ocr/`, behind the `ocr` compose profile and its
+  own `OCR_WORKER_TOKEN`) — no OCR code enters the distroless API image, and
+  no token means the `/internal/ocr` queue answers 503 and the feature does
+  not exist. The queue itself is the alignment queue's shape: claim,
+  heartbeat, stale reclaim, one active job per media file.
+- **The worker reads pages, never the file.** Each page image streams from
+  the API's internal endpoint, which serves the exact companion-or-extract
+  bytes the paged reader serves — no second decode path exists, and the
+  worker's fetches warm the same companion cache. The image's sha256 rides
+  the response; the per-page result is stored pinned to it (`ocr_pages`,
+  keyed `(media_file_id, page_number)`), the extraction-ledger pattern: a
+  re-run skips every page whose image did not change, so unchanged pages are
+  never re-billed.
+- **Hits carry page targets, never offsets.** Search over an image-native
+  primary hits this corpus with the same two tiers (phrase, then loose),
+  per page, and answers on the page axis: a hit opens the paged reader at
+  `?page=N&peek=1`, a peek that moves nothing — the peek rule holds on the
+  page axis exactly as on the text axis.
+- **Honesty is the `low_confidence` pattern.** Coverage (pages that yielded
+  any lettering over the classified page count) and mean per-word confidence
+  are computed by the API from the corpus it owns, graded against
+  `OCR_MIN_COVERAGE` / `OCR_MIN_CONFIDENCE` (defaults 0.30 / 0.60 — judgment
+  numbers: stylized lettering is best-effort, and a sparse corpus is still
+  searchable once it says so). Below the thresholds the corpus stays usable
+  as `low_confidence` and the UI says what that means.
+- **Never eligible for the canonical pipeline.** Nothing about `ocr_pages`
+  is canonical: no `epub_texts` row can point at it, so the position axis,
+  alignment, passage matching and any knowledge layer are *structurally*
+  unable to load it — and the load-site tests pin that, not a convention.
+  A re-classified PDF drops its companions, its corpus and its queue rows
+  together (a stale page image is a plausible-wrong answer with a filename;
+  lettering read off one is the same thing one louder).
+
 ---
 
 ## Invariants
@@ -917,7 +960,8 @@ handoff degrades, by asking the user to say where they were.
 | `GET/PUT /api/books/{entryID}/position`, `GET/POST …/sessions` | the one position, and reading sessions — in text mode (char offset) or page mode (page index of a paged book) |
 | `POST/GET/DELETE /api/books/{entryID}/align` | alignment enqueue / status / delete |
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
-| `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode |
+| `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode — or, on a paged book, page targets from the lettering corpus |
+| `POST/GET/DELETE /api/books/{entryID}/ocr` | lettering enqueue / status / clear — the search-only second corpus for paged books |
 | `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages`, `POST …/copies/{copyID}/seed-from-pdf` | physical copies (owned + borrowed) + page anchors (scanned, pinned, or seeded from a text-native PDF) |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |
 
@@ -929,8 +973,10 @@ handoff degrades, by asking the user to say where they were.
 cd api && go test ./...
 cd web && npm run typecheck && npm run build
 cd align && go test ./...
+cd ocr && go test ./...
 docker compose build && docker compose up          # plain profile
-docker compose --profile align up                  # + the worker
+docker compose --profile align up                  # + the alignment worker
+docker compose --profile ocr up                    # + the lettering worker
 ```
 
 Then walk it like a stranger would: add a book by ISBN, scan the NAS,

@@ -27,7 +27,9 @@ import type {
   PassageResult,
   PDFSeedInfo,
   PDFSeedResult,
-  BookSearchResults,
+  BookSearchAny,
+  OCRJobView,
+  OCRStatusView,
   PhysicalCopy,
   PlayOrder,
   PlaySession,
@@ -568,20 +570,34 @@ export const api = {
     request<{ job: AlignmentJobView }>(`/books/${entryId}/align`, { method: "POST" }),
 
   /**
-   * Searches inside one book's text. Every hit comes back already placed in
-   * the audiobook and the printed page, because a hit *is* a canonical
-   * offset. 422 means the query was too short to answer; a query that simply
-   * matches nothing is a 200 with an empty list.
+   * Searches inside one book. A text-mode book answers in canonical
+   * offsets — every hit already placed in the audiobook and the printed
+   * page. A paged book (an image-native PDF primary) answers from its OCR
+   * lettering corpus instead: hits carry page targets and the corpus's
+   * honesty pair. 422 means the query was too short, or the lettering has
+   * not been read yet — both are answers, not failures.
    *
    * The signal is not optional in practice: this runs on a debounce while
    * somebody types, and superseded requests must be abandoned rather than
    * raced.
    */
   searchInBook: (entryId: string, q: string, signal?: AbortSignal) =>
-    request<BookSearchResults>(
+    request<BookSearchAny>(
       `/books/${entryId}/search?q=${encodeURIComponent(q)}`,
       { signal },
     ),
+
+  /** Where a paged book's lettering stands: its job, its corpus, its worker. */
+  bookOCRStatus: (entryId: string) =>
+    request<OCRStatusView>(`/books/${entryId}/ocr`),
+
+  /** Queues a lettering pass; idempotent while one is already in flight. */
+  enqueueOCR: (entryId: string) =>
+    request<{ job: OCRJobView }>(`/books/${entryId}/ocr`, { method: "POST" }),
+
+  /** Stops any in-flight lettering pass and drops the stored corpus. */
+  clearOCR: (entryId: string) =>
+    request<void>(`/books/${entryId}/ocr`, { method: "DELETE" }),
 
   // --- the paper bridge ---------------------------------------------------
   /**

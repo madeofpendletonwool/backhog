@@ -11,6 +11,8 @@ import (
 
 	"github.com/collinpendleton/backhog/api/internal/books"
 	"github.com/collinpendleton/backhog/api/internal/books/search"
+	"github.com/collinpendleton/backhog/api/internal/models"
+	"github.com/collinpendleton/backhog/api/internal/store"
 )
 
 // Search inside one book. The passage endpoint next door answers "where is
@@ -62,9 +64,43 @@ type searchHit struct {
 	Page  *pageView  `json:"page"`
 }
 
+// pageSearchHit is one match in a paged book's lettering: addressed by the
+// page index — the axis the book actually has — with the OCR reading the
+// match landed in. No offsets anywhere: a comic has no text axis to address.
+type pageSearchHit struct {
+	PageIndex int     `json:"page_index"`
+	Percent   float64 `json:"percent"`
+	// Context is the lettering as the OCR read it, split for highlighting.
+	Context books.Snippet `json:"context"`
+}
+
+// pageSearchResponse is the paged twin of searchResponse: the same two
+// tiers and honesty fields, a different axis, plus the corpus grade the
+// results stand on — stylized lettering is best-effort and the answer says
+// so rather than passing for text search.
+type pageSearchResponse struct {
+	Query string `json:"query"`
+	// Axis is always "page" here: hits address page indexes, and the
+	// client must not mistake them for offsets.
+	Axis string     `json:"axis"`
+	Mode search.Mode `json:"mode"`
+	Total int        `json:"total"`
+	// Truncated is set when Total exceeds the hits returned.
+	Truncated bool            `json:"truncated"`
+	Results   []pageSearchHit `json:"results"`
+	// Corpus grades the lettering corpus every hit came from: its state,
+	// coverage and mean confidence. Null never happens on this path — no
+	// usable corpus is a 422, not an empty answer pretending to be one.
+	Corpus *models.OCRCorpus `json:"corpus"`
+}
+
 // searchResponse is one query's answer.
 type searchResponse struct {
 	Query string `json:"query"`
+	// Axis names the position space the results address: "text" (char
+	// offsets) or "page" (page indexes of a paged book). The two answers
+	// never share a shape, and the field says which one arrived.
+	Axis string `json:"axis"`
 	// Mode is "phrase" when the book contains what was typed and "loose"
 	// when these are the closest passages instead. The client says which,
 	// rather than letting a fallback pass for an exact answer.
@@ -78,8 +114,12 @@ type searchResponse struct {
 	Alignment *alignmentView `json:"alignment"`
 }
 
-// handleSearchInBook finds a phrase in a book's canonical text:
-// GET /api/books/{entryID}/search?q=…&limit=20.
+// handleSearchInBook finds a phrase in a book: GET /api/books/{entryID}/search?q=…&limit=20.
+//
+// A text-mode book is searched in its canonical text; a paged book
+// (image-native PDF primary) is searched in its OCR lettering corpus. The
+// dispatch is the classification, never the extension — and the two answers
+// never share a shape: text hits carry offsets, page hits carry pages.
 func (s *Server) handleSearchInBook(w http.ResponseWriter, r *http.Request) {
 	userID, entryID, bookID, ok := s.bookEntry(w, r)
 	if !ok {
@@ -87,10 +127,6 @@ func (s *Server) handleSearchInBook(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.epubs == nil || s.search == nil {
 		fail(w, errorf(http.StatusServiceUnavailable, "canonical text storage unavailable"))
-		return
-	}
-	et, ok := s.ensureBookText(w, r)
-	if !ok {
 		return
 	}
 
@@ -104,8 +140,23 @@ func (s *Server) handleSearchInBook(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-
 	query := r.URL.Query().Get("q")
+
+	// The paged dispatch: an image-native PDF primary answers from the
+	// lettering corpus or is refused honestly when no worker has read it.
+	if f, ok, err := s.store.PrimaryPagedMediaFile(r.Context(), userID, entryID); err == nil && ok {
+		s.searchPagedBook(w, r, f, query, limit)
+		return
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		fail(w, err)
+		return
+	}
+
+	et, ok := s.ensureBookText(w, r)
+	if !ok {
+		return
+	}
+
 	res, err := s.search.Search(r.Context(), et.ID, et.NormalizedSHA256, query, limit)
 	switch {
 	case errors.Is(err, search.ErrTooShort):
@@ -120,6 +171,7 @@ func (s *Server) handleSearchInBook(w http.ResponseWriter, r *http.Request) {
 
 	out := searchResponse{
 		Query:     query,
+		Axis:      "text",
 		Mode:      res.Mode,
 		Total:     res.Total,
 		Truncated: res.Total > len(res.Hits),
@@ -163,6 +215,74 @@ func (s *Server) handleSearchInBook(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// searchPagedBook answers a search over a paged book's OCR lettering. The
+// corpus gate is a refusal, not an empty list: a comic the worker has not
+// read is not a comic with no matches, and the difference is the whole
+// honesty of the feature.
+func (s *Server) searchPagedBook(w http.ResponseWriter, r *http.Request, f models.MediaFile, query string, limit int) {
+	corpus, err := s.store.OCRCorpusForMediaFile(r.Context(), f.ID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if corpus.State == "" {
+		fail(w, errorf(http.StatusUnprocessableEntity,
+			"this book's lettering has not been read yet — run the OCR pass (it needs the optional OCR worker) to search inside it"))
+		return
+	}
+
+	revision, err := s.store.OCRCorpusRevision(r.Context(), f.ID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	res, err := s.pagedSearch.Search(r.Context(), f.ID, revision, query, limit)
+	if errors.Is(err, search.ErrTooShort) {
+		fail(w, errorf(http.StatusUnprocessableEntity,
+			"type a few more characters to search this book"))
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "book lettering search", "file", f.ID, "error", err)
+		fail(w, errorf(http.StatusInternalServerError, "could not search this book"))
+		return
+	}
+
+	out := pageSearchResponse{
+		Query:     query,
+		Axis:      "page",
+		Mode:      res.Mode,
+		Total:     res.Total,
+		Truncated: res.Total > len(res.Hits),
+		Results:   []pageSearchHit{},
+		Corpus:    &corpus,
+	}
+	for _, hit := range res.Hits {
+		context, ok := books.OCRSnippet(hit.Raw, hit.Start, hit.End)
+		if !ok {
+			// The index and the raw reading disagree, which the revision
+			// gate makes all but impossible; one hit fewer beats a
+			// mis-highlighted one.
+			continue
+		}
+		out.Results = append(out.Results, pageSearchHit{
+			PageIndex: hit.Page,
+			Percent:   pagePercent(hit.Page, corpus.PageCount),
+			Context:   context,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// pagePercent is the paged convention: page one is 0%, the last page 100% —
+// the page you are on over the reading span, like the char axis's offset.
+func pagePercent(page, pageCount int) float64 {
+	if pageCount > 1 {
+		return float64(page) / float64(pageCount-1) * 100
+	}
+	return 0
 }
 
 // searchViewsFor is loadBookViews behind the TTL cache. Every other caller of

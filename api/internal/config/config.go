@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -37,6 +38,19 @@ type Config struct {
 	// inert and everything else keeps working, which is the contract for
 	// a deployment that never enables alignment. Never logged.
 	AlignWorkerToken string
+	// OCRWorkerToken authenticates the optional OCR lettering worker
+	// against /internal/ocr (OCR_WORKER_TOKEN). The same contract as the
+	// alignment token, one feature over: empty means the lettering-search
+	// queue is inert and no /internal/ocr endpoint answers. Never logged.
+	OCRWorkerToken string
+	// OCRMinCoverage and OCRMinConfidence decide whether a finished
+	// lettering corpus is published 'ready' or kept and labelled
+	// 'low_confidence': the share of pages that yielded any lettering, and
+	// the mean of the reader's per-page confidence. Judgment defaults
+	// (0.30 / 0.60) — stylized lettering is best-effort by nature, and a
+	// sparse corpus is still searchable once it says so.
+	OCRMinCoverage   float64
+	OCRMinConfidence float64
 }
 
 // Load reads configuration from the environment, applying defaults.
@@ -59,6 +73,23 @@ func Load() (Config, error) {
 		c.MediaDirs = splitPaths(os.Getenv("BOOK_LIBRARY_DIR"))
 	}
 	c.AlignWorkerToken = os.Getenv("ALIGN_WORKER_TOKEN")
+	c.OCRWorkerToken = os.Getenv("OCR_WORKER_TOKEN")
+	c.OCRMinCoverage = 0.30
+	c.OCRMinConfidence = 0.60
+	if v := strings.TrimSpace(os.Getenv("OCR_MIN_COVERAGE")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || f > 1 {
+			return c, errors.New("OCR_MIN_COVERAGE must be a number between 0 and 1")
+		}
+		c.OCRMinCoverage = f
+	}
+	if v := strings.TrimSpace(os.Getenv("OCR_MIN_CONFIDENCE")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || f > 1 {
+			return c, errors.New("OCR_MIN_CONFIDENCE must be a number between 0 and 1")
+		}
+		c.OCRMinConfidence = f
+	}
 	if c.DatabasePath == "" {
 		return c, errors.New("DATABASE_PATH must not be empty")
 	}

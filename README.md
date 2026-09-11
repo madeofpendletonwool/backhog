@@ -208,6 +208,24 @@ picked back up.
 
 Everything else works without the worker — reading, listening (as its
 own timeline), tracking, page scanning, achievements, the Reading
+
+### Lettering search for comics (optional)
+
+Comics and picture books have no text — but their pages carry drawn
+lettering, and an optional OCR worker can read it into a search-only
+corpus so "which page does he say X" gets a page-targeted answer. The
+align pattern a second time: a separate container, its own profile, its
+own token.
+
+1. Generate a shared secret: `openssl rand -hex 32`
+2. Put it in `.env` as `OCR_WORKER_TOKEN=…`
+3. `docker compose --profile ocr up --build`
+4. Open a comic, "Read the lettering", then search inside it.
+
+Stylized lettering is best-effort: every book's corpus carries its
+coverage and confidence, a marginal read is labelled `low_confidence`
+and stays searchable, and OCR text never feeds positions, alignment or
+passage matching — those stay text-native only.
 Season. Alignment only unlocks the audio↔text handoff.
 
 ### Serving over HTTPS
@@ -268,6 +286,11 @@ and history; the NAS paths are blanked out of everything they can see.
 | `STEAM_API_KEY` | — | Steam Web API key; enables bulk library import |
 | `MEDIA_DIR` | — | Books: read-only library roots, colon-separated (container-side paths of the `:ro` mounts) |
 | `ALIGN_WORKER_TOKEN` | — | Shared secret for the optional alignment worker; enables the `/internal` worker API |
+| `OCR_WORKER_TOKEN` | — | Shared secret for the optional OCR lettering worker; enables `/internal/ocr` |
+| `OCR_MIN_COVERAGE` | `0.30` | Lettering: share of pages that must yield text to grade `ready` |
+| `OCR_MIN_CONFIDENCE` | `0.60` | Lettering: mean per-page confidence required to grade `ready` |
+| `OCR_TESSERACT_PSM` | `11` | OCR worker: tesseract page segmentation (11 = sparse lettering; 3 = prose scans) |
+| `OCR_LANGUAGE` | `eng` | OCR worker: tesseract language baked into the image |
 | `WHISPER_MODEL` | `base.en` | Alignment worker: which Whisper model to bake in (a build arg, not a restart) |
 | `WHISPER_THREADS` | all cores | Alignment worker: CPU threads for transcription |
 | `ALIGN_MIN_COVERAGE` | `0.80` | Alignment: fraction of the book anchors must span to publish as `ready` |
@@ -374,6 +397,7 @@ api/
     auth/               argon2id, session cookie middleware
     http/               router and handlers
 align/                   optional alignment worker (whisper.cpp + ffmpeg)
+ocr/                     optional OCR lettering worker (tesseract)
 web/
   src/
     lib/                typed API client, formatters, OCR runtime

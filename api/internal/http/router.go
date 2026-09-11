@@ -53,6 +53,9 @@ type Server struct {
 	// companion files as the passage matcher and follows the ingester into
 	// nil alongside it.
 	search *search.Searcher
+	// pagedSearch finds a phrase in a paged book's OCR lettering — the
+	// second corpus, search-only by construction. Nil alongside search.
+	pagedSearch *search.PagedSearcher
 	// searchViews caches the derivation inputs a search result is rendered
 	// through, because searching is a keystroke path and the database runs
 	// on one connection.
@@ -78,6 +81,7 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 	// it into nil on the same failure.
 	var match *passage.Matcher
 	var find *search.Searcher
+	var pagedFind *search.PagedSearcher
 	if epubs != nil {
 		ing := epubs
 		load := func(_ context.Context, textID string) (string, error) {
@@ -90,11 +94,29 @@ func NewServer(cfg config.Config, st *store.Store, provider metadata.Provider, b
 		match = passage.New(load)
 		find = search.New(load)
 	}
+	// The lettering searcher lives off the store, not the ingester's
+	// files: its corpus is ocr_pages, loaded per media file; the handler
+	// supplies the cheap revision digest that gates the cache.
+	if st != nil {
+		storeRef := st
+		pagedFind = search.NewPaged(func(ctx context.Context, mediaFileID int64) ([]search.PageText, error) {
+			rows, err := storeRef.OCRPagesForMediaFile(ctx, mediaFileID)
+			if err != nil {
+				return nil, err
+			}
+			pages := make([]search.PageText, len(rows))
+			for i, p := range rows {
+				pages[i] = search.PageText{Number: p.PageNumber, Text: p.Text}
+			}
+			return pages, nil
+		})
+	}
 	return &Server{
 		cfg: cfg, store: st, provider: provider, books: books, covers: covers,
 		steam: steam, backfill: backfill, media: mediaRunner, epubs: epubs,
 		passage:     match,
 		search:      find,
+		pagedSearch: pagedFind,
 		searchViews: newViewsCache(searchViewsTTL),
 		matcher:     media.NewMatcher(st, books),
 		anchors:     alignmentAnchors{store: st},
@@ -236,7 +258,19 @@ func (s *Server) Routes() http.Handler {
 			// query profile inverted — a few remembered words instead of a
 			// scanned page — and it answers in offsets, so every hit comes
 			// back already placed in the audiobook and the printed page.
+			// A paged book (image-native PDF primary) answers from the OCR
+			// lettering corpus instead: hits carry page targets, never
+			// offsets.
 			r.Get("/books/{entryID}/search", s.handleSearchInBook)
+
+			// The OCR lettering queue: make a comic or picture book
+			// searchable without ever pretending it has a text. Watching
+			// is open to any reader of the book; starting and clearing a
+			// run costs real time on an optional worker, so both sit
+			// behind the file-layer gate — the alignment routes' rule.
+			r.With(auth.RequireMediaManager).Post("/books/{entryID}/ocr", s.handleOCREnqueue)
+			r.Get("/books/{entryID}/ocr", s.handleOCRStatus)
+			r.With(auth.RequireMediaManager).Delete("/books/{entryID}/ocr", s.handleOCRDelete)
 
 			// The physical-copy bridge: place text read off a paper page
 			// in the canonical text, register printings of a book the
@@ -368,17 +402,32 @@ func (s *Server) Routes() http.Handler {
 		})
 	})
 
-	// The internal alignment worker API. It lives outside /api on
-	// purpose: nginx proxies exactly /api/ to this process, so nothing
-	// under /internal is reachable from the public vhost — only from
-	// the compose network, by a worker holding the shared token.
+	// The internal worker APIs. They live outside /api on purpose: nginx
+	// proxies exactly /api/ to this process, so nothing under /internal is
+	// reachable from the public vhost — only from the compose network, by
+	// a worker holding the shared token. Each worker family carries its
+	// own token, so a deployment may enable alignment, lettering search,
+	// both, or neither.
 	r.Route("/internal", func(r chi.Router) {
-		r.Use(s.requireAlignWorker)
-		r.Post("/align/claim", s.handleAlignClaim)
-		r.Post("/align/{jobID}/progress", s.handleAlignProgress)
-		r.Post("/align/{jobID}/segments", s.handleAlignSegments)
-		r.Post("/align/{jobID}/anchors", s.handleAlignAnchors)
-		r.Post("/align/{jobID}/complete", s.handleAlignComplete)
+		r.Route("/align", func(r chi.Router) {
+			r.Use(s.requireAlignWorker)
+			r.Post("/claim", s.handleAlignClaim)
+			r.Post("/{jobID}/progress", s.handleAlignProgress)
+			r.Post("/{jobID}/segments", s.handleAlignSegments)
+			r.Post("/{jobID}/anchors", s.handleAlignAnchors)
+			r.Post("/{jobID}/complete", s.handleAlignComplete)
+		})
+		r.Route("/ocr", func(r chi.Router) {
+			r.Use(s.requireOCRWorker)
+			r.Post("/claim", s.handleOCRClaim)
+			r.Post("/{jobID}/progress", s.handleOCRProgress)
+			// Page numbers are the corpus's own 1-based numbering; the
+			// worker identifies itself by query parameter because a GET
+			// carries no body.
+			r.Get("/{jobID}/page/{page}", s.handleOCRPageImage)
+			r.Post("/{jobID}/pages", s.handleOCRPages)
+			r.Post("/{jobID}/complete", s.handleOCRComplete)
+		})
 	})
 
 	return r

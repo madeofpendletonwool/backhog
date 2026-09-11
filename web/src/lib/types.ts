@@ -1302,9 +1302,15 @@ export interface BookSearchHit {
  * `mode` is the honesty: "phrase" means the book contains what was typed,
  * "loose" means it does not and these are the closest passages instead. A
  * client must say which, rather than letting a fallback pass for a hit.
+ *
+ * `axis` names the position space the results address: "text" hits carry
+ * char offsets (and their audio/page derivations), "page" hits carry page
+ * indexes from a paged book's OCR lettering corpus. The two never share a
+ * shape.
  */
 export interface BookSearchResults {
   query: string;
+  axis: "text";
   mode: "phrase" | "loose";
   /** Every match found, which may exceed the results returned. */
   total: number;
@@ -1312,6 +1318,67 @@ export interface BookSearchResults {
   results: BookSearchHit[];
   /** Grades the map every timestamp above was derived through. */
   alignment: AlignmentSummary | null;
+}
+
+/**
+ * One lettering hit in a paged book: the page it lives on (the only axis
+ * the book has), and the match as the OCR read it, split for highlighting.
+ */
+export interface BookSearchPageHit {
+  page_index: number;
+  percent: number;
+  context: { before: string; passage: string; after: string };
+}
+
+/** The paged twin of BookSearchResults — hits over the OCR lettering corpus. */
+export interface BookSearchResultsPage {
+  query: string;
+  axis: "page";
+  mode: "phrase" | "loose";
+  total: number;
+  truncated: boolean;
+  results: BookSearchPageHit[];
+  /** The honesty pair the results stand on — stylized lettering is best-effort. */
+  corpus: OCRCorpusView;
+}
+
+export type BookSearchAny = BookSearchResults | BookSearchResultsPage;
+
+/**
+ * The lettering corpus one OCR pass produced, with its honesty pair:
+ * coverage (the share of pages that yielded any lettering) and the mean
+ * confidence tesseract held while reading. `low_confidence` is a usable
+ * corpus saying so, never a failure.
+ */
+export interface OCRCorpusView {
+  state: "ready" | "low_confidence";
+  coverage: number;
+  mean_confidence: number;
+  /** The pipeline that read the pages, e.g. "tesseract 5.3.0 (eng)". */
+  model: string;
+  pages_with_text: number;
+  page_count: number;
+}
+
+/** The worker pipeline's view of one OCR lettering job. */
+export interface OCRJobView {
+  id: string;
+  entry_id: string;
+  state: "queued" | "claimed" | "ocring" | "ready" | "low_confidence" | "failed";
+  progress: number;
+  stage_detail: string;
+  error?: string | null;
+  coverage: number;
+  mean_confidence: number;
+  model: string;
+  attempts: number;
+}
+
+/** GET /api/books/{entryId}/ocr — where a paged book's lettering stands. */
+export interface OCRStatusView {
+  job: OCRJobView | null;
+  corpus: OCRCorpusView | null;
+  worker_enabled: boolean;
 }
 
 /** How much of a book an alignment covers, and how much it believed itself. */

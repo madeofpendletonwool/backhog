@@ -25,6 +25,17 @@ services:
       # alignment API; leave it empty and alignment stays off — reading,
       # listening and tracking all work without it. Never logged.
       ALIGN_WORKER_TOKEN: ${ALIGN_WORKER_TOKEN:-}
+      # Optional: shared secret for the OCR lettering worker container.
+      # The same contract as the alignment token, one feature over: set
+      # it (identically in the worker) to enable the /internal/ocr queue;
+      # leave it empty and lettering search does not exist — reading,
+      # tracking and every other search work without it. Never logged.
+      OCR_WORKER_TOKEN: ${OCR_WORKER_TOKEN:-}
+      # Optional: the ready/low_confidence thresholds a finished lettering
+      # corpus is graded against (share of pages that yielded any
+      # lettering, and mean per-page confidence). Defaults 0.30 / 0.60.
+      OCR_MIN_COVERAGE: ${OCR_MIN_COVERAGE:-}
+      OCR_MIN_CONFIDENCE: ${OCR_MIN_CONFIDENCE:-}
     volumes:
       - backhog-data:/data
       # Books arena: bind-mount the NAS library read-only, one entry per
@@ -101,6 +112,43 @@ services:
       start_period: 20s
     # A worker killed mid-book leaves its claim to go stale; the API
     # reclaims it and the restarted worker picks the job back up.
+    restart: unless-stopped
+
+  # The optional OCR lettering worker, the align pattern a second time.
+  # Behind its own compose profile and its own token: a deployment may
+  # want alignment, lettering search, both, or neither. It mounts no
+  # volumes at all — page images stream from the API over the compose
+  # network, through the exact endpoint the paged reader serves.
+  ocr:
+    profiles: ["ocr"]
+    build:
+      context: .
+      dockerfile: ocr/Dockerfile
+    environment:
+      BACKHOG_API_URL: http://api:8080
+      # Must be the same value as the api service above, and non-empty:
+      # an empty token disables the /internal/ocr API the worker claims
+      # from.
+      OCR_WORKER_TOKEN: ${OCR_WORKER_TOKEN:-}
+      # Tesseract page segmentation. The default (11, sparse text) is the
+      # balloon-and-caption case; switch to 3 for prose scans.
+      OCR_TESSERACT_PSM: ${OCR_TESSERACT_PSM:-}
+      # Tesseract language (a traineddata installed in the image). The
+      # shipped image carries English only.
+      OCR_LANGUAGE: ${OCR_LANGUAGE:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # No shell in the way; the binary probes its own status endpoint.
+      test: ["CMD", "/app/ocr-worker", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # A worker killed mid-comic leaves its claim to go stale; the API
+    # reclaims it and the restarted worker picks the job back up, with
+    # every page it already read pinned in the ledger.
     restart: unless-stopped
 
 volumes:

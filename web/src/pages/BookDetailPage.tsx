@@ -230,6 +230,8 @@ export function BookDetailPage() {
 
           <AlignmentPanel entryId={entry.id} />
 
+          <OCRPanel entryId={entry.id} />
+
           <PhysicalCopyPanel entryId={entry.id} editions={editions} />
 
           <ListMembership entry={entry} />
@@ -345,9 +347,10 @@ function ReadButton({ entry }: { entry: BookEntry }) {
 /**
  * Search inside the book.
  *
- * Gated on the same parsed text the Read button is: without an EPUB there is
- * nothing to search, and the chapters query is already warm from that button
- * sitting beside this one.
+ * Gated on the same parsed text the Read button is for a text book; a paged
+ * book (an image-native PDF primary) has no parsed text, and its search
+ * comes from the OCR lettering corpus — offered whenever the axis is paged,
+ * with the dialog itself saying why when no pass has run yet.
  *
  * "/" opens it, the way it opens search in a document everywhere else. Cmd+F is
  * deliberately left to the browser — a reader looking for a word on *this page*
@@ -362,8 +365,13 @@ function SearchButton({ entry }: { entry: BookEntry }) {
     staleTime: Infinity,
     retry: false,
   });
+  const { data: position } = useQuery({
+    queryKey: ["bookPosition", entry.id],
+    queryFn: () => api.bookPosition(entry.id),
+  });
 
-  const searchable = Boolean(text && text.char_count > 0);
+  const paged = position?.position_mode === "page";
+  const searchable = Boolean(text && text.char_count > 0) || paged;
 
   useEffect(() => {
     if (!searchable) return;
@@ -388,7 +396,12 @@ function SearchButton({ entry }: { entry: BookEntry }) {
         <Gi name="search" className="size-3.5" />
         Search inside
       </Button>
-      <SearchInBookDialog entry={entry} open={open} onClose={() => setOpen(false)} />
+      <SearchInBookDialog
+        entry={entry}
+        open={open}
+        onClose={() => setOpen(false)}
+        axis={paged ? "page" : "text"}
+      />
     </>
   );
 }
@@ -967,6 +980,175 @@ function AlignmentPanel({ entryId }: { entryId: string }) {
     </Panel>
   );
 }
+
+/**
+ * The lettering surface, and the one place a paged book's search corpus can
+ * be started, watched, understood or retried. This is the alignment panel's
+ * twin — the same optional-worker contract, the same honesty: a queued pass
+ * with no worker will wait forever, and a low-confidence corpus is a usable
+ * one that says so, not an error.
+ *
+ * It renders only for paged books (an image-native PDF primary): a book with
+ * a canonical text is searched as text and has no lettering to read.
+ */
+function OCRPanel({ entryId }: { entryId: string }) {
+  const queryClient = useQueryClient();
+  const { data: position } = useQuery({
+    queryKey: ["bookPosition", entryId],
+    queryFn: () => api.bookPosition(entryId),
+  });
+  const paged = position?.position_mode === "page";
+
+  const { data } = useQuery({
+    queryKey: ["bookOCR", entryId],
+    queryFn: () => api.bookOCRStatus(entryId),
+    enabled: paged,
+    refetchInterval: (query) => {
+      const state = query.state.data?.job?.state;
+      return state && ACTIVE_OCR_JOB_STATES.has(state) ? 4000 : false;
+    },
+  });
+
+  const enqueue = useMutation({
+    mutationFn: () => api.enqueueOCR(entryId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["bookOCR", entryId] }),
+  });
+
+  const clear = useMutation({
+    mutationFn: () => api.clearOCR(entryId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bookOCR", entryId] });
+      queryClient.invalidateQueries({ queryKey: ["bookSearch", entryId] });
+    },
+  });
+
+  if (!paged) return null;
+
+  const job = data?.job ?? null;
+  const corpus = data?.corpus ?? null;
+  const active = job !== null && ACTIVE_OCR_JOB_STATES.has(job.state);
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">Lettering search</h2>
+      <p className="mb-3 text-xs leading-relaxed text-ink-500">
+        An optional worker reads the drawn lettering off each page, so a comic or picture
+        book becomes searchable without ever pretending it has a text.
+      </p>
+
+      {!job && !corpus ? (
+        <>
+          <StatusLine tone="idle" label="Not read yet" />
+          <p className="mt-2 text-xs leading-relaxed text-ink-400">
+            Search can't find anything yet — the pages have never been read for lettering.
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-3"
+            loading={enqueue.isPending}
+            onClick={() => enqueue.mutate()}
+          >
+            <Gi name="search" className="size-3.5" />
+            Read the lettering
+          </Button>
+        </>
+      ) : active && job ? (
+        <>
+          <StatusLine
+            tone="working"
+            label={
+              job.state === "queued" ? "Queued" : job.state === "claimed" ? "Starting" : "Reading pages"
+            }
+            detail={job.state === "ocring" ? `${Math.round(job.progress * 100)}%` : undefined}
+          />
+          {job.state === "ocring" && (
+            <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-ink-800">
+              <div
+                className="h-full rounded-full bg-status-playing transition-[width] duration-500"
+                style={{ width: `${Math.max(2, Math.round(job.progress * 100))}%` }}
+              />
+            </div>
+          )}
+          <p className="mt-2 text-xs leading-relaxed text-ink-400">
+            {job.state === "queued" && data?.worker_enabled === false
+              ? "No OCR worker is running, so this will wait until one is. The rest of the book keeps working meanwhile."
+              : job.state === "queued"
+                ? "Waiting for the OCR worker to pick it up."
+                : job.stage_detail || "Reading the lettering off the pages."}
+          </p>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-2 text-ink-400"
+            loading={clear.isPending}
+            onClick={() => clear.mutate()}
+          >
+            Cancel
+          </Button>
+        </>
+      ) : job?.state === "failed" ? (
+        <>
+          <StatusLine tone="failed" label="Lettering read failed" />
+          <p className="mt-2 text-xs leading-relaxed text-red-300">
+            {job.error || "The worker could not finish reading this book."}
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-3"
+            loading={enqueue.isPending}
+            onClick={() => enqueue.mutate()}
+          >
+            <Gi name="refresh" className="size-3.5" />
+            Try again
+          </Button>
+        </>
+      ) : corpus && (corpus.state === "ready" || corpus.state === "low_confidence") ? (
+        <>
+          <StatusLine
+            tone={corpus.state === "ready" ? "good" : "warn"}
+            label={corpus.state === "ready" ? "Searchable" : "Searchable, low confidence"}
+          />
+          <p className="mt-2 font-display text-[11px] uppercase tracking-wider text-ink-300">
+            {corpus.pages_with_text} of {corpus.page_count} pages read ·{" "}
+            {Math.round(corpus.mean_confidence * 100)}% confident
+          </p>
+          {corpus.state === "low_confidence" && (
+            <p className="mt-2 text-xs leading-relaxed text-amber-300/90">
+              The lettering read poorly — stylized fonts and hand lettering often do. Search
+              works, but expect misses.
+            </p>
+          )}
+          <p className="mt-1 text-xs text-ink-500">Read with {corpus.model}.</p>
+          <div className="mt-2 flex items-center gap-3">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-ink-400"
+              loading={enqueue.isPending}
+              onClick={() => enqueue.mutate()}
+            >
+              <Gi name="refresh" className="size-3.5" />
+              Re-read lettering
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-ink-500"
+              loading={clear.isPending}
+              onClick={() => clear.mutate()}
+            >
+              Clear
+            </Button>
+          </div>
+        </>
+      ) : null}
+    </Panel>
+  );
+}
+
+const ACTIVE_OCR_JOB_STATES = new Set(["queued", "claimed", "ocring"]);
 
 const ACTIVE_JOB_STATES = new Set(["queued", "claimed", "transcribing", "aligning"]);
 

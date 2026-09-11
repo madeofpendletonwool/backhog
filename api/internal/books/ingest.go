@@ -618,8 +618,14 @@ func (ing *Ingester) persistPDFClassification(ctx context.Context, f models.Medi
 		return models.PDFFile{}, err
 	}
 	// The row id is stable across re-classifications, so the old parse's
-	// page companions are stale the moment the new verdict lands.
+	// page companions are stale the moment the new verdict lands — and so
+	// is everything the OCR worker read off those pages. Both go, for the
+	// same reason a stale page image would: a plausible-wrong answer with
+	// a filename.
 	ing.clearPageCompanions(pf.ID)
+	if err := ing.store.ClearOCRForMediaFile(ctx, pf.MediaFileID); err != nil {
+		return models.PDFFile{}, err
+	}
 	return pf, nil
 }
 

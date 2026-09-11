@@ -11,7 +11,7 @@ import { ApiError, api } from "@/lib/api";
 import { chapterTitle, formatPage } from "@/lib/booktext";
 import { cn } from "@/lib/cn";
 import { formatTimecode } from "@/lib/format";
-import type { BookEntry, BookSearchHit } from "@/lib/types";
+import type { BookEntry, BookSearchHit, BookSearchPageHit } from "@/lib/types";
 
 /**
  * Search inside one book.
@@ -22,6 +22,11 @@ import type { BookEntry, BookSearchHit } from "@/lib/types";
  * result already knows the page of the reader's own printing and the second of
  * the audiobook, and Enter can put them at either. That is the whole feature:
  * not finding the line, but arriving at it in whichever format is to hand.
+ *
+ * A paged book (axis "page") has no offsets: its hits come from the OCR
+ * lettering corpus and land on pages, and Enter peeks the page — never a
+ * position write. The corpus's honesty pair rides the header, because stylized
+ * lettering is best-effort and the dialog says so.
  *
  * Nothing about the query leaves the box: the text is already parsed and on
  * disk, so the debounce is short and the results land while you are still
@@ -35,10 +40,13 @@ export function SearchInBookDialog({
   entry,
   open,
   onClose,
+  axis = "text",
 }: {
   entry: BookEntry;
   open: boolean;
   onClose: () => void;
+  /** Which corpus answers: the canonical text, or a paged book's OCR lettering. */
+  axis?: "text" | "page";
 }) {
   const [term, setTerm] = useState("");
   const [highlighted, setHighlighted] = useState(0);
@@ -46,6 +54,8 @@ export function SearchInBookDialog({
   const listRef = useRef<HTMLUListElement>(null);
   const navigate = useNavigate();
   const player = useAudioPlayer();
+
+  const paged = axis === "page";
 
   const ready = debounced.trim().length >= MIN_QUERY;
   const { data, isFetching, error } = useQuery({
@@ -59,7 +69,10 @@ export function SearchInBookDialog({
     retry: false,
   });
 
-  const results = useMemo<BookSearchHit[]>(() => data?.results ?? [], [data]);
+  const results = useMemo<(BookSearchHit | BookSearchPageHit)[]>(
+    () => data?.results ?? [],
+    [data],
+  );
 
   useEffect(() => setHighlighted(0), [debounced]);
 
@@ -77,19 +90,23 @@ export function SearchInBookDialog({
   }, [highlighted]);
 
   /**
-   * Opens the reader on the paragraph the hit landed in — as a peek. The
-   * passage is shown without becoming "where you are": the reader holds
-   * its stored position and offers the way back, because looking twenty
-   * pages behind you is not reading there.
+   * Opens the reader where the hit landed — as a peek. The passage is shown
+   * without becoming "where you are": the reader holds its stored position
+   * and offers the way back, because looking twenty pages behind you is not
+   * reading there. On the page axis the peek is a page jump, the same rule.
    */
-  const read = (hit: BookSearchHit) => {
+  const read = (hit: BookSearchHit | BookSearchPageHit) => {
     onClose();
+    if ("page_index" in hit) {
+      navigate(`/books/${entry.id}/read?page=${hit.page_index}&peek=1`);
+      return;
+    }
     navigate(`/books/${entry.id}/read?offset=${hit.char_offset}&peek=1`);
   };
 
   /** Starts the audiobook at the second the hit maps to. */
-  const listen = (hit: BookSearchHit) => {
-    if (!hit.audio) return;
+  const listen = (hit: BookSearchHit | BookSearchPageHit) => {
+    if (!("audio" in hit) || !hit.audio) return;
     onClose();
     player.open(entry, { autoplay: true, startAt: hit.audio.seconds });
   };
@@ -109,8 +126,11 @@ export function SearchInBookDialog({
     }
   };
 
-  // A 422 is the server declining a query, not breaking on one.
+  // A 422 is the server declining a query, not breaking on one — too short
+  // to answer, or lettering nobody has read yet. Its words are the honest
+  // empty state.
   const refused = error instanceof ApiError && error.status === 422;
+  const corpus = data?.axis === "page" ? data.corpus : null;
 
   return (
     <Dialog open={open} onClose={onClose} bare label="Search inside this book" className="max-w-2xl">
@@ -122,12 +142,21 @@ export function SearchInBookDialog({
             value={term}
             onChange={(event) => setTerm(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search this book…"
+            placeholder={paged ? "Search this book's lettering…" : "Search this book…"}
             aria-label="Search inside this book"
             className="h-14 w-full bg-transparent text-[15px] text-ink-100 outline-none placeholder:text-ink-500"
           />
           {isFetching && <LoadingDot className="size-2.5 shrink-0 bg-ink-500" />}
         </div>
+
+        {paged && corpus && (
+          <p className="border-b border-edge bg-fill-hover px-4 py-2 text-[11px] text-ink-400">
+            Searching the lettering the OCR pass read — best-effort over drawings,{" "}
+            {Math.round(corpus.coverage * 100)}% of {corpus.page_count} pages read at{" "}
+            {Math.round(corpus.mean_confidence * 100)}% mean confidence.
+            {corpus.state === "low_confidence" ? " Expect misses." : ""}
+          </p>
+        )}
 
         {data?.mode === "loose" && results.length > 0 && (
           <p className="border-b border-edge bg-fill-hover px-4 py-2 text-[11px] text-ink-400">
@@ -138,6 +167,11 @@ export function SearchInBookDialog({
         <div className="max-h-[55vh] overflow-y-auto">
           {error && !refused ? (
             <Message title="Search failed" body={(error as Error).message} />
+          ) : refused ? (
+            <Message
+              title={paged ? "Lettering not read yet" : "Not searchable yet"}
+              body={(error as Error).message}
+            />
           ) : term.trim().length < MIN_QUERY ? (
             <Message
               title="Find the line you remember"
@@ -147,17 +181,28 @@ export function SearchInBookDialog({
             <Message title="Nothing found" body={`No passage of this book matches "${term.trim()}".`} />
           ) : (
             <ul ref={listRef} className="p-2">
-              {results.map((hit, index) => (
-                <HitRow
-                  key={`${hit.char_offset}-${hit.char_end}`}
-                  hit={hit}
-                  index={index}
-                  highlighted={index === highlighted}
-                  onHover={() => setHighlighted(index)}
-                  onRead={() => read(hit)}
-                  onListen={() => listen(hit)}
-                />
-              ))}
+              {results.map((hit, index) =>
+                "page_index" in hit ? (
+                  <PageHitRow
+                    key={`page-${hit.page_index}-${hit.context.passage}`}
+                    hit={hit}
+                    index={index}
+                    highlighted={index === highlighted}
+                    onHover={() => setHighlighted(index)}
+                    onRead={() => read(hit)}
+                  />
+                ) : (
+                  <HitRow
+                    key={`${hit.char_offset}-${hit.char_end}`}
+                    hit={hit}
+                    index={index}
+                    highlighted={index === highlighted}
+                    onHover={() => setHighlighted(index)}
+                    onRead={() => read(hit)}
+                    onListen={() => listen(hit)}
+                  />
+                ),
+              )}
             </ul>
           )}
         </div>
@@ -165,7 +210,7 @@ export function SearchInBookDialog({
         <div className="flex items-center justify-between gap-4 border-t border-edge px-4 py-2.5 text-[11px] text-ink-500">
           <span>
             <Kbd>↑</Kbd> <Kbd>↓</Kbd> navigate · <Kbd>↵</Kbd> peek here
-            {results[highlighted]?.audio && (
+            {!paged && results[highlighted] && "audio" in results[highlighted] && results[highlighted].audio && (
               <>
                 {" · "}
                 <Kbd>⌘↵</Kbd> listen here
@@ -183,6 +228,50 @@ export function SearchInBookDialog({
         </div>
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * One page hit in a paged book's lettering. The snippet is the OCR reading,
+ * so the row says what the reader will see drawn on the page — balloons and
+ * captions — and names the page it lands on.
+ */
+function PageHitRow({
+  hit,
+  index,
+  highlighted,
+  onHover,
+  onRead,
+}: {
+  hit: BookSearchPageHit;
+  index: number;
+  highlighted: boolean;
+  onHover: () => void;
+  onRead: () => void;
+}) {
+  return (
+    <li data-index={index}>
+      <div
+        onMouseMove={onHover}
+        className={cn(
+          "flex items-start gap-3 rounded-xl p-2.5 transition-colors",
+          highlighted ? "bg-fill-active" : "hover:bg-fill-hover",
+        )}
+      >
+        <button type="button" onClick={onRead} className="min-w-0 flex-1 text-left">
+          <div className="flex items-center gap-2 text-[11px] text-ink-500">
+            <span className="shrink-0 font-medium text-ink-400">page {hit.page_index + 1}</span>
+            <span aria-hidden>·</span>
+            <span className="shrink-0">{Math.round(hit.percent)}%</span>
+          </div>
+          <p className="mt-1 text-sm leading-relaxed text-ink-400">
+            {hit.context.before}
+            <mark className="bg-brand-500/25 text-ink-100">{hit.context.passage}</mark>
+            {hit.context.after}
+          </p>
+        </button>
+      </div>
+    </li>
   );
 }
 

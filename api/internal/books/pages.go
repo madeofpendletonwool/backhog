@@ -112,6 +112,14 @@ func (ing *Ingester) pagedBook(ctx context.Context, userID, entryID string) (mod
 	return f, pf, nil
 }
 
+// PagedBookForEntry resolves one of the caller's entries to its
+// image-native primary — the exported half of pagedBook, for the surfaces
+// (the OCR queue) that need the file and its classification rather than a
+// page. Every refusal pagedBook names, it names identically.
+func (ing *Ingester) PagedBookForEntry(ctx context.Context, userID, entryID string) (models.MediaFile, models.PDFFile, error) {
+	return ing.pagedBook(ctx, userID, entryID)
+}
+
 // Pages returns an entry's page manifest: the classified page count and
 // every page's image shape, cheaply, from stub lookups — no page is decoded
 // until it is asked for by name.
@@ -149,15 +157,26 @@ func (ing *Ingester) Pages(ctx context.Context, userID, entryID string) (PageMan
 	return manifest, nil
 }
 
-// PageImage returns one page's raster, extracting it lazily on first
-// request and serving the companion file ever after. Ownership and path
-// containment are re-checked on every request — the URL is not a
-// capability, the same rule the EPUB asset endpoint holds.
+// PageImage returns one page's raster for one of the caller's entries,
+// extracting it lazily on first request and serving the companion file ever
+// after. Ownership and path containment are re-checked on every request —
+// the URL is not a capability, the same rule the EPUB asset endpoint holds.
 func (ing *Ingester) PageImage(ctx context.Context, userID, entryID string, page int) (PageAsset, error) {
 	f, pf, err := ing.pagedBook(ctx, userID, entryID)
 	if err != nil {
 		return PageAsset{}, err
 	}
+	return ing.PageImageByFile(ctx, f, pf, page)
+}
+
+// PageImageByFile is PageImage against a resolved media file and its
+// classification — the internal OCR worker's door. The worker holds the
+// shared token and no session, so it cannot walk the entry-scoped path;
+// what it may read was ownership-checked when the job was enqueued. The
+// bytes are the exact same companion-or-extract stream the reader gets:
+// there is no second decode path, and the worker's page fetches warm the
+// same companion cache the paged reader serves from.
+func (ing *Ingester) PageImageByFile(ctx context.Context, f models.MediaFile, pf models.PDFFile, page int) (PageAsset, error) {
 	if page < 0 || page >= pf.PageCount {
 		return PageAsset{}, fmt.Errorf("%w: page %d of %d", ErrPageOutOfRange, page, pf.PageCount)
 	}

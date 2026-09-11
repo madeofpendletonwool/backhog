@@ -153,3 +153,23 @@ func elideTail(s string) string {
 func isCutPoint(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
+
+// OCRSnippet renders a hit inside one page's OCR lettering as the worker
+// read it: the matched words with their own capitals and punctuation, and
+// the lettering either side. It is Snippets.At's per-page twin — the raw
+// reading stands in for the display text, and canonStart/canonEnd address
+// Normalize(page text), exactly the fold SpanInDisplay walks. ok is false
+// when the span cannot be crossed back (only possible if the raw text and
+// the index disagree, which the corpus revision gate makes a near
+// impossibility; the caller drops the hit rather than mis-highlights).
+func OCRSnippet(raw string, canonStart, canonEnd int) (Snippet, bool) {
+	start, end, ok := booktext.SpanInDisplay(raw, canonStart, canonEnd)
+	if !ok {
+		return Snippet{}, false
+	}
+	return Snippet{
+		Before:  elideHead(raw[:start]),
+		Passage: raw[start:end],
+		After:   elideTail(raw[end:]),
+	}, true
+}

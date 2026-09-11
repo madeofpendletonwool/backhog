@@ -1128,6 +1128,9 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
 function PagedReader({ entry }: { entry: BookEntry }) {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  // The lettering search is the scrolled reader's own: a button that opens
+  // the dialog, and page hits that arrive here as ?page=N&peek=1 below.
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // The reading surface is shared with the scrolled reader — the paper the
   // page art sits on — so a reader's chosen paper follows them between the
@@ -1384,6 +1387,16 @@ function PagedReader({ entry }: { entry: BookEntry }) {
             <span className="hidden sm:inline">{entry.book.title}</span>
           </Link>
           <span className="min-w-0 flex-1 truncate text-sm sm:hidden">{entry.book.title}</span>
+          {/* Lettering search: the button is always offered — when no OCR
+              corpus exists yet the dialog itself says why, which beats a
+              silently missing control. */}
+          <ToolbarButton
+            surface={surface}
+            active={searchOpen}
+            label="Search lettering"
+            icon="search"
+            onClick={() => setSearchOpen(true)}
+          />
           {/* Honest progress, the paged model's own: a page number, not a
               scroll percentage. */}
           <span className="shrink-0 text-sm tabular-nums" style={{ color: surface.muted }}>
@@ -1469,6 +1482,9 @@ function PagedReader({ entry }: { entry: BookEntry }) {
           />
         </div>
       </div>
+
+      {/* Lettering search: page-targeted hits, peeks never move the place. */}
+      <SearchInBookDialog entry={entry} open={searchOpen} onClose={() => setSearchOpen(false)} axis="page" />
     </div>
   );
 }

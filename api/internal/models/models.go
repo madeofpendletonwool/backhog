@@ -1467,5 +1467,90 @@ type TranscriptSegment struct {
 	AlignmentID string  `json:"-"`
 	AudioStart  float64 `json:"audio_start"`
 	AudioEnd    float64 `json:"audio_end"`
-	Text        string  `json:"text"`
+	Text        string `json:"text"`
+}
+
+// OCR lettering search states. The pipeline positions mirror the alignment
+// queue's; the terminal pair is the low_confidence pattern again: a corpus
+// below the coverage/confidence thresholds is still searchable — stylized
+// lettering is best-effort — but it says so, and the UI shows it.
+const (
+	OCRQueued        = "queued"
+	OCRClaimed       = "claimed"
+	OCROcring        = "ocring"
+	OCRReady         = "ready"
+	OCRLowConfidence = "low_confidence"
+	OCRFailed        = "failed"
+)
+
+// OCRJobActive reports whether state is one the OCR worker is still working
+// through (or is about to): the states covered by the one-job-per-file queue
+// invariant.
+func OCRJobActive(state string) bool {
+	switch state {
+	case OCRQueued, OCRClaimed, OCROcring:
+		return true
+	}
+	return false
+}
+
+// OCRJobTerminal reports whether state is one an OCR job can never leave.
+func OCRJobTerminal(state string) bool {
+	switch state {
+	case OCRReady, OCRLowConfidence, OCRFailed:
+		return true
+	}
+	return false
+}
+
+// OCRJob is one OCR pass on the queue. The unit is a media file — the corpus
+// belongs to the file, not the entry — pinned to the parser version of the
+// classification it was enqueued against. Coverage and MeanConfidence are the
+// honesty pair, computed by the API from the corpus at completion: how much
+// of the book's lettering was read, and how much the reader believed itself.
+type OCRJob struct {
+	ID             string `json:"id"`
+	EntryID        string `json:"entry_id"`
+	MediaFileID    int64  `json:"media_file_id"`
+	ParserVersion  string `json:"-"`
+	State          string `json:"state"`
+	Progress       float64 `json:"progress"`
+	StageDetail    string `json:"stage_detail"`
+	Error          *string `json:"error,omitempty"`
+	Coverage       float64 `json:"coverage"`
+	MeanConfidence float64 `json:"mean_confidence"`
+	Model          string `json:"model"`
+	Attempts       int     `json:"attempts"`
+	ClaimedBy      *string `json:"claimed_by,omitempty"`
+	ClaimedAt      *time.Time `json:"claimed_at,omitempty"`
+	HeartbeatAt    *time.Time `json:"heartbeat_at,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// OCRPage is one page of the search-only lettering corpus: the worker's raw
+// reading of one page image, pinned to that image's sha256 so an unchanged
+// page is never re-billed. Page numbers are 1-based, matching pdf_pages and
+// the companion filenames; the API converts to the 0-based page axis where
+// positions live.
+type OCRPage struct {
+	PageNumber     int     `json:"page_number"`
+	ImageSHA256    string  `json:"image_sha256"`
+	OCRVersion     string  `json:"-"`
+	Text           string  `json:"text"`
+	MeanConfidence float64 `json:"mean_confidence"`
+	UpdatedAt      time.Time `json:"-"`
+}
+
+// OCRCorpus is the per-book grade of a finished OCR pass: the state (ready or
+// low_confidence — the thresholds are the API's own), the coverage/confidence
+// pair, and the model that produced it. What the search surface and the UI
+// read; never a text.
+type OCRCorpus struct {
+	State          string  `json:"state"`
+	Coverage       float64 `json:"coverage"`
+	MeanConfidence float64 `json:"mean_confidence"`
+	Model          string  `json:"model"`
+	PagesWithText  int     `json:"pages_with_text"`
+	PageCount      int     `json:"page_count"`
 }

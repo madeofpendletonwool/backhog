@@ -73,8 +73,9 @@ type positionTestApp struct {
 // newPositionTestApp boots the router over a NAS root holding a real EPUB and
 // two real MP4 tracks, all attached to one book entry sitting in the backlog.
 // anchors is the provider the position translator reads; pass nil for the
-// unaligned world every book lives in today.
-func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestApp {
+// unaligned world every book lives in today. Optional config overrides run
+// before the server is built (the OCR tests use one to set the worker token).
+func newPositionTestApp(t *testing.T, anchors position.Provider, overrides ...func(*config.Config)) *positionTestApp {
 	t.Helper()
 
 	root := filepath.Join(t.TempDir(), "library")
@@ -112,6 +113,9 @@ func newPositionTestApp(t *testing.T, anchors position.Provider) *positionTestAp
 	cfg := config.Config{
 		EpubTextDir: filepath.Join(t.TempDir(), "epub_text"),
 		MediaDirs:   []string{root},
+	}
+	for _, override := range overrides {
+		override(&cfg)
 	}
 	srv := NewServer(cfg, st, nil, nil, nil, nil, &backfill.Runner{}, nil)
 	if anchors != nil {

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns everything past first frame; this only sets the window
+         background so the cold-start flash is Midnight's sky rather than
+         white. Paper re-dresses it the moment composition runs. -->
+    <style name="Theme.Backhog" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_sky</item>
+        <item name="android:statusBarColor">@color/window_sky</item>
+        <item name="android:navigationBarColor">@color/window_sky</item>
+    </style>
+</resources>

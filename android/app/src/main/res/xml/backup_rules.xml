@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The server session cookie and the server URL are device-local secrets in
+     spirit: the cookie IS the account. Neither belongs in a cloud backup.
+     DataStore preferences live under files/datastore/. -->
+<full-backup-content>
+    <exclude domain="file" path="cookies.json" />
+    <exclude domain="file" path="datastore/backhog_settings.preferences_pb" />
+</full-backup-content>

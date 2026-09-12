@@ -3,6 +3,15 @@ web/dist/
 web/node_modules/
 api/backhog
 
+# Android — Gradle build output and machine-local SDK path
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+
 # Vendored OCR runtime — about 15 MB of Tesseract WASM and language data
 # copied out of node_modules by web/scripts/vendor-ocr.mjs on every build.
 # npm pins the versions in the lockfile; the bytes do not belong in git.

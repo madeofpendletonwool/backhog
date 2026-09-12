@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A hog's tusk: one violet arc curling up out of the dark. The whole mark,
+     so it scales to any adaptive-icon mask. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M30,66 C30,46 44,34 62,34 C74,34 80,40 80,40 C80,40 72,44 62,44 C50,44 40,52 40,66 C40,72 38,76 34,76 C31,76 30,72 30,66 Z"
+        android:fillColor="#7C3AED" />
+    <path
+        android:pathData="M44,70 m-5,0 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0"
+        android:fillColor="#A78BFA" />
+</vector>

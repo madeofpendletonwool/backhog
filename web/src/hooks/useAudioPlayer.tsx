@@ -45,6 +45,12 @@ export const SLEEP_MINUTES = [5, 15, 30, 45, 60] as const;
 const WRITE_EVERY_MS = 15_000;
 
 /**
+ * How far the stored position must have moved from a paused player before
+ * the tape is moved to match. Under this is alignment jitter, not a handoff.
+ */
+const FOLLOW_TOLERANCE_SECONDS = 3;
+
+/**
  * How early the next track's opening bytes are warmed, and how many. A track
  * change is the one moment a listener can hear the seams, so the next file's
  * head is pulled into the HTTP cache while the current one is still playing.
@@ -167,6 +173,8 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
   const startedRef = useRef(false);
   const sleepRef = useRef<SleepTimer>(null);
   const lastWriteRef = useRef({ at: 0, global: -1 });
+  /** `updated_at` of the last stored position the player has caught up to. */
+  const followedRef = useRef<string | null>(null);
   const lastPositionStateRef = useRef(0);
   const warmedRef = useRef(new Set<number>());
   const rateRef = useRef(rate);
@@ -199,14 +207,19 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
    * Checkpoint the position. Called on a 15-second throttle while playing and
    * outright on pause, track change, close and unload — never on every
    * `timeupdate`, which would be four writes a second per listener.
+   *
+   * A write only goes when the tape has actually moved since the last one.
+   * That is not just thrift: the stored position is shared with the reader
+   * and the page scanner, and a paused player that re-sent its old second on
+   * close would drag a page you had just photographed back to wherever the
+   * audio stopped. `force` exists for the one event that is a position in
+   * its own right even when nothing moved — the end of the tape.
    */
   const flush = useCallback(
     (options: { beacon?: boolean; force?: boolean } = {}) => {
       const entryId = entryIdRef.current;
       const write = positionWrite();
       if (!entryId || !write) return;
-      // A second of drift is not worth a round trip; a forced write still
-      // goes, so pausing twice in the same spot is not silently dropped.
       if (!options.force && Math.abs(globalRef.current - lastWriteRef.current.global) < 1) return;
       lastWriteRef.current = { at: Date.now(), global: globalRef.current };
 
@@ -433,7 +446,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
   // --- opening and closing ------------------------------------------------
 
   const close = useCallback(() => {
-    flush({ force: true });
+    flush();
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
@@ -463,11 +476,14 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
          the bar, on both this path and the fresh-open one below. */
       if (entryIdRef.current === entry.id) {
         patch({ entry });
+        // A handoff names a second; the reader's "listen from here" is one.
+        if (options.startAt != null) seek(options.startAt);
         if (autoplay && (audioRef.current?.paused ?? true)) play();
         return;
       }
 
-      flush({ force: true });
+      flush();
+      followedRef.current = null;
       entryIdRef.current = entry.id;
       timelineRef.current = null;
       trackIndexRef.current = -1;
@@ -492,6 +508,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
          refused, and the listener has to press play a second time. */
       const cachedTimeline = queryClient.getQueryData<AudioTimeline>(["bookAudio", entry.id]);
       const cachedPosition = queryClient.getQueryData<BookPosition>(["bookPosition", entry.id]);
+      followedRef.current = cachedPosition?.updated_at ?? null;
       if (cachedTimeline) {
         start(cachedTimeline, options.startAt ?? cachedPosition?.audio?.seconds ?? 0, autoplay);
       }
@@ -513,7 +530,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
           patch({ loading: false, error: describe(error) });
         });
     },
-    [flush, patch, play, queryClient, rate, start],
+    [flush, patch, play, queryClient, rate, seek, start],
   );
 
   /** Pulls the next file's opening bytes into the HTTP cache. Best-effort. */
@@ -736,6 +753,45 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
     publishPositionState();
   }, [publishPositionState, state.trackIndex, state.rate, state.duration]);
 
+  // --- following the book -------------------------------------------------
+
+  /**
+   * The paper-to-tape leg of the handoff. A paused player holds the second it
+   * stopped at, but the stored position is shared: a page scan, the reader,
+   * or another device can move it on while the tape sits still. When that
+   * happens the tape is moved to match, so that play resumes where the
+   * *book* is, not where the player last was — and so the next checkpoint
+   * carries the scanned page forward instead of overwriting it.
+   *
+   * Only a paused player follows. A running one *is* the position, and
+   * yanking it mid-sentence because another tab wrote something would be a
+   * worse surprise than the drift. The player's own writes are recognised by
+   * their source and left alone.
+   */
+  useEffect(() => {
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated" || event.action.type !== "success") return;
+      const entryId = entryIdRef.current;
+      const [scope, id] = event.query.queryKey;
+      if (!entryId || scope !== "bookPosition" || id !== entryId) return;
+
+      const position = event.action.data as BookPosition | undefined;
+      if (!position?.updated_at || position.updated_at === followedRef.current) return;
+      followedRef.current = position.updated_at;
+
+      const seconds = position.audio?.seconds;
+      if (position.source === "listen" || seconds == null) return;
+      const audio = audioRef.current;
+      if (!audio || !audio.paused || !timelineRef.current) return;
+      if (Math.abs(seconds - globalRef.current) < FOLLOW_TOLERANCE_SECONDS) return;
+
+      seek(seconds);
+      // Catching up is not a position change of ours; the server already
+      // holds this second, translated from wherever it was written.
+      lastWriteRef.current = { at: Date.now(), global: seconds };
+    });
+  }, [queryClient, seek]);
+
   // --- leaving ------------------------------------------------------------
 
   /**
@@ -744,7 +800,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
    * app being swiped away, which on iOS never fires `pagehide` at all.
    */
   useEffect(() => {
-    const save = () => flush({ beacon: true, force: true });
+    const save = () => flush({ beacon: true });
     const onVisibility = () => {
       if (document.visibilityState === "hidden") save();
     };

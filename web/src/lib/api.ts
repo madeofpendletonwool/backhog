@@ -343,6 +343,13 @@ export const api = {
       body: body({ entry_id }),
     }),
 
+  /** Several entries at once, in this order, after what the list holds. */
+  addListItems: (listId: string, entry_ids: string[]) =>
+    request<{ ok: boolean }>(`/lists/${listId}/items`, {
+      method: "POST",
+      body: body({ entry_ids }),
+    }),
+
   removeListItem: (listId: string, entryId: string) =>
     request<void>(`/lists/${listId}/items/${entryId}`, { method: "DELETE" }),
 
@@ -387,6 +394,13 @@ export const api = {
     request<{ ok: boolean }>(`/projects/${projectId}/items`, {
       method: "POST",
       body: body({ entry_id }),
+    }),
+
+  /** Several entries at once, in this order, after what the checklist holds. */
+  addProjectItems: (projectId: string, entry_ids: string[]) =>
+    request<{ ok: boolean }>(`/projects/${projectId}/items`, {
+      method: "POST",
+      body: body({ entry_ids }),
     }),
 
   removeProjectItem: (projectId: string, entryId: string) =>

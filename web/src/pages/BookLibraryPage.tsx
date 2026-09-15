@@ -1,15 +1,17 @@
 import { cn } from "@/lib/cn";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
 
 import { BookCard, BookCardSkeleton } from "@/components/BookCard";
 import { BookStatsStrip } from "@/components/BookStatsStrip";
 import { BookTable } from "@/components/BookTable";
+import { SelectionBar } from "@/components/SelectionBar";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Select } from "@/components/ui/primitives";
 import { useBookFacets, useBookLibrary } from "@/hooks/useBooks";
 import { useDebounced } from "@/hooks/useLibrary";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { useSelection } from "@/hooks/useSelection";
 import { BOOK_STATUS_LABELS, QUICK_STATUSES, isBookEntry } from "@/lib/types";
 
 const SORTS = [
@@ -83,7 +85,16 @@ export function BookLibraryPage() {
 
   // media=book is pinned on the query, so the guard is a type narrowing rather
   // than a filter that does any work.
-  const entries = (data?.pages.flatMap((page) => page.entries) ?? []).filter(isBookEntry);
+  const entries = useMemo(
+    () => (data?.pages.flatMap((page) => page.entries) ?? []).filter(isBookEntry),
+    [data],
+  );
+  const visibleIds = useMemo(() => entries.map((entry) => entry.id), [entries]);
+  const selection = useSelection(visibleIds);
+  const pickedEntries = useMemo(() => {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    return selection.picked.flatMap((id) => byId.get(id) ?? []);
+  }, [entries, selection.picked]);
   const total = data?.pages[0]?.total ?? 0;
   const hasFilters = Boolean(status || debouncedSearch || author || subject || language);
 
@@ -96,7 +107,7 @@ export function BookLibraryPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+    <div className={cn("mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8", selection.active && "pb-28")}>
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Shelf</h1>
         <p className="mt-1 text-sm text-ink-400">
@@ -135,6 +146,17 @@ export function BookLibraryPage() {
               className="w-44 pl-9 sm:w-56"
             />
           </div>
+
+          <Button
+            size="icon"
+            variant={selection.active ? "primary" : "secondary"}
+            onClick={selection.active ? selection.exit : selection.enter}
+            aria-label="Select books"
+            aria-pressed={selection.active}
+            title="Select books"
+          >
+            <Gi name="list-checks" className="size-4" />
+          </Button>
 
           <Button
             size="icon"
@@ -225,11 +247,22 @@ export function BookLibraryPage() {
           {view === "grid" ? (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
               {entries.map((entry) => (
-                <BookCard key={entry.id} entry={entry} />
+                <BookCard
+                  key={entry.id}
+                  entry={entry}
+                  selectable={selection.active}
+                  selected={selection.selected.has(entry.id)}
+                  onSelect={(event) => selection.toggle(entry.id, { range: event.shiftKey })}
+                />
               ))}
             </div>
           ) : (
-            <BookTable entries={entries} />
+            <BookTable
+              entries={entries}
+              selectable={selection.active}
+              selected={selection.selected}
+              onSelect={(id, event) => selection.toggle(id, { range: event.shiftKey })}
+            />
           )}
 
           {hasNextPage && (
@@ -249,6 +282,13 @@ export function BookLibraryPage() {
           )}
         </div>
       )}
+
+      <SelectionBar
+        selection={selection}
+        entries={pickedEntries}
+        media="book"
+        shown={entries.length}
+      />
     </div>
   );
 }

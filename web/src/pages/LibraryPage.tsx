@@ -1,14 +1,16 @@
 import { cn } from "@/lib/cn";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import { GameCard, GameCardSkeleton } from "@/components/GameCard";
 import { GameTable } from "@/components/GameTable";
 import { StatsStrip } from "@/components/StatsStrip";
+import { SelectionBar } from "@/components/SelectionBar";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Select } from "@/components/ui/primitives";
 import { useDebounced, useFacets, useLibrary } from "@/hooks/useLibrary";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { useSelection } from "@/hooks/useSelection";
 import { QUICK_STATUSES, STATUS_LABELS, isGameEntry } from "@/lib/types";
 
 const SORTS = [
@@ -57,7 +59,16 @@ export function LibraryPage() {
 
   // media=game is pinned on the query, so the guard is a type narrowing rather
   // than a filter that does any work.
-  const entries = (data?.pages.flatMap((page) => page.entries) ?? []).filter(isGameEntry);
+  const entries = useMemo(
+    () => (data?.pages.flatMap((page) => page.entries) ?? []).filter(isGameEntry),
+    [data],
+  );
+  const visibleIds = useMemo(() => entries.map((entry) => entry.id), [entries]);
+  const selection = useSelection(visibleIds);
+  const pickedEntries = useMemo(() => {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    return selection.picked.flatMap((id) => byId.get(id) ?? []);
+  }, [entries, selection.picked]);
   const total = data?.pages[0]?.total ?? 0;
   const hasFilters = Boolean(status || debouncedSearch || platform || genre);
 
@@ -69,7 +80,7 @@ export function LibraryPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+    <div className={cn("mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8", selection.active && "pb-28")}>
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Library</h1>
         <p className="mt-1 text-sm text-ink-400">
@@ -105,6 +116,17 @@ export function LibraryPage() {
               className="w-44 pl-9 sm:w-56"
             />
           </div>
+
+          <Button
+            size="icon"
+            variant={selection.active ? "primary" : "secondary"}
+            onClick={selection.active ? selection.exit : selection.enter}
+            aria-label="Select games"
+            aria-pressed={selection.active}
+            title="Select games"
+          >
+            <Gi name="list-checks" className="size-4" />
+          </Button>
 
           <Button
             size="icon"
@@ -193,11 +215,22 @@ export function LibraryPage() {
           {view === "grid" ? (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
               {entries.map((entry) => (
-                <GameCard key={entry.id} entry={entry} />
+                <GameCard
+                  key={entry.id}
+                  entry={entry}
+                  selectable={selection.active}
+                  selected={selection.selected.has(entry.id)}
+                  onSelect={(event) => selection.toggle(entry.id, { range: event.shiftKey })}
+                />
               ))}
             </div>
           ) : (
-            <GameTable entries={entries} />
+            <GameTable
+              entries={entries}
+              selectable={selection.active}
+              selected={selection.selected}
+              onSelect={(id, event) => selection.toggle(id, { range: event.shiftKey })}
+            />
           )}
 
           {hasNextPage && (
@@ -217,6 +250,13 @@ export function LibraryPage() {
           )}
         </div>
       )}
+
+      <SelectionBar
+        selection={selection}
+        entries={pickedEntries}
+        media="game"
+        shown={entries.length}
+      />
     </div>
   );
 }

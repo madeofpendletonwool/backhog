@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { BookCover } from "@/components/BookCover";
+import { BookProgressPanel } from "@/components/BookProgressPanel";
 import { PhysicalCopyPanel } from "@/components/PhysicalCopyPanel";
 import { ShareBookPanel } from "@/components/ShareBookPanel";
 import { SearchInBookDialog } from "@/components/SearchInBookDialog";
@@ -154,6 +155,12 @@ export function BookDetailPage() {
       </div>
 
       <div className="mx-auto grid max-w-5xl grid-cols-1 gap-5 px-4 pb-16 sm:px-6 lg:grid-cols-3 lg:px-8">
+        {/* First, above the fold on every width: where you are, and the
+            button that updates it from the paper copy in your hand. */}
+        <div className="lg:col-span-3">
+          <BookProgressPanel entryId={entry.id} editions={editions} />
+        </div>
+
         <div className="space-y-5 lg:col-span-2">
           {book.description && (
             <Panel className="p-5">

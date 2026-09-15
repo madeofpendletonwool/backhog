@@ -216,12 +216,13 @@ func (s *Server) handleAddProjectItem(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if body.EntryID == "" {
-		fail(w, errorf(http.StatusBadRequest, "entry_id is required"))
+	ids := body.entries()
+	if len(ids) == 0 {
+		fail(w, errorf(http.StatusBadRequest, "entry_id or entry_ids is required"))
 		return
 	}
 
-	err = s.store.AddProjectItem(r.Context(), userID, chi.URLParam(r, "projectID"), body.EntryID)
+	err = s.store.AddProjectItems(r.Context(), userID, chi.URLParam(r, "projectID"), ids)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, errNotFound)
 		return

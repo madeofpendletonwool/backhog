@@ -283,6 +283,15 @@ func (s *Store) ListIDsForEntry(ctx context.Context, userID, entryID string) ([]
 // AddListItem appends an entry to a manual list. Both the list and the entry
 // must belong to the caller.
 func (s *Store) AddListItem(ctx context.Context, userID, listID, entryID string) error {
+	return s.AddListItems(ctx, userID, listID, []string{entryID})
+}
+
+// AddListItems appends several entries to a manual list in one transaction,
+// in the order given, after whatever the list already holds. Entries already
+// on the list keep their place rather than moving to the end; an entry that
+// is not the caller's fails the whole batch, so a multi-select from the shelf
+// either lands entirely or not at all.
+func (s *Store) AddListItems(ctx context.Context, userID, listID string, entryIDs []string) error {
 	l, err := s.GetList(ctx, userID, listID)
 	if err != nil {
 		return err
@@ -290,20 +299,33 @@ func (s *Store) AddListItem(ctx context.Context, userID, listID, entryID string)
 	if l.Kind != "manual" {
 		return fmt.Errorf("cannot add items to a smart list")
 	}
-	if _, err := s.GetEntry(ctx, userID, entryID); err != nil {
-		return err
+	for _, entryID := range entryIDs {
+		if _, err := s.GetEntry(ctx, userID, entryID); err != nil {
+			return err
+		}
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	var maxPos sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`SELECT MAX(position) FROM list_items WHERE list_id = ?`, listID).Scan(&maxPos); err != nil {
 		return err
 	}
-
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO list_items (list_id, entry_id, position) VALUES (?, ?, ?)
-		 ON CONFLICT DO NOTHING`, listID, entryID, nextAfter(maxPos))
-	return err
+	pos := nextAfter(maxPos)
+	for _, entryID := range entryIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO list_items (list_id, entry_id, position) VALUES (?, ?, ?)
+			 ON CONFLICT DO NOTHING`, listID, entryID, pos); err != nil {
+			return err
+		}
+		pos += positionGap
+	}
+	return tx.Commit()
 }
 
 // RemoveListItem detaches an entry from a manual list.

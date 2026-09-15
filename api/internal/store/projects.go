@@ -296,6 +296,14 @@ func (s *Store) ProjectItemsFor(ctx context.Context, userID, projectID string) (
 // the entry must belong to the caller, and the entry must live in the
 // project's arena — a book project's checklist is books, full stop.
 func (s *Store) AddProjectItem(ctx context.Context, userID, projectID, entryID string) error {
+	return s.AddProjectItems(ctx, userID, projectID, []string{entryID})
+}
+
+// AddProjectItems appends several entries to a checklist in one transaction,
+// in the order given. The same rules as a single add apply to every entry,
+// and one entry from the wrong arena fails the whole batch — a shelf
+// multi-select is one gesture, and it should not half-land.
+func (s *Store) AddProjectItems(ctx context.Context, userID, projectID string, entryIDs []string) error {
 	p, err := s.projectRow(ctx, userID, projectID)
 	if err != nil {
 		return err
@@ -303,24 +311,37 @@ func (s *Store) AddProjectItem(ctx context.Context, userID, projectID, entryID s
 	if p.Kind != models.ProjectChecklist {
 		return fmt.Errorf("only checklist projects have members")
 	}
-	entry, err := s.GetEntry(ctx, userID, entryID)
+	for _, entryID := range entryIDs {
+		entry, err := s.GetEntry(ctx, userID, entryID)
+		if err != nil {
+			return err
+		}
+		if entry.MediaType != p.MediaScope {
+			return fmt.Errorf("this project is scoped to %ss", p.MediaScope)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if entry.MediaType != p.MediaScope {
-		return fmt.Errorf("this project is scoped to %ss", p.MediaScope)
-	}
+	defer tx.Rollback()
 
 	var maxPos sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`SELECT MAX(position) FROM project_items WHERE project_id = ?`, projectID).Scan(&maxPos); err != nil {
 		return err
 	}
-
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO project_items (project_id, entry_id, position) VALUES (?, ?, ?)
-		 ON CONFLICT DO NOTHING`, projectID, entryID, nextAfter(maxPos))
-	return err
+	pos := nextAfter(maxPos)
+	for _, entryID := range entryIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO project_items (project_id, entry_id, position) VALUES (?, ?, ?)
+			 ON CONFLICT DO NOTHING`, projectID, entryID, pos); err != nil {
+			return err
+		}
+		pos += positionGap
+	}
+	return tx.Commit()
 }
 
 // RemoveProjectItem detaches an entry from a checklist project.

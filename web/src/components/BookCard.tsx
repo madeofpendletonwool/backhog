@@ -2,6 +2,7 @@ import { cn } from "@/lib/cn";
 import { Link } from "react-router-dom";
 
 import { BookCover } from "./BookCover";
+import { SelectOverlay } from "./SelectionBar";
 import { StatusMenu } from "./StatusMenu";
 import { StatusBadge } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
@@ -14,7 +15,18 @@ import type { BookEntry } from "@/lib/types";
  * fact that earns a permanent line — a shelf sorted by author is unreadable
  * without it.
  */
-export function BookCard({ entry }: { entry: BookEntry }) {
+export function BookCard({
+  entry,
+  selectable = false,
+  selected = false,
+  onSelect,
+}: {
+  entry: BookEntry;
+  /** Selection mode: a tap toggles the card instead of opening it. */
+  selectable?: boolean;
+  selected?: boolean;
+  onSelect?: (event: React.MouseEvent) => void;
+}) {
   const { book } = entry;
   const author = byline(book);
   const year = publishYear(book);
@@ -30,6 +42,7 @@ export function BookCard({ entry }: { entry: BookEntry }) {
 
       <Link
         to={`/books/${entry.id}`}
+        tabIndex={selectable ? -1 : undefined}
         className="block rounded-xl focus-visible:focus-ring"
         aria-label={book.title}
       >
@@ -37,7 +50,7 @@ export function BookCard({ entry }: { entry: BookEntry }) {
           className={cn(
             "relative overflow-hidden rounded-xl ring-1 ring-art",
             "transition-transform duration-300 ease-[var(--ease-spring)]",
-            "group-hover:-translate-y-1 group-hover:ring-art-hover",
+            !selectable && "group-hover:-translate-y-1 group-hover:ring-art-hover",
           )}
         >
           <BookCover book={book} sizes="(max-width: 640px) 45vw, 200px" />
@@ -53,7 +66,7 @@ export function BookCard({ entry }: { entry: BookEntry }) {
             </div>
           </div>
 
-          {entry.user_rating != null && (
+          {!selectable && entry.user_rating != null && (
             <div className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-lg bg-scrim/80 px-1.5 py-1 text-[11px] font-semibold text-amber-300 backdrop-blur-sm">
               <Gi name="star" className="size-3" />
               {entry.user_rating}
@@ -85,10 +98,14 @@ export function BookCard({ entry }: { entry: BookEntry }) {
         </div>
       </Link>
 
-      {/* Quick status switch, revealed on hover or keyboard focus. */}
-      <div className="pointer-events-none absolute inset-x-2 bottom-2 opacity-0 transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-        <StatusMenu entry={entry} />
-      </div>
+      {selectable ? (
+        <SelectOverlay selected={selected} label={book.title} onToggle={(event) => onSelect?.(event)} />
+      ) : (
+        /* Quick status switch, revealed on hover or keyboard focus. */
+        <div className="pointer-events-none absolute inset-x-2 bottom-2 opacity-0 transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+          <StatusMenu entry={entry} />
+        </div>
+      )}
     </div>
   );
 }

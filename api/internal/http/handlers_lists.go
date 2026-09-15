@@ -135,8 +135,26 @@ func (s *Server) handleDeleteList(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// listItemRequest names the entries to add: one in entry_id, or several in
+// entry_ids — the shelf's multi-select sends the latter. Either is accepted;
+// both together is the union, in that order.
 type listItemRequest struct {
-	EntryID string `json:"entry_id"`
+	EntryID  string   `json:"entry_id"`
+	EntryIDs []string `json:"entry_ids"`
+}
+
+// entries flattens the request into the ordered ids to add, deduplicated.
+func (r listItemRequest) entries() []string {
+	seen := make(map[string]bool, len(r.EntryIDs)+1)
+	out := make([]string, 0, len(r.EntryIDs)+1)
+	for _, id := range append([]string{r.EntryID}, r.EntryIDs...) {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *Server) handleAddListItem(w http.ResponseWriter, r *http.Request) {
@@ -151,12 +169,13 @@ func (s *Server) handleAddListItem(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if body.EntryID == "" {
-		fail(w, errorf(http.StatusBadRequest, "entry_id is required"))
+	ids := body.entries()
+	if len(ids) == 0 {
+		fail(w, errorf(http.StatusBadRequest, "entry_id or entry_ids is required"))
 		return
 	}
 
-	err = s.store.AddListItem(r.Context(), userID, chi.URLParam(r, "listID"), body.EntryID)
+	err = s.store.AddListItems(r.Context(), userID, chi.URLParam(r, "listID"), ids)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, errNotFound)
 		return

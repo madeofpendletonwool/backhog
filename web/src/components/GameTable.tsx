@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 
+import { cn } from "@/lib/cn";
+
 import { GameCover } from "./GameCover";
 import { StatusBadge } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
@@ -7,13 +9,25 @@ import { accentStyle, formatDuration, relativeTime, releaseYear } from "@/lib/fo
 import type { GameEntry } from "@/lib/types";
 
 /** The dense alternative to the cover grid, for scanning many games at once. */
-export function GameTable({ entries }: { entries: GameEntry[] }) {
+export function GameTable({
+  entries,
+  selectable = false,
+  selected,
+  onSelect,
+}: {
+  entries: GameEntry[];
+  /** Selection mode: a leading checkbox column, and the row toggles it. */
+  selectable?: boolean;
+  selected?: Set<string>;
+  onSelect?: (id: string, event: React.MouseEvent) => void;
+}) {
   return (
     <div className="panel overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[52rem] text-sm">
           <thead>
             <tr className="border-b border-edge text-left text-xs font-medium text-ink-400">
+              {selectable && <th className="w-10 px-4 py-3" aria-label="Selected" />}
               <th className="px-4 py-3 font-medium">Game</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Genres</th>
@@ -26,12 +40,35 @@ export function GameTable({ entries }: { entries: GameEntry[] }) {
             {entries.map((entry) => (
               <tr
                 key={entry.id}
-                className="border-b border-edge-soft transition-colors last:border-0 hover:bg-fill-hover"
+                onClick={selectable ? (event) => onSelect?.(entry.id, event) : undefined}
+                aria-selected={selectable ? selected?.has(entry.id) : undefined}
+                className={cn(
+                  "border-b border-edge-soft transition-colors last:border-0 hover:bg-fill-hover",
+                  selectable && "cursor-pointer select-none",
+                  selectable && selected?.has(entry.id) && "bg-brand-500/10 hover:bg-brand-500/15",
+                )}
               >
+                {selectable && (
+                  <td className="px-4 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={selected?.has(entry.id) ?? false}
+                      onChange={() => undefined}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSelect?.(entry.id, event);
+                      }}
+                      aria-label={`Select ${entry.game.name}`}
+                      className="size-4 accent-brand-500"
+                    />
+                  </td>
+                )}
                 <td className="px-4 py-2.5">
                   <Link
                     to={`/game/${entry.id}`}
                     style={accentStyle(entry.game)}
+                    tabIndex={selectable ? -1 : undefined}
+                    onClick={selectable ? (event) => event.preventDefault() : undefined}
                     className="flex items-center gap-3 rounded-lg focus-visible:focus-ring"
                   >
                     <GameCover game={entry.game} className="w-9 shrink-0 rounded-md" />

@@ -517,9 +517,7 @@ func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
 		write.PageIndex = nil
 		write.CharOffset = *body.CharOffset
 		write.Source = defaultSource(body.Source, models.PositionSourceRead)
-		// A known-good text offset supersedes any raw audio fallback: the
-		// canonical position is now the truth for both views.
-		write.RawAudioSeconds, write.RawAudioFileID = nil, nil
+		dropRawAudioIfDerivable(views, &write)
 
 	case body.AudioSeconds != nil:
 		if !s.applyAudioWrite(w, r, userID, entryID, bookID, body, views, &write) {
@@ -541,7 +539,7 @@ func (s *Server) handlePutBookPosition(w http.ResponseWriter, r *http.Request) {
 		write.PageIndex = nil
 		write.CharOffset = offset
 		write.Source = defaultSource(body.Source, models.PositionSourceManual)
-		write.RawAudioSeconds, write.RawAudioFileID = nil, nil
+		dropRawAudioIfDerivable(views, &write)
 
 	case body.PageIndex != nil:
 		if views.pageCount == 0 {
@@ -634,6 +632,20 @@ func (s *Server) applyAudioWrite(w http.ResponseWriter, r *http.Request, userID,
 	// re-ordering the timeline cannot move it.
 	write.RawAudioSeconds, write.RawAudioFileID = body.AudioSeconds, body.AudioFileID
 	return true
+}
+
+// dropRawAudioIfDerivable is the text-axis write's side of the one-position
+// contract. With an alignment, a known-good text offset supersedes the raw
+// audio fallback: the audio view is derived from the offset from now on, and
+// the pair would only drift from it. Without one there is nothing to derive
+// from, and the raw pair is the *only* listening position there is — so a
+// page scanned with the tape paused keeps the tape where it was, instead of
+// wiping the second and sending the player back to 00:00:00 to be scrubbed
+// for by hand.
+func dropRawAudioIfDerivable(views bookViews, write *store.ProgressWrite) {
+	if views.translator != nil && views.translator.HasAudio() {
+		write.RawAudioSeconds, write.RawAudioFileID = nil, nil
+	}
 }
 
 // handleAddReadingSession logs a stretch of reading or listening.

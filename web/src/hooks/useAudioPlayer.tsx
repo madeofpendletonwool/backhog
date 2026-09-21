@@ -781,7 +781,13 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
       if (!position?.updated_at || position.updated_at === followedRef.current) return;
       followedRef.current = position.updated_at;
 
-      const seconds = position.audio?.seconds;
+      // Only a *derived* second is the book telling the tape where it is —
+      // a scan or the reader, translated through the alignment. An underived
+      // one is either the player's own raw checkpoint or, on an unaligned
+      // book with no checkpoint at all, the server's "start at the
+      // beginning" zero; following either would yank the tape to a place
+      // nobody chose.
+      const seconds = position.audio?.derived ? position.audio.seconds : null;
       if (position.source === "listen" || seconds == null) return;
       const audio = audioRef.current;
       if (!audio || !audio.paused || !timelineRef.current) return;

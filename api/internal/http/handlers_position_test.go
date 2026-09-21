@@ -354,12 +354,18 @@ func TestBookPositionUnalignedAudioIsHonest(t *testing.T) {
 		t.Errorf("char_offset = %v, want the untouched 0", got["char_offset"])
 	}
 
-	// Writing a real text position supersedes the raw fallback.
-	app.api(t, http.MethodPut, "/api/books/"+positionEntry+"/position", map[string]any{"char_offset": 10})
+	// A text write on an unaligned book moves the reader and leaves the
+	// tape alone: without a map there is nothing to derive the audio view
+	// from, and wiping the raw pair would send the player back to the start.
+	app.api(t, http.MethodPut, "/api/books/"+positionEntry+"/position",
+		map[string]any{"char_offset": 10, "source": "scan"})
 	_, got = app.api(t, http.MethodGet, "/api/books/"+positionEntry+"/position", nil)
+	if got["char_offset"] != 10.0 || got["source"] != "scan" {
+		t.Errorf("after the scan: offset/source = %v/%v, want 10/scan", got["char_offset"], got["source"])
+	}
 	audio = got["audio"].(map[string]any)
-	if audio["seconds"] != 0.0 {
-		t.Errorf("audio seconds = %v after a text write, want the cleared 0", audio["seconds"])
+	if audio["seconds"] != positionTrackOneSeconds+30 || audio["derived"] != false {
+		t.Errorf("audio after a scan = %v, want the raw %vs kept", audio, positionTrackOneSeconds+30)
 	}
 }
 

@@ -6,6 +6,7 @@ import { SelectOverlay } from "./SelectionBar";
 import { StatusMenu } from "./StatusMenu";
 import { StatusBadge } from "./StatusBadge";
 import { Gi } from "./ui/Gi";
+import { continueLabel, useContinueReading } from "@/hooks/useContinueReading";
 import { accentStyle, byline, publishYear } from "@/lib/format";
 import type { BookEntry } from "@/lib/types";
 
@@ -30,6 +31,13 @@ export function BookCard({
   const { book } = entry;
   const author = byline(book);
   const year = publishYear(book);
+  const continueReading = useContinueReading();
+
+  // A book you are in the middle of wears its progress on the jacket and
+  // offers a way straight back in — the detail page is a detour when what
+  // you want is the page you stopped on. Finished books keep a clean jacket.
+  const percent = entry.progress_percent ?? 0;
+  const inProgress = entry.status === "playing" && percent > 0 && percent < 100;
 
   return (
     <div className="group relative" style={accentStyle(book)}>
@@ -95,14 +103,45 @@ export function BookCard({
               className="px-1.5 backdrop-blur-sm"
             />
           </div>
+
+          {/* Progress along the bottom edge of the jacket, sampled from
+              the same accent as the glow. */}
+          {inProgress && (
+            <div
+              className="absolute inset-x-0 bottom-0 h-1 bg-scrim/60"
+              role="progressbar"
+              aria-label={`${Math.round(percent)}% read`}
+              aria-valuenow={Math.round(percent)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className="h-full" style={{ width: `${percent}%`, background: "var(--accent)" }} />
+            </div>
+          )}
         </div>
       </Link>
 
       {selectable ? (
         <SelectOverlay selected={selected} label={book.title} onToggle={(event) => onSelect?.(event)} />
       ) : (
-        /* Quick status switch, revealed on hover or keyboard focus. */
-        <div className="pointer-events-none absolute inset-x-2 bottom-2 opacity-0 transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+        /* Quick actions, revealed on hover or keyboard focus: the status
+           switch, and for a book in progress the way back into it. */
+        <div className="pointer-events-none absolute inset-x-2 bottom-2 flex flex-col items-stretch gap-1.5 opacity-0 transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+          {inProgress && (
+            <button
+              type="button"
+              onClick={() => continueReading(entry)}
+              title={continueLabel(entry)}
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-ink-900/95 px-2 py-1.5 text-xs font-semibold text-ink-100 ring-1 ring-edge-strong backdrop-blur-md transition-colors hover:bg-ink-800 focus-visible:focus-ring"
+            >
+              <Gi
+                name={entry.progress_source === "listen" ? "headphones" : "scroll-unfurled"}
+                className="size-3.5 shrink-0"
+              />
+              {entry.progress_source === "listen" ? "Listen" : "Continue"}
+              <span className="ml-auto tabular-nums text-ink-400">{Math.round(percent)}%</span>
+            </button>
+          )}
           <StatusMenu entry={entry} />
         </div>
       )}

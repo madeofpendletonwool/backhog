@@ -15,7 +15,16 @@ import type { SearchResult } from "@/lib/types";
  * Command-palette style game search. Typing searches IGDB; Enter adds the
  * highlighted game to the backlog without leaving the keyboard.
  */
-export function AddGameDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AddGameDialog({
+  open,
+  onClose,
+  initialQuery = "",
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** A title carried over from the jump palette, searched on open. */
+  initialQuery?: string;
+}) {
   const [term, setTerm] = useState("");
   const [highlighted, setHighlighted] = useState(0);
   const debounced = useDebounced(term, 300);
@@ -39,10 +48,12 @@ export function AddGameDialog({ open, onClose }: { open: boolean; onClose: () =>
       setTerm("");
       setHighlighted(0);
       add.reset();
+    } else if (initialQuery) {
+      setTerm(initialQuery);
     }
     // `add` is a stable mutation object; re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, initialQuery]);
 
   // Keep the highlighted row in view during arrow-key navigation.
   useEffect(() => {

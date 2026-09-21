@@ -7,14 +7,17 @@ import { AddBookDialog } from "./AddBookDialog";
 import { AddGameDialog } from "./AddGameDialog";
 import { AudioPlayer } from "./player/AudioPlayer";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { JumpDialog } from "./JumpDialog";
 import { PickDialog } from "./PickDialog";
 import { ReadDialog } from "./ReadDialog";
 import { SteamImportDialog } from "./SteamImportDialog";
+import { Dialog } from "./ui/Dialog";
 import { Button, Gi } from "./ui/primitives";
 import { useAuth } from "@/hooks/useAuth";
 import { useArena } from "@/hooks/useArena";
 import { useEggUnlock } from "@/hooks/useAchievements";
-import { useBookStats } from "@/hooks/useBooks";
+import { useBookStats, useReadingNow } from "@/hooks/useBooks";
+import { useContinueReading } from "@/hooks/useContinueReading";
 import { AudioPlayerProvider } from "@/hooks/useAudioPlayer";
 import { useTheme, type ThemeFamily } from "@/hooks/useTheme";
 import { useLists } from "@/hooks/useLists";
@@ -30,6 +33,12 @@ type NavItem = {
   end: boolean;
   /** Only for accounts that may manage library files — see useAuth. */
   media?: boolean;
+  /**
+   * Earns a slot on the phone's tab bar. There are four of those, with
+   * labels, and everything else lives behind "More" — a row of nine bare
+   * icons was a guessing game.
+   */
+  primary?: boolean;
 };
 
 /* The three places the sidebar has to know which family it is in. Records
@@ -49,21 +58,12 @@ const sublineClass: Record<ThemeFamily, string> = {
   library: "font-display text-[12px] italic",
 };
 
-/* The shortcut hint sits *on* the primary button, so it has to read against
-   whatever that button is: dark ink on the arcade's gold and the library's
-   ember, light ink on Midnight's violet. */
-const kbdClass: Record<ThemeFamily, string> = {
-  pixel: "rounded-[2px] bg-black/20 text-black/60",
-  flat: "rounded border border-white/20 text-white/70",
-  library: "rounded-xs bg-black/15 text-black/55",
-};
-
 const gameNav: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: "gauge", end: true },
-  { to: "/library", label: "Library", icon: "layout-grid", end: true },
-  { to: "/queue", label: "Play Queue", icon: "list-ordered", end: false },
+  { to: "/", label: "Dashboard", icon: "gauge", end: true, primary: true },
+  { to: "/library", label: "Library", icon: "layout-grid", end: true, primary: true },
+  { to: "/queue", label: "Play Queue", icon: "list-ordered", end: false, primary: true },
   { to: "/debt", label: "Backlog Debt", icon: "hourglass", end: false },
-  { to: "/series", label: "Series", icon: "layers", end: false },
+  { to: "/series", label: "Series", icon: "layers", end: false, primary: true },
   { to: "/achievements", label: "Achievements", icon: "trophy", end: false },
   { to: "/lists", label: "Lists", icon: "list-tree", end: false },
   { to: "/projects", label: "Projects", icon: "target", end: false },
@@ -72,14 +72,14 @@ const gameNav: NavItem[] = [
 /* The shared pages carry ?media=book from here, so arriving from the books
    nav lands on the books half of a page that holds both. */
 const bookNav: NavItem[] = [
-  { to: "/books/dashboard", label: "Dashboard", icon: "gauge", end: true },
-  { to: "/books", label: "Shelf", icon: "layout-grid", end: true },
-  { to: "/queue?media=book", label: "Reading Queue", icon: "list-ordered", end: false },
+  { to: "/books", label: "Dashboard", icon: "gauge", end: true, primary: true },
+  { to: "/books/shelf", label: "Shelf", icon: "layout-grid", end: true, primary: true },
+  { to: "/queue?media=book", label: "Reading Queue", icon: "list-ordered", end: false, primary: true },
   { to: "/debt?media=book", label: "Reading Debt", icon: "hourglass", end: false },
   // The attach flow. A reader has no business here and the API would refuse
   // them anyway, so the item is dropped from their nav rather than left to
   // lead somewhere that answers 403 — see mediaNav below.
-  { to: "/books/files", label: "Book files", icon: "full-folder", end: false, media: true },
+  { to: "/books/files", label: "Book files", icon: "full-folder", end: false, media: true, primary: true },
   { to: "/achievements?media=book", label: "Achievements", icon: "trophy", end: false },
   { to: "/lists", label: "Lists", icon: "list-tree", end: false },
   { to: "/projects", label: "Projects", icon: "target", end: false },
@@ -87,6 +87,10 @@ const bookNav: NavItem[] = [
 
 export function Layout() {
   const [addOpen, setAddOpen] = useState(false);
+  // What the jump palette had typed when it handed off to the add dialog.
+  const [addQuery, setAddQuery] = useState("");
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
   const [readOpen, setReadOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -103,6 +107,13 @@ export function Layout() {
   const navItems = (arena === "books" ? bookNav : gameNav).filter(
     (item) => !item.media || canManageMedia,
   );
+  const primaryItems = navItems.filter((item) => item.primary);
+  const moreItems = navItems.filter((item) => !item.primary);
+
+  const openAdd = (query = "") => {
+    setAddQuery(query);
+    setAddOpen(true);
+  };
 
   /* The hog is the mark in Midnight, the joystick in the arcade — the
      one place a component gets to know which family it is in, because a
@@ -128,12 +139,14 @@ export function Layout() {
     }
   };
 
-  // Cmd/Ctrl+K opens the add dialog from anywhere in the app.
+  // Cmd/Ctrl+K is the jump palette, from anywhere in the app — the shortcut
+  // means "find" everywhere else, and finding is the thing done most often.
+  // Adding is a row in the palette rather than a second chord.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setAddOpen(true);
+        setJumpOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -165,31 +178,37 @@ export function Layout() {
           {mark("lg")}
           <div>
             <p className={cn("text-ink-100", wordmarkClass[family])}>Backhog</p>
-            <p className={cn("mt-1 text-ink-400", sublineClass[family])}>
-              {arena === "books"
-                ? bookStats
-                  ? `${bookStats.backlog} left to read`
-                  : "\u00a0"
-                : stats
-                  ? `${stats.backlog} in the backlog`
-                  : "\u00a0"}
-            </p>
+            {arena === "books" ? (
+              <ReadingSubline
+                fallback={bookStats ? `${bookStats.backlog} left to read` : "\u00a0"}
+                className={cn("mt-1", sublineClass[family])}
+              />
+            ) : (
+              <p className={cn("mt-1 text-ink-400", sublineClass[family])}>
+                {stats ? `${stats.backlog} in the backlog` : "\u00a0"}
+              </p>
+            )}
           </div>
         </div>
 
         <ArenaSwitch arena={arena} onSwitch={switchArena} className="mb-4" />
 
-        <Button variant="primary" className="mb-4 w-full shrink-0" onClick={() => setAddOpen(true)}>
-          <Gi name="plus" className="size-3.5" />
-          {arena === "books" ? "Add book" : "Add game"}
-          <kbd
-            className={cn(
-              "ml-auto px-1.5 py-0.5 font-sans text-[10px] font-normal normal-case tracking-normal",
-              kbdClass[family],
-            )}
-          >
+        {/* The palette, dressed as the search box it is. */}
+        <button
+          type="button"
+          onClick={() => setJumpOpen(true)}
+          className="mb-3 flex w-full shrink-0 items-center gap-2.5 rounded-xl border border-edge bg-ink-850 px-3 py-2 text-sm text-ink-500 transition-colors hover:border-edge-strong hover:text-ink-300 focus-visible:focus-ring"
+        >
+          <Gi name="search" className="size-3.5" />
+          <span className="flex-1 text-left">{arena === "books" ? "Find a book" : "Find a game"}</span>
+          <kbd className="rounded border border-edge px-1.5 py-0.5 font-sans text-[10px] text-ink-500">
             ⌘K
           </kbd>
+        </button>
+
+        <Button variant="primary" className="mb-4 w-full shrink-0" onClick={() => openAdd()}>
+          <Gi name="plus" className="size-3.5" />
+          {arena === "books" ? "Add book" : "Add game"}
         </Button>
 
         {/* Same anti-deliberation device on both sides of the house — the
@@ -263,22 +282,22 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* Mobile top bar; the sidebar collapses away below lg. */}
+      {/* Mobile chrome; the sidebar collapses away below lg. The top bar
+          holds the actions, the bottom bar holds the places — four of them,
+          with labels, and the rest behind More. */}
       <header className="f-panel fixed inset-x-2 top-2 z-30 flex items-center gap-1 px-3 py-1.5 lg:hidden">
         <button type="button" aria-label="Backhog" className="shrink-0" onClick={onLogoClick}>
           {mark("sm")}
         </button>
         <ArenaSwitch arena={arena} onSwitch={switchArena} compact />
-        <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {navItems.map(({ to, label, icon, end }) => (
-            <NavLink key={to} to={to} end={end} className={mobileLinkClass} title={label}>
-              <Gi name={icon} className="size-4" />
-            </NavLink>
-          ))}
-          <NavLink to="/settings" className={mobileLinkClass} title="Settings">
-            <Gi name="settings" className="size-4" />
-          </NavLink>
-        </nav>
+        <div className="min-w-0 flex-1" />
+        <button
+          onClick={() => setJumpOpen(true)}
+          className="shrink-0 p-2 text-ink-400 transition-colors hover:text-ink-100"
+          aria-label={arena === "books" ? "Find a book" : "Find a game"}
+        >
+          <Gi name="search" className="size-4" />
+        </button>
         <button
           onClick={() => (arena === "books" ? setReadOpen(true) : setPickOpen(true))}
           className="shrink-0 p-2 text-ink-400 transition-colors hover:text-ink-100"
@@ -286,22 +305,106 @@ export function Layout() {
         >
           <Gi name="dices" className="size-4" />
         </button>
-        <Button size="sm" variant="primary" className="shrink-0" onClick={() => setAddOpen(true)}>
+        <Button size="sm" variant="primary" className="shrink-0" onClick={() => openAdd()}>
           <Gi name="plus" className="size-3.5" />
           Add
         </Button>
       </header>
 
+      <nav
+        aria-label="Primary"
+        className="f-panel fixed inset-x-2 bottom-2 z-30 flex items-stretch pb-[env(safe-area-inset-bottom)] lg:hidden"
+      >
+        {primaryItems.map(({ to, label, icon, end }) => (
+          <NavLink key={to} to={to} end={end} className={tabLinkClass}>
+            <Gi name={icon} className="size-5" />
+            <span className="truncate">{label.replace(/^(Reading|Play) /, "")}</span>
+          </NavLink>
+        ))}
+        <button
+          type="button"
+          onClick={() => setMoreOpen(true)}
+          aria-haspopup="dialog"
+          className={tabLinkClass({ isActive: false })}
+        >
+          <Gi name="sliders" className="size-5" />
+          <span>More</span>
+        </button>
+      </nav>
+
       {/* The player bar publishes its own height as --player-h (0 when no
-          book is open), so the last row of a page is never buried under it. */}
-      <main className="min-w-0 flex-1 pb-[var(--player-h,0px)] pt-20 lg:pl-[17rem] lg:pt-0">
+          book is open), so the last row of a page is never buried under it;
+          below lg the tab bar's height is padded on top of it. */}
+      <main className="min-w-0 flex-1 pb-[calc(var(--player-h,0px)+4.5rem)] pt-20 lg:pb-[var(--player-h,0px)] lg:pl-[17rem] lg:pt-0">
         <ErrorBoundary>
-          <Outlet context={{ openAddDialog: () => setAddOpen(true) }} />
+          <Outlet
+            context={{
+              openAddDialog: () => openAdd(),
+              openReadDialog: () => setReadOpen(true),
+              openJumpDialog: () => setJumpOpen(true),
+            }}
+          />
         </ErrorBoundary>
       </main>
 
-      <AddGameDialog open={addOpen && arena === "games"} onClose={() => setAddOpen(false)} />
-      <AddBookDialog open={addOpen && arena === "books"} onClose={() => setAddOpen(false)} />
+      <Dialog open={moreOpen} onClose={() => setMoreOpen(false)} label="More" className="max-w-sm">
+        <nav className="space-y-1" onClick={() => setMoreOpen(false)}>
+          {moreItems.map(({ to, label, icon, end }) => (
+            <NavLink key={to} to={to} end={end} className={navLinkClass}>
+              <Gi name={icon} className="size-4" />
+              {label}
+            </NavLink>
+          ))}
+          {smartLists.map((list) => (
+            <NavLink key={list.id} to={`/lists/${list.id}`} className={navLinkClass}>
+              <Gi name="sparkles" className="size-3.5 shrink-0 text-hl-bright" />
+              <span className="truncate">{list.name}</span>
+              <span className="ml-auto shrink-0 font-display text-[10px] tabular-nums text-ink-400">
+                {list.count}
+              </span>
+            </NavLink>
+          ))}
+          <div className="my-2 border-t-2 border-line" />
+          {arena === "games" && (
+            <button onClick={() => setImportOpen(true)} className={actionLinkClass}>
+              <Gi name="download" className="size-4" />
+              Import from Steam
+            </button>
+          )}
+          {isAdmin && (
+            <NavLink to="/admin" className={navLinkClass}>
+              <Gi name="family-tree" className="size-4" />
+              Accounts
+            </NavLink>
+          )}
+          <NavLink to="/settings" className={navLinkClass}>
+            <Gi name="settings" className="size-4" />
+            <span className="truncate">{user?.username}</span>
+          </NavLink>
+          <button
+            onClick={async () => {
+              await logout();
+              navigate("/login");
+            }}
+            className={actionLinkClass}
+          >
+            <Gi name="log-out" className="size-4" />
+            Sign out
+          </button>
+        </nav>
+      </Dialog>
+
+      <JumpDialog open={jumpOpen} onClose={() => setJumpOpen(false)} arena={arena} onAdd={openAdd} />
+      <AddGameDialog
+        open={addOpen && arena === "games"}
+        onClose={() => setAddOpen(false)}
+        initialQuery={addQuery}
+      />
+      <AddBookDialog
+        open={addOpen && arena === "books"}
+        onClose={() => setAddOpen(false)}
+        initialQuery={addQuery}
+      />
       <PickDialog open={pickOpen} onClose={() => setPickOpen(false)} />
       <ReadDialog open={readOpen} onClose={() => setReadOpen(false)} />
       <SteamImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
@@ -314,6 +417,42 @@ export function Layout() {
       {chrome}
       <AudioPlayer />
     </AudioPlayerProvider>
+  );
+}
+
+/**
+ * The line under the wordmark in the books arena: the book you are in the
+ * middle of and how far in, one click from the page you stopped on. More
+ * useful chrome for a reader than the size of the pile, which is what it
+ * shows when nothing is in progress.
+ *
+ * Its own component because it resumes through the player, and the player's
+ * provider wraps the chrome rather than the Layout component itself.
+ */
+function ReadingSubline({ fallback, className }: { fallback: string; className: string }) {
+  const { data: readingNow } = useReadingNow();
+  const continueReading = useContinueReading();
+  const current = readingNow?.books[0] ?? null;
+
+  if (!current) return <p className={cn("text-ink-400", className)}>{fallback}</p>;
+
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        // The wordmark around this counts clicks for an egg; a resume is not one.
+        event.stopPropagation();
+        continueReading(current.entry);
+      }}
+      title={`Continue ${current.entry.book.title}`}
+      className={cn(
+        "flex max-w-[9.5rem] items-baseline gap-1.5 text-left text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring",
+        className,
+      )}
+    >
+      <span className="truncate">{current.entry.book.title}</span>
+      <span className="shrink-0 tabular-nums text-hl-bright">{Math.round(current.percent)}%</span>
+    </button>
   );
 }
 
@@ -438,5 +577,8 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
 const actionLinkClass =
   "flex w-full items-center gap-2.5 px-3 py-2 text-sm text-ink-400 transition-colors hover:text-ink-200 focus-visible:focus-ring";
 
-const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
-  cn("p-2 transition-colors", isActive ? "text-hl-bright" : "text-ink-400");
+const tabLinkClass = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    "flex min-w-0 flex-1 flex-col items-center gap-1 px-1 py-2 text-[10px] font-medium transition-colors focus-visible:focus-ring",
+    isActive ? "text-hl-bright" : "text-ink-400 hover:text-ink-200",
+  );

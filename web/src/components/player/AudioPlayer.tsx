@@ -53,7 +53,7 @@ export function AudioPlayer() {
       <div
         ref={frameRef}
         style={accentStyle(book)}
-        className="fixed inset-x-2 bottom-2 z-40 lg:left-[17rem]"
+        className="fixed inset-x-2 bottom-[4.75rem] z-40 lg:bottom-2 lg:left-[17rem]"
       >
         <section className="f-panel px-3 py-2.5" aria-label="Audiobook player">
           {error && (

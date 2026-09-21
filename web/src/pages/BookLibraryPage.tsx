@@ -20,7 +20,7 @@ const SORTS = [
   { value: "author", label: "Author A–Z" },
   { value: "published", label: "Newest first" },
   { value: "pages", label: "Shortest first" },
-  { value: "updated", label: "Recently updated" },
+  { value: "updated", label: "Recently read" },
 ];
 
 /**
@@ -46,7 +46,7 @@ export function BookLibraryPage() {
      are, in localStorage: they are a personal preference that should survive
      leaving the page, not a location. So an incoming ?author= is *adopted*
      into that state and then stripped from the URL, which does mean the
-     address bar reads a bare /books once you have landed. Making every filter
+     address bar reads a bare /books/shelf once you have landed. Making every filter
      URL-driven instead would mean rewriting the same model in LibraryPage to
      keep the two arenas' shelves identical, which is the whole reason they
      share these controls. */
@@ -127,7 +127,16 @@ export function BookLibraryPage() {
           All
         </StatusTab>
         {QUICK_STATUSES.map((value) => (
-          <StatusTab key={value} active={status === value} onClick={() => setStatus(value)}>
+          <StatusTab
+            key={value}
+            active={status === value}
+            onClick={() => {
+              setStatus(value);
+              // The books you are reading are wanted in the order you last
+              // touched them, not alphabetically; the sort stays changeable.
+              if (value === "playing") setSort("updated");
+            }}
+          >
             {BOOK_STATUS_LABELS[value]}
           </StatusTab>
         ))}

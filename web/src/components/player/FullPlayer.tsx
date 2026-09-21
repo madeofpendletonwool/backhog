@@ -220,7 +220,7 @@ export function FullPlayer() {
                     <span key={name}>
                       {index > 0 && <span className="text-ink-600">, </span>}
                       <Link
-                        to={`/books?author=${encodeURIComponent(name)}`}
+                        to={`/books/shelf?author=${encodeURIComponent(name)}`}
                         onClick={close}
                         title={`Every book by ${name} on your shelf`}
                         className="rounded underline decoration-ink-600 underline-offset-4 transition-colors hover:text-ink-100 hover:decoration-ink-300 focus-visible:focus-ring"
@@ -347,7 +347,7 @@ export function FullPlayer() {
               {subjects.map((subject) => (
                 <Link
                   key={subject}
-                  to={`/books?subject=${encodeURIComponent(subject)}`}
+                  to={`/books/shelf?subject=${encodeURIComponent(subject)}`}
                   onClick={close}
                   title={`Every ${subject} book on your shelf`}
                   className="rounded-full bg-fill-active px-2.5 py-1 text-xs text-ink-300 transition-colors hover:bg-fill-hover hover:text-ink-100 focus-visible:focus-ring"

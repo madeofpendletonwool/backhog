@@ -42,6 +42,7 @@ import type {
   ProjectKind,
   ReadingDebt,
   ReadingInsights,
+  ReadingNow,
   ReadingPicks,
   ReadingSeason,
   RuleSet,
@@ -462,6 +463,9 @@ export const api = {
   readingDebt: () => request<ReadingDebt>("/library/debt?media=book"),
 
   readingInsights: () => request<ReadingInsights>("/library/insights?media=book"),
+
+  /** The books in progress, most recently read first — the dashboard's hero row. */
+  readingNow: () => request<ReadingNow>("/library/reading"),
 
   /** "What should I read?": four explainable picks for a time budget. */
   readingPicks: (minutes: number, exclude: string[] = []) => {

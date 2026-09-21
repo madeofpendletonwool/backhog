@@ -66,6 +66,29 @@ export function useReadingInsights(enabled = true) {
   return useQuery({ queryKey: ["readingInsights"], queryFn: api.readingInsights, enabled });
 }
 
+/**
+ * The in-progress books with their progress. `enabled` is for the sidebar,
+ * which only wants the current book's title in the books arena.
+ */
+export function useReadingNow(enabled = true) {
+  return useQuery({ queryKey: ["readingNow"], queryFn: api.readingNow, enabled });
+}
+
+/**
+ * A position write happened. The reader and the player call this after each
+ * checkpoint lands so the dashboard's hero and the shelf's progress bars are
+ * never a session behind. The shelf and entry caches are only marked stale —
+ * nothing is watching them from inside the reader — while the dashboard's
+ * row refetches if it is on screen, which is what makes leaving the reader
+ * for the dashboard show the offset that was just written.
+ */
+export function markReadingProgressStale(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ["readingNow"] });
+  for (const key of ["library", "books", "entry"]) {
+    queryClient.invalidateQueries({ queryKey: [key], refetchType: "none" });
+  }
+}
+
 export function useReadingDebt(enabled = true) {
   return useQuery({ queryKey: ["readingDebt"], queryFn: api.readingDebt, enabled });
 }

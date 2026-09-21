@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { api, audioTrackUrl, beaconBookPosition, bookCoverUrl } from "@/lib/api";
+import { markReadingProgressStale } from "@/hooks/useBooks";
 import { byline } from "@/lib/format";
 import type { AudioTimeline, BookEntry, BookPosition } from "@/lib/types";
 import { usePersistentState } from "./usePersistentState";
@@ -231,6 +232,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
         .putBookPosition(entryId, write)
         .then((result) => {
           queryClient.setQueryData(["bookPosition", entryId], result.position);
+          markReadingProgressStale(queryClient);
           if (result.status_changed) {
             // Finishing a book moves it out of the reading queue and into the
             // stats, the same way finishing a game does.

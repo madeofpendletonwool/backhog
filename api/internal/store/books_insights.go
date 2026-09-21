@@ -596,6 +596,53 @@ func (s *Store) ReadingPicks(ctx context.Context, userID string, minutes int, ex
 	return selectReadingPicks(candidates, float64(minutes), skip, now), nil
 }
 
+// ReadingNow lists the books in progress for the reading dashboard, most
+// recently read first. It is the same distillation the picks use, narrowed to
+// the in-progress status and handed back whole rather than scored: the
+// dashboard shows all of them, and the first one is the "continue reading"
+// hero.
+//
+// Recency is the position's own timestamp (every save in the reader and the
+// player writes one), falling back to started_at for a book marked reading
+// by hand; a book with neither sorts last, by title, so the order is stable.
+func (s *Store) ReadingNow(ctx context.Context, userID string) (models.ReadingNow, error) {
+	candidates, err := s.readingCandidates(ctx, userID, time.Now().UTC())
+	if err != nil {
+		return models.ReadingNow{}, err
+	}
+
+	books := make([]models.ReadingNowBook, 0, len(candidates))
+	for _, c := range candidates {
+		if c.entry.Status != models.StatusPlaying {
+			continue
+		}
+		lastRead := c.entry.LastReadAt
+		if lastRead == nil {
+			lastRead = c.entry.StartedAt
+		}
+		books = append(books, models.ReadingNowBook{
+			Entry:          c.entry,
+			Percent:        c.percent,
+			RemainingHours: c.remaining,
+			Audio:          c.audio,
+			LastReadAt:     lastRead,
+		})
+	}
+	sort.SliceStable(books, func(i, j int) bool {
+		a, b := books[i].LastReadAt, books[j].LastReadAt
+		switch {
+		case a != nil && b != nil && !a.Equal(*b):
+			return a.After(*b)
+		case a != nil && b == nil:
+			return true
+		case a == nil && b != nil:
+			return false
+		}
+		return books[i].Entry.Book.Title < books[j].Entry.Book.Title
+	})
+	return models.ReadingNow{Books: books}, nil
+}
+
 // readingCandidates loads and distils every shelf and in-progress book.
 func (s *Store) readingCandidates(ctx context.Context, userID string, now time.Time) ([]readingCandidate, error) {
 	entries, err := s.queryEntries(ctx, entrySelect+` WHERE `+unreadBooksWhere, userID)

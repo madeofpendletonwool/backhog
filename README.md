@@ -123,6 +123,16 @@ phone and Backhog pins that page of *your printing* into the same map —
 no external page-number database, and the map gets better every time
 you use it. How it works is [docs/BOOKS.md](docs/BOOKS.md).
 
+**The reading dashboard** is where the books arena opens — and where the
+app opens, if Books is where you left it. The book you are in the middle
+of is front and centre with its chapter, page, time left and one button
+back to the sentence you stopped on; the rest of what is in progress and
+the top of the reading queue follow, and "Your Reading Problem" — the
+diagnosis, your measured pace and the superlatives — sits underneath. Shelf
+cards wear a progress bar and offer a *Continue* on hover, and `⌘K`
+jumps to any book (or game) by title: Enter on a book in progress resumes
+it, and a title that isn't on the shelf yet becomes an *Add* row.
+
 **Search inside the book** falls out of the same machinery. Hit `/` on a
 book and type the line you half-remember — capitals, punctuation and curly
 quotes don't matter, because the text Backhog searches has already had them

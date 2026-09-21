@@ -390,6 +390,23 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, insights)
 }
 
+// handleReadingNow lists the books in progress with how far in each one is,
+// most recently read first: the reading dashboard's "continue reading" row.
+// Book-scoped by contract — the games arena has no stored position to report.
+func (s *Server) handleReadingNow(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+	now, err := s.store.ReadingNow(r.Context(), userID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, now)
+}
+
 // handleTonight answers "I have N minutes, what should I play?" with one
 // explainable pick per category — or "what should I read?" for media=book,
 // which is the same four categories over the shelf. `exclude` (comma-separated

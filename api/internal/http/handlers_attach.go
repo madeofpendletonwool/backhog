@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -134,7 +135,9 @@ func (s *Server) handleDetachFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.store.DetachMediaFile(r.Context(), userID, chi.URLParam(r, "entryID"), fileID)
+	entryID := chi.URLParam(r, "entryID")
+	aligned := s.hadAlignment(r.Context(), entryID)
+	err = s.store.DetachMediaFile(r.Context(), userID, entryID, fileID)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, errNotFound)
 		return
@@ -143,6 +146,7 @@ func (s *Server) handleDetachFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.realignAfter(r.Context(), userID, entryID, aligned)
 	writeJSON(w, http.StatusOK, map[string]bool{"detached": true})
 }
 
@@ -225,6 +229,7 @@ func (s *Server) handlePrimaryTextFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	aligned := s.hadAlignment(r.Context(), entryID)
 	file, err := s.store.SetPrimaryTextFile(r.Context(), userID, entryID, fileID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -241,6 +246,7 @@ func (s *Server) handlePrimaryTextFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.realignAfter(r.Context(), userID, entryID, aligned)
 	writeJSON(w, http.StatusOK, map[string]any{"file": file})
 }
 
@@ -266,7 +272,9 @@ func (s *Server) handlePrimaryAudioEdition(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	edition, err := s.store.SetPrimaryAudioEdition(r.Context(), userID, chi.URLParam(r, "entryID"), editionID)
+	entryID := chi.URLParam(r, "entryID")
+	aligned := s.hadAlignment(r.Context(), entryID)
+	edition, err := s.store.SetPrimaryAudioEdition(r.Context(), userID, entryID, editionID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, errNotFound)
@@ -278,6 +286,7 @@ func (s *Server) handlePrimaryAudioEdition(w http.ResponseWriter, r *http.Reques
 		fail(w, err)
 		return
 	}
+	s.realignAfter(r.Context(), userID, entryID, aligned)
 	writeJSON(w, http.StatusOK, map[string]any{"audio_edition": edition})
 }
 
@@ -393,4 +402,33 @@ func (s *Server) handleMediaUnignore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ignored": false})
+}
+
+// hadAlignment reports whether an entry has a usable text↔audio map right
+// now — asked before an operation that may drop it. A lookup failure reads
+// as "no", which only costs a re-alignment that was not going to happen.
+func (s *Server) hadAlignment(ctx context.Context, entryID string) bool {
+	alignment, err := s.store.AlignmentForEntry(ctx, entryID)
+	return err == nil && alignment.ID != ""
+}
+
+// realignAfter re-queues the alignment an operation just dropped.
+//
+// Switching the canonical text, switching the audiobook and detaching a file
+// all discard the entry's alignment, correctly: the map is between one text
+// and one recording, and either side has changed. But the map is also what
+// keeps a listener's page moving and lets a scanned page move the tape, and
+// a book that silently stops doing both the day its audiobook is swapped is
+// a book that looks broken. So when there was a map and there is a worker
+// to rebuild one, the job is queued here, without being asked. Best-effort:
+// a book that has just lost its last text or its last audio has nothing to
+// align, and that is the operation's outcome, not an error.
+func (s *Server) realignAfter(ctx context.Context, userID, entryID string, hadAlignment bool) {
+	if !hadAlignment || s.cfg.AlignWorkerToken == "" {
+		return
+	}
+	if _, _, err := s.store.EnqueueAlignment(ctx, userID, entryID); err != nil &&
+		!errors.Is(err, store.ErrNoAlignmentText) && !errors.Is(err, store.ErrNoAlignmentAudio) {
+		slog.WarnContext(ctx, "re-queue alignment after media change", "entry", entryID, "error", err)
+	}
 }

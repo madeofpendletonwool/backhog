@@ -47,6 +47,7 @@ import {
   type RuleSet,
 } from "@/lib/types";
 import { useArena } from "@/hooks/useArena";
+import { arenaShelf } from "@/lib/arena";
 
 const KIND_ICONS: Record<ProjectKind, React.ReactNode> = {
   checklist: <Gi name="list-checks" className="size-5 shrink-0" />,
@@ -187,7 +188,7 @@ export function ProjectDetailPage() {
             title="Nothing in this project yet"
             description="Open a game or a book and check it into this project to start building the list."
             action={
-              <Button variant="secondary" onClick={() => navigate(arena === "books" ? "/books" : "/library")}>
+              <Button variant="secondary" onClick={() => navigate(arenaShelf[arena])}>
                 Browse {arena === "books" ? "shelf" : "library"}
               </Button>
             }

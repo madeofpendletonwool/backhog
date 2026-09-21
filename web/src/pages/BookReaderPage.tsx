@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams, useParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams, useParams } from "react-router-dom";
 
 import { SearchInBookDialog } from "@/components/SearchInBookDialog";
 import { Dialog } from "@/components/ui/Dialog";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useAudioClock, useAudioPlayer } from "@/hooks/useAudioPlayer";
-import { useBook, useBookEntry } from "@/hooks/useBooks";
+import { markReadingProgressStale, useBook, useBookEntry } from "@/hooks/useBooks";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { useTheme, type Theme } from "@/hooks/useTheme";
 import { ApiError, api, beaconBookPosition, bookAssetUrl, bookPageImageUrl } from "@/lib/api";
@@ -49,7 +49,7 @@ export function BookReaderPage() {
     return (
       <div className="mx-auto max-w-3xl px-6 py-20 text-center">
         <p className="text-ink-300">That book isn't on your shelf.</p>
-        <Link to="/books" className="mt-4 inline-block text-sm text-brand-400 hover:text-brand-300">
+        <Link to="/books/shelf" className="mt-4 inline-block text-sm text-brand-400 hover:text-brand-300">
           Back to the shelf
         </Link>
       </div>
@@ -555,7 +555,10 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
       writtenRef.current = offset;
       api
         .putBookPosition(entry.id, { char_offset: offset, source: "read" })
-        .then((result) => queryClient.setQueryData(["bookPosition", entry.id], result.position))
+        .then((result) => {
+          queryClient.setQueryData(["bookPosition", entry.id], result.position);
+          markReadingProgressStale(queryClient);
+        })
         .catch(() => {
           // A failed write must not be remembered as written, or the next
           // checkpoint would skip an offset that never landed.
@@ -835,14 +838,7 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
         style={{ borderColor: surface.rule, background: `${surface.bg}f2` }}
       >
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 px-4 py-2.5 sm:px-6">
-          <Link
-            to={`/books/${entry.id}`}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg text-sm transition-opacity hover:opacity-70 focus-visible:focus-ring"
-            style={{ color: surface.muted }}
-          >
-            <Gi name="arrow-left" className="size-4" />
-            <span className="hidden sm:inline">{entry.book.title}</span>
-          </Link>
+          <BackLink entry={entry} color={surface.muted} />
 
           <span className="min-w-0 flex-1 truncate text-sm" title={chapter ? chapterTitle(chapter) : ""}>
             {chapter ? chapterTitle(chapter) : " "}
@@ -1195,7 +1191,10 @@ function PagedReader({ entry }: { entry: BookEntry }) {
       writtenRef.current = p;
       api
         .putBookPosition(entry.id, { page_index: p, source: "read" })
-        .then((result) => queryClient.setQueryData(["bookPosition", entry.id], result.position))
+        .then((result) => {
+          queryClient.setQueryData(["bookPosition", entry.id], result.position);
+          markReadingProgressStale(queryClient);
+        })
         .catch(() => {
           writtenRef.current = null;
         });
@@ -1378,14 +1377,7 @@ function PagedReader({ entry }: { entry: BookEntry }) {
         style={{ borderColor: surface.rule, background: `${surface.bg}f2` }}
       >
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 px-4 py-2.5 sm:px-6">
-          <Link
-            to={`/books/${entry.id}`}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg text-sm transition-opacity hover:opacity-70 focus-visible:focus-ring"
-            style={{ color: surface.muted }}
-          >
-            <Gi name="arrow-left" className="size-4" />
-            <span className="hidden sm:inline">{entry.book.title}</span>
-          </Link>
+          <BackLink entry={entry} color={surface.muted} />
           <span className="min-w-0 flex-1 truncate text-sm sm:hidden">{entry.book.title}</span>
           {/* Lettering search: the button is always offered — when no OCR
               corpus exists yet the dialog itself says why, which beats a
@@ -1529,6 +1521,32 @@ function PageStep({
       <Gi name="arrow-left" className="size-4" />
       {direction === "back" ? "Previous page" : "Next page"}
     </button>
+  );
+}
+
+/**
+ * The way out of the reader: back to wherever you came in from. The
+ * dashboard, the shelf card and the palette all open the reader directly
+ * now, so "back" has to mean the page before this one — but a reader opened
+ * from a bookmark or a fresh tab has no page before it, and lands on the
+ * book's own page instead. The router stamps the history index it manages;
+ * zero means this is the first in-app entry.
+ */
+function BackLink({ entry, color }: { entry: BookEntry; color: string }) {
+  const navigate = useNavigate();
+  const className =
+    "inline-flex shrink-0 items-center gap-1.5 rounded-lg text-sm transition-opacity hover:opacity-70 focus-visible:focus-ring";
+  const canGoBack = (window.history.state?.idx ?? 0) > 0;
+  return canGoBack ? (
+    <button type="button" onClick={() => navigate(-1)} className={className} style={{ color }}>
+      <Gi name="arrow-left" className="size-4" />
+      <span className="hidden sm:inline">{entry.book.title}</span>
+    </button>
+  ) : (
+    <Link to={`/books/${entry.id}`} className={className} style={{ color }}>
+      <Gi name="arrow-left" className="size-4" />
+      <span className="hidden sm:inline">{entry.book.title}</span>
+    </Link>
   );
 }
 

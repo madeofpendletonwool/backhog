@@ -668,3 +668,52 @@ func TestPagedBooksSizeByMeasuredPages(t *testing.T) {
 		t.Errorf("PagesRead = %d, want the 32 turned pages", season.PagesRead)
 	}
 }
+
+// The reading dashboard's row: every in-progress book, the one with a stored
+// position first, each carrying the percent the shelf card also draws.
+func TestReadingNow(t *testing.T) {
+	s := newBookFixtureStore(t)
+	now, err := s.ReadingNow(context.Background(), "b1")
+	if err != nil {
+		t.Fatalf("ReadingNow: %v", err)
+	}
+	if len(now.Books) != 2 {
+		t.Fatalf("got %d books in progress, want 2", len(now.Books))
+	}
+
+	// Tidewrack has a position row, so its timestamp beats Winter Errand's
+	// started_at fallback whatever the fixture dates say.
+	first := now.Books[0]
+	if first.Entry.ID != "be2" {
+		t.Fatalf("first = %s, want be2", first.Entry.ID)
+	}
+	if first.Percent != 50 {
+		t.Errorf("be2 percent = %v, want 50", first.Percent)
+	}
+	if first.LastReadAt == nil {
+		t.Error("be2 has a position row but no last_read_at")
+	}
+	if first.RemainingHours == nil {
+		t.Error("be2 has 300 pages but no remaining estimate")
+	}
+	if first.Entry.ProgressPercent == nil || *first.Entry.ProgressPercent != 50 {
+		t.Errorf("be2 entry progress_percent = %v, want 50", first.Entry.ProgressPercent)
+	}
+
+	second := now.Books[1]
+	if second.Entry.ID != "be8" {
+		t.Fatalf("second = %s, want be8", second.Entry.ID)
+	}
+	if second.Entry.ProgressPercent != nil {
+		t.Errorf("be8 has never been opened but carries progress %v", *second.Entry.ProgressPercent)
+	}
+
+	// A shelf with nothing in progress answers with an empty list, not null.
+	empty, err := s.ReadingNow(context.Background(), "b3")
+	if err != nil {
+		t.Fatalf("ReadingNow(b3): %v", err)
+	}
+	if empty.Books == nil || len(empty.Books) != 0 {
+		t.Errorf("b3 books = %v, want an empty slice", empty.Books)
+	}
+}

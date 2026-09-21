@@ -316,6 +316,7 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/facets", s.handleFacets)
 				r.Get("/pick", s.handlePick)
 				r.Get("/tonight", s.handleTonight)
+				r.Get("/reading", s.handleReadingNow)
 				r.Post("/bulk", s.handleBulkAdd)
 				r.Get("/{entryID}", s.handleGetEntry)
 				r.Get("/{entryID}/lists", s.handleEntryLists)

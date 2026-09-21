@@ -34,6 +34,7 @@ export function invalidateLibrary(queryClient: ReturnType<typeof useQueryClient>
     "readingDebt",
     "insights",
     "readingInsights",
+    "readingNow",
     "lists",
     "list",
     "entry",

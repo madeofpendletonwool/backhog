@@ -184,6 +184,15 @@ func (s *Store) SaveBookProgress(ctx context.Context, userID, entryID string, w 
 		return ProgressResult{}, err
 	}
 
+	// Reading a book *is* touching the entry: without this, "recently
+	// updated" on the shelf meant the last time a status or a note changed,
+	// and the book read last night sat wherever its title sorted it.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE library_entries SET updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND user_id = ?`, entryID, userID); err != nil {
+		return ProgressResult{}, err
+	}
+
 	result := ProgressResult{
 		Status:        status,
 		OfferFinished: w.PercentComplete >= FinishOfferPercent && status != models.StatusPlayed,
@@ -294,6 +303,11 @@ func (s *Store) AddReadingSession(ctx context.Context, userID, entryID string, r
 		if err := startReadingTx(ctx, tx, userID, entryID, status); err != nil {
 			return models.ReadingSession{}, err
 		}
+	} else if _, err := tx.ExecContext(ctx, `
+		UPDATE library_entries SET updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND user_id = ?`, entryID, userID); err != nil {
+		// A session is reading activity too; see SaveBookProgress.
+		return models.ReadingSession{}, err
 	}
 
 	if err := tx.Commit(); err != nil {

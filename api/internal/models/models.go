@@ -321,6 +321,17 @@ type Entry struct {
 	FinishedAt    *time.Time `json:"finished_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+	// ProgressPercent is the stored reading position as a percentage, and
+	// LastReadAt is when it was last written. Both are absent for a game and
+	// for a book that has never been opened — a shelf card draws its bar from
+	// these without a position call apiece.
+	ProgressPercent *float64   `json:"progress_percent,omitempty"`
+	LastReadAt      *time.Time `json:"last_read_at,omitempty"`
+	// ProgressSource is what last wrote the position ('read', 'listen',
+	// 'scan' or 'manual'): a "continue" control uses it to pick up the book
+	// the way it was last put down — the player after a listen, the reader
+	// otherwise.
+	ProgressSource string `json:"progress_source,omitempty"`
 }
 
 type List struct {
@@ -776,6 +787,27 @@ type ReadingPick struct {
 	Entry  Entry   `json:"entry"`
 	Score  float64 `json:"score"`
 	Reason string  `json:"reason"`
+}
+
+// ReadingNowBook is one in-progress book on the reading dashboard: the entry
+// with how far in it is, how long is left at your pace, and when it was last
+// picked up. The dashboard's "continue reading" hero is the first of these.
+type ReadingNowBook struct {
+	Entry   Entry   `json:"entry"`
+	Percent float64 `json:"percent"`
+	// RemainingHours is nil when the book has no known length.
+	RemainingHours *float64 `json:"remaining_hours"`
+	// Audio reports that the length came from an attached audiobook.
+	Audio bool `json:"audio"`
+	// LastReadAt is the newest position write, falling back to when the
+	// book was started; nil for a book marked reading by hand and never opened.
+	LastReadAt *time.Time `json:"last_read_at"`
+}
+
+// ReadingNow is the reading dashboard's answer to "what am I in the middle
+// of?", most recently read first.
+type ReadingNow struct {
+	Books []ReadingNowBook `json:"books"`
 }
 
 // ReadingPicksResult is the four-category answer to a time budget. Any

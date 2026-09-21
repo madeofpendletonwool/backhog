@@ -34,9 +34,15 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
   const routeArena = arenaForLocation(pathname, search);
   const arena: Arena = routeArena ?? savedArena;
 
+  // Keyed on the route's answer alone, deliberately. switchArena writes the
+  // remembered mode and navigates in one go, and the router may commit the
+  // navigation a render later than the write; an effect that also watched
+  // savedArena would see the old path beside the new mode and "correct" the
+  // mode back — which, for a root that follows the remembered mode, means
+  // the switch to games bounces straight back to books.
   useEffect(() => {
-    if (routeArena && routeArena !== savedArena) setSavedArena(routeArena);
-  }, [routeArena, savedArena, setSavedArena]);
+    if (routeArena) setSavedArena(routeArena);
+  }, [routeArena, setSavedArena]);
 
   const switchArena = useCallback(
     (next: Arena) => {

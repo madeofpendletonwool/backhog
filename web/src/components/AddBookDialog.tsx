@@ -35,18 +35,30 @@ const ADD_STATUSES: Status[] = ["backlog", "playing", "played", "wishlist"];
  * say which printing you own. The edition is what page numbers will hang off,
  * so it is asked once, here, while the book is still in your hand.
  */
-export function AddBookDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AddBookDialog({
+  open,
+  onClose,
+  initialQuery = "",
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** A title carried over from the jump palette: opens on the search tab with it typed. */
+  initialQuery?: string;
+}) {
   const canScan = useMemo(barcodeScanningSupported, []);
   const [mode, setMode] = useState<Mode>(canScan ? "scan" : "isbn");
   const [picked, setPicked] = useState<{ book: Book; isbn: string } | null>(null);
 
   useEffect(() => {
-    if (open) return;
+    if (open) {
+      if (initialQuery) setMode("search");
+      return;
+    }
     // Reset to a clean dialog on close, so reopening never resumes someone
     // else's half-finished add.
     setMode(canScan ? "scan" : "isbn");
     setPicked(null);
-  }, [open, canScan]);
+  }, [open, canScan, initialQuery]);
 
   return (
     <Dialog open={open} onClose={onClose} bare label="Add a book" className="max-w-2xl">
@@ -87,7 +99,10 @@ export function AddBookDialog({ open, onClose }: { open: boolean; onClose: () =>
               <IsbnPanel onResolved={(book, isbn) => setPicked({ book, isbn })} />
             )}
             {mode === "search" && (
-              <SearchPanel onResolved={(book) => setPicked({ book, isbn: "" })} />
+              <SearchPanel
+                initialTerm={initialQuery}
+                onResolved={(book) => setPicked({ book, isbn: "" })}
+              />
             )}
           </>
         )}
@@ -395,8 +410,14 @@ function IsbnLookup({
 /* ---------------------------------------------------------------- search */
 
 /** Title and author search, for the books that are not in front of you. */
-function SearchPanel({ onResolved }: { onResolved: (book: Book) => void }) {
-  const [term, setTerm] = useState("");
+function SearchPanel({
+  initialTerm = "",
+  onResolved,
+}: {
+  initialTerm?: string;
+  onResolved: (book: Book) => void;
+}) {
+  const [term, setTerm] = useState(initialTerm);
   const debounced = useDebounced(term, 300);
   const { data, isFetching, error } = useBookSearch(debounced);
   const results = data?.results ?? [];

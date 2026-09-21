@@ -35,14 +35,22 @@ type LibraryFilter struct {
 // the join keeps the sort keys and text filters below working unchanged — a
 // LEFT JOIN on games.id costs the same index probe the old inner join paid.
 // Genres and platforms are attached separately by hydrate.
+//
+// The book_progress join rides along on every entry so a shelf can draw a
+// progress bar without a position call per card. It is a primary-key probe
+// (book_progress is keyed by entry id) and NULL for every game and every
+// book that has never been opened, which is what lets the projection stay
+// one query for both arenas.
 const entrySelect = `
 	SELECT e.id, e.media_type, e.status, e.platform_id, e.edition_id, e.user_rating, e.notes,
 	       e.queue_position,
 	       e.started_at, e.finished_at, e.created_at, e.updated_at, e.game_id, e.book_id,
-	       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0)
+	       COALESCE((SELECT SUM(ps.minutes) FROM play_sessions ps WHERE ps.entry_id = e.id), 0),
+	       bp.percent_complete, bp.updated_at, bp.char_offset_source
 	FROM library_entries e
 	LEFT JOIN games g ON g.id = e.game_id
-	LEFT JOIN books b ON b.id = e.book_id`
+	LEFT JOIN books b ON b.id = e.book_id
+	LEFT JOIN book_progress bp ON bp.entry_id = e.id`
 
 // sortClauses whitelists user-supplied sort keys. Never interpolate raw input.
 // Shared keys (added / updated / queue) order any media mix. "name" and
@@ -750,13 +758,26 @@ func (s *Store) queryEntries(ctx context.Context, query string, args ...any) ([]
 		var e models.Entry
 		var gameID sql.NullInt64
 		var bookID, editionID sql.NullString
+		var percent sql.NullFloat64
+		var lastRead sql.NullTime
+		var source sql.NullString
 		if err := rows.Scan(&e.ID, &e.MediaType, &e.Status, &e.PlatformID, &editionID, &e.UserRating,
 			&e.Notes, &e.QueuePosition, &e.StartedAt, &e.FinishedAt, &e.CreatedAt, &e.UpdatedAt,
-			&gameID, &bookID, &e.LoggedMinutes); err != nil {
+			&gameID, &bookID, &e.LoggedMinutes, &percent, &lastRead, &source); err != nil {
 			return nil, err
+		}
+		if source.Valid {
+			e.ProgressSource = source.String
 		}
 		if editionID.Valid && editionID.String != "" {
 			e.EditionID = &editionID.String
+		}
+		if percent.Valid {
+			e.ProgressPercent = &percent.Float64
+		}
+		if lastRead.Valid {
+			t := lastRead.Time
+			e.LastReadAt = &t
 		}
 		if gameID.Valid {
 			e.Game = &models.Game{ID: gameID.Int64}

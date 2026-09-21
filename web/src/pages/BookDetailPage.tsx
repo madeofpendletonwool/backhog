@@ -63,7 +63,7 @@ export function BookDetailPage() {
     return (
       <div className="mx-auto max-w-3xl px-6 py-20 text-center">
         <p className="text-ink-300">That book isn't on your shelf.</p>
-        <Link to="/books" className="mt-4 inline-block text-sm text-brand-400 hover:text-brand-300">
+        <Link to="/books/shelf" className="mt-4 inline-block text-sm text-brand-400 hover:text-brand-300">
           Back to the shelf
         </Link>
       </div>
@@ -93,7 +93,7 @@ export function BookDetailPage() {
 
         <div className="mx-auto max-w-5xl px-4 pb-8 pt-6 sm:px-6 lg:px-8">
           <Link
-            to="/books"
+            to="/books/shelf"
             className="mb-6 inline-flex items-center gap-1.5 rounded-lg text-sm text-ink-400 transition-colors hover:text-ink-100 focus-visible:focus-ring"
           >
             <Gi name="arrow-left" className="size-4" />
@@ -270,7 +270,7 @@ export function BookDetailPage() {
           <Button
             variant="danger"
             loading={remove.isPending}
-            onClick={() => remove.mutate(entry.id, { onSuccess: () => navigate("/books") })}
+            onClick={() => remove.mutate(entry.id, { onSuccess: () => navigate("/books/shelf") })}
           >
             Remove
           </Button>
@@ -319,28 +319,31 @@ function BookFacts({ book, editionId }: { book: Book; editionId: string | null }
  * ours for the same reason the player is, because the handoff only works
  * when both ends report the same canonical offset.
  *
- * The chapters query is the parse-on-demand one, so a book whose EPUB has
- * never been opened pays for it here rather than on the reader's first
- * paint — and a book with no readable text attached simply has no button.
- * A paged book (an image-native PDF primary) is the other reading
- * population: its position answers in page mode and the button opens the
- * paged reader.
+ * The button is gated on the position alone — it already says whether there
+ * is text (char_count) or pages (page_count) to be somewhere in — so it is
+ * on screen as soon as the position is, which is one round trip. The
+ * chapters query still runs, because it is the parse-on-demand one: a book
+ * whose EPUB has never been opened pays for the parse here, in the
+ * background, rather than on the reader's first paint. It just no longer
+ * holds the button hostage while it does.
  */
 function ReadButton({ entry }: { entry: BookEntry }) {
-  const { data: text } = useQuery({
-    queryKey: ["bookTextChapters", entry.id],
-    queryFn: () => api.bookTextChapters(entry.id),
-    staleTime: Infinity,
-    retry: false,
-  });
   const { data: position } = useQuery({
     queryKey: ["bookPosition", entry.id],
     queryFn: () => api.bookPosition(entry.id),
   });
+  const readable = Boolean(position && (position.char_count > 0 || position.page_count > 0));
+  useQuery({
+    queryKey: ["bookTextChapters", entry.id],
+    queryFn: () => api.bookTextChapters(entry.id),
+    staleTime: Infinity,
+    retry: false,
+    enabled: readable,
+  });
+
+  if (!readable) return null;
 
   const paged = position?.position_mode === "page";
-  if ((!text || text.char_count === 0) && !paged) return null;
-
   const into = paged ? (position?.page_index ?? 0) : (position?.char_offset ?? 0);
 
   return (

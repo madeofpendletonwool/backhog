@@ -174,6 +174,19 @@ interface EntryFields {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * The stored reading position as a percentage, and when it was last
+   * written. Absent for a game and for a book that has never been opened —
+   * a shelf card draws its progress bar from this without a position call.
+   */
+  progress_percent?: number;
+  last_read_at?: string;
+  /**
+   * What last wrote the position: "read", "listen", "scan" or "manual". A
+   * "continue" control picks the book up the way it was put down — the
+   * player after a listen, the reader otherwise.
+   */
+  progress_source?: "read" | "listen" | "scan" | "manual";
 }
 
 /** An entry that points at a game. */
@@ -666,6 +679,23 @@ export interface ReadingPick {
   entry: BookEntry;
   score: number;
   reason: string;
+}
+
+/** One in-progress book on the reading dashboard. */
+export interface ReadingNowBook {
+  entry: BookEntry;
+  percent: number;
+  /** Hours left at your pace (or from the audiobook); null with no known length. */
+  remaining_hours: number | null;
+  /** The length came from an attached audiobook. */
+  audio: boolean;
+  /** The newest position write, else when the book was started; null if neither. */
+  last_read_at: string | null;
+}
+
+/** "What am I in the middle of?" — most recently read first. */
+export interface ReadingNow {
+  books: ReadingNowBook[];
 }
 
 export interface ReadingPicks {

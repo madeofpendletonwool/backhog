@@ -22,6 +22,9 @@ export const ARENA_LABELS: Record<Arena, string> = { games: "Games", books: "Boo
 
 export const arenaHome: Record<Arena, string> = { games: "/", books: "/books" };
 
+/** Each arena's shelf — the page that lists everything you own. */
+export const arenaShelf: Record<Arena, string> = { games: "/library", books: "/books/shelf" };
+
 type Match = "prefix" | "exact";
 
 /**
@@ -30,10 +33,14 @@ type Match = "prefix" | "exact";
  *
  * `prefix` means the path itself or anything under it — "/series" matches
  * "/series" and "/series/{id}" but not "/seriesfoo".
+ *
+ * The root is deliberately absent. "/" is the games dashboard, but it is
+ * also the address you type to open the app, and a reader who ended their
+ * last session in Books should land in Books — so "/" resolves to the
+ * remembered arena and the router sends the books half on to /books.
  */
 export const ARENA_ROUTES: { match: Match; path: string; arena: Arena }[] = [
   { match: "prefix", path: "/books", arena: "books" },
-  { match: "exact", path: "/", arena: "games" },
   { match: "exact", path: "/library", arena: "games" },
   { match: "exact", path: "/debt", arena: "games" },
   { match: "exact", path: "/achievements", arena: "games" },

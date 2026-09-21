@@ -7,7 +7,7 @@ import { Gi } from "@/components/ui/Gi";
 import { Button, Input, Panel, Select } from "@/components/ui/primitives";
 import { api } from "@/lib/api";
 import { explainPage, formatPage } from "@/lib/booktext";
-import { editionLabel, formatDate } from "@/lib/format";
+import { editionLabel, formatDate, pageCountFor } from "@/lib/format";
 import type { BookEdition } from "@/lib/types";
 
 /**
@@ -23,9 +23,12 @@ import type { BookEdition } from "@/lib/types";
  */
 export function PhysicalCopyPanel({
   entryId,
+  editionId,
   editions,
 }: {
   entryId: string;
+  /** The printing the entry is anchored to; null for a book added by title alone. */
+  editionId: string | null;
   editions: BookEdition[];
 }) {
   const queryClient = useQueryClient();
@@ -104,7 +107,7 @@ export function PhysicalCopyPanel({
   const copy = copies.data?.copies.find((c) => c.drives_pages) ?? copies.data?.copies[0] ?? null;
   const pdfSeed = copies.data?.pdf_seed ?? null;
   const page = position.data?.page ?? null;
-  const pageCount = editions.find((edition) => edition.page_count)?.page_count ?? null;
+  const pageCount = pageCountFor(editions, copy?.edition_id, editionId);
 
   const borrowed = copy?.acquisition === "borrowed";
   const returned = copy?.returned_at != null;

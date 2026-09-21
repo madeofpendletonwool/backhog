@@ -266,6 +266,15 @@ func (c *OpenLibrary) Search(ctx context.Context, query string, limit int) ([]Bo
 // the edition its query matched. Swapping only on a strictly better match
 // keeps this inert for the ordinary hit, where the work title is the reason
 // the work was found at all.
+//
+// Strictly better means the edition answers every query word the work title
+// answers, and at least one more — a superset, not a bigger count. Counting
+// alone lets a title that answers none of the words that matter win on
+// words that don't: "The Hobbit J.R.R. Tolkien" finds the work "The Hobbit"
+// (covers hobbit), whose matched edition is the Japanese "Hobbito no bōken /
+// J.R.R. Tōrukin saku" (covers j, r) — two initials outscoring the one word
+// the reader actually typed, and the shelf shows a title in a language
+// nobody asked for.
 func preferMatchedEdition(b *Book, doc olSearchDoc, query string) {
 	want := searchTokens(query)
 	if len(want) == 0 {
@@ -277,7 +286,7 @@ func preferMatchedEdition(b *Book, doc olSearchDoc, query string) {
 			continue
 		}
 		covered := queryCoverage(want, ed.Title)
-		if covered <= best {
+		if !coversStrictlyMore(covered, best) {
 			continue
 		}
 		best = covered
@@ -289,6 +298,20 @@ func preferMatchedEdition(b *Book, doc olSearchDoc, query string) {
 			b.CoverURL = fmt.Sprintf(openLibraryCoverURL, ed.CoverID)
 		}
 	}
+}
+
+// coversStrictlyMore reports whether `a` answers every query word `b` does
+// and at least one it does not.
+func coversStrictlyMore(a, b map[string]bool) bool {
+	if len(a) <= len(b) {
+		return false
+	}
+	for t := range b {
+		if !a[t] {
+			return false
+		}
+	}
+	return true
 }
 
 // searchStopwords are the words too common to tell two titles apart. They
@@ -314,25 +337,23 @@ func searchTokens(s string) []string {
 	return out
 }
 
-// queryCoverage counts how many distinct query words a title accounts for.
-// It is a count, not a ratio: the question is only which of two titles
-// answers more of what was asked, and a longer title is not thereby a worse
-// one — "The Waste Lands" and "A Torre Negra" are 3 and 0 for the same query.
-func queryCoverage(want []string, title string) int {
+// queryCoverage is the set of distinct query words a title accounts for.
+// It is a set, not a ratio: the question is only whether one of two titles
+// answers everything the other does and more, and a longer title is not
+// thereby a worse one — "The Waste Lands" and "A Torre Negra" answer
+// {waste, lands} and nothing for the same query.
+func queryCoverage(want []string, title string) map[string]bool {
 	have := map[string]bool{}
 	for _, t := range searchTokens(title) {
 		have[t] = true
 	}
-	seen := map[string]bool{}
-	n := 0
+	covered := map[string]bool{}
 	for _, t := range want {
-		if seen[t] || !have[t] {
-			continue
+		if have[t] {
+			covered[t] = true
 		}
-		seen[t] = true
-		n++
 	}
-	return n
+	return covered
 }
 
 // GetByWorkKey returns the full work record: description, subjects and cover,

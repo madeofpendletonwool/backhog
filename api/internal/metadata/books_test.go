@@ -513,3 +513,31 @@ func TestSearchWithNoEditionsBlock(t *testing.T) {
 		t.Errorf("title = %q, want Anathem", books[0].Title)
 	}
 }
+
+// TestSearchKeepsWorkTitleOverEditionMatchingOnlyInitials: "The Hobbit
+// J.R.R. Tolkien" finds the work "The Hobbit", whose matched edition Open
+// Library reports as the Japanese printing — a title that answers none of
+// the query's real words but happens to carry the author's initials. Two
+// initials must not outscore the one word that names the book.
+func TestSearchKeepsWorkTitleOverEditionMatchingOnlyInitials(t *testing.T) {
+	f, client := newFakeOpenLibrary(t)
+	f.mux.HandleFunc("/search.json", func(w http.ResponseWriter, r *http.Request) {
+		writeFixture(t, w, map[string]any{"docs": []map[string]any{{
+			"key":         "/works/OL27482W",
+			"title":       "The Hobbit",
+			"author_name": []string{"J.R.R. Tolkien"},
+			"cover_i":     14627509,
+			"editions": map[string]any{"docs": []map[string]any{
+				{"title": "Hobbito no bōken / J.R.R. Tōrukin saku ; Seta Teiji yaku.", "cover_i": 0},
+			}},
+		}}})
+	})
+
+	books, err := client.Search(context.Background(), "The Hobbit J.R.R. Tolkien", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if books[0].Title != "The Hobbit" {
+		t.Errorf("title = %q, want the work title kept", books[0].Title)
+	}
+}

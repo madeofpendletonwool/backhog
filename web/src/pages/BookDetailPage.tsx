@@ -25,6 +25,7 @@ import {
   formatDate,
   formatDuration,
   formatPages,
+  pageCountFor,
   publishYear,
   relativeTime,
 } from "@/lib/format";
@@ -158,7 +159,7 @@ export function BookDetailPage() {
         {/* First, above the fold on every width: where you are, and the
             button that updates it from the paper copy in your hand. */}
         <div className="lg:col-span-3">
-          <BookProgressPanel entryId={entry.id} editions={editions} />
+          <BookProgressPanel entryId={entry.id} editionId={entry.edition_id} editions={editions} />
         </div>
 
         <div className="space-y-5 lg:col-span-2">
@@ -171,7 +172,7 @@ export function BookDetailPage() {
             </Panel>
           )}
 
-          <BookFacts book={book} />
+          <BookFacts book={book} editionId={entry.edition_id} />
 
           <Editions entry={entry} editions={editions} />
 
@@ -239,7 +240,7 @@ export function BookDetailPage() {
 
           <OCRPanel entryId={entry.id} />
 
-          <PhysicalCopyPanel entryId={entry.id} editions={editions} />
+          <PhysicalCopyPanel entryId={entry.id} editionId={entry.edition_id} editions={editions} />
 
           <ListMembership entry={entry} />
 
@@ -281,14 +282,15 @@ export function BookDetailPage() {
 
 /**
  * The at-a-glance dossier: what Open Library knows that isn't the blurb. The
- * publisher and page count are read off the earliest printing that has them,
- * because the *work* has neither — only a printing does.
+ * *work* has no page count — only a printing does — so the length is the
+ * reader's own printing when the entry is anchored to one, else the
+ * earliest printing that has a count.
  */
-function BookFacts({ book }: { book: Book }) {
+function BookFacts({ book, editionId }: { book: Book; editionId: string | null }) {
   const editions = book.editions ?? [];
   const publishers = unique(editions.map((edition) => edition.publisher));
   const languages = unique(editions.map((edition) => edition.language));
-  const pages = editions.find((edition) => edition.page_count)?.page_count ?? null;
+  const pages = pageCountFor(editions, editionId);
 
   const rows: { label: string; items: string[] }[] = [
     { label: "Authors", items: book.authors ?? [] },

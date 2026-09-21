@@ -7,7 +7,7 @@ import { Gi } from "@/components/ui/Gi";
 import { Button, Panel } from "@/components/ui/primitives";
 import { api } from "@/lib/api";
 import { chapterTitle, explainPage, formatPage } from "@/lib/booktext";
-import { formatTimecode, relativeTime } from "@/lib/format";
+import { formatTimecode, pageCountFor, relativeTime } from "@/lib/format";
 import type { BookEdition, BookPosition } from "@/lib/types";
 
 /**
@@ -27,9 +27,12 @@ import type { BookEdition, BookPosition } from "@/lib/types";
  */
 export function BookProgressPanel({
   entryId,
+  editionId,
   editions,
 }: {
   entryId: string;
+  /** The printing the entry is anchored to; null for a book added by title alone. */
+  editionId: string | null;
   editions: BookEdition[];
 }) {
   const [scanning, setScanning] = useState(false);
@@ -49,7 +52,6 @@ export function BookProgressPanel({
   if (!trackable) return null;
 
   const paged = position.position_mode === "page";
-  const pageCount = editions.find((edition) => edition.page_count)?.page_count ?? null;
   const percent = paged
     ? (((position.page_index ?? 0) + 1) / Math.max(1, position.page_count)) * 100
     : position.percent;
@@ -59,6 +61,7 @@ export function BookProgressPanel({
   // The copy whose page map the position reads; the same choice the paper
   // panel makes, so the two never disagree about which copy a scan feeds.
   const copy = copies?.copies.find((c) => c.drives_pages) ?? copies?.copies[0] ?? null;
+  const pageCount = pageCountFor(editions, copy?.edition_id, editionId);
   // Scanning matches a photographed page against the text, so it needs one.
   const scannable = copy !== null && position.char_count > 0;
 

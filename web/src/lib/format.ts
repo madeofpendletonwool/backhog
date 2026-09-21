@@ -199,6 +199,26 @@ export function publishYear(book: Book): string {
   return book.first_publish_year ? String(book.first_publish_year) : "";
 }
 
+/**
+ * The page count "page 214 of N" is measured in: the printing the reader
+ * actually holds, when one is known — the copy driving the page map, else
+ * the printing the entry is anchored to — and only then the earliest
+ * printing on file that has a count at all. A work has fifty printings and
+ * the first with a count is as likely to be a 1986 hardcover as the
+ * paperback in the reader's hand.
+ */
+export function pageCountFor(
+  editions: BookEdition[],
+  ...preferred: (string | null | undefined)[]
+): number | null {
+  for (const id of preferred) {
+    if (!id) continue;
+    const count = editions.find((edition) => edition.id === id)?.page_count;
+    if (count) return count;
+  }
+  return editions.find((edition) => edition.page_count)?.page_count ?? null;
+}
+
 /** "384 pages" / "" — page counts belong to a printing, not to the work. */
 export function formatPages(pages: number | null | undefined): string {
   if (!pages || pages <= 0) return "";

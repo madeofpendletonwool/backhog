@@ -25,7 +25,7 @@ import {
   sentenceSpanAt,
 } from "@/lib/booktext";
 import { cn } from "@/lib/cn";
-import { formatTimecode } from "@/lib/format";
+import { formatTimecode, pageCountFor } from "@/lib/format";
 import type {
   BookEntry,
   BookPosition,
@@ -779,7 +779,7 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
 
   const percent = percentAt(text.data, liveOffset);
   const page = position.data?.page ?? null;
-  const totalPages = (work?.editions ?? []).find((edition) => edition.page_count)?.page_count ?? null;
+  const totalPages = pageCountFor(work?.editions ?? [], entry.edition_id);
   // The banner speaks for the stored place, not the one on screen.
   const storedPercent = position.data ? Math.round(position.data.percent) : null;
   const storedPage = formatPage(page);

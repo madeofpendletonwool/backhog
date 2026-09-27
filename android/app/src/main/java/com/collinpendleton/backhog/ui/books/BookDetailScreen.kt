@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,6 +87,10 @@ fun BookDetailScreen(
     entryId: String,
     onBack: () -> Unit,
     onOpen: (String) -> Unit,
+    canManageMedia: Boolean = false,
+    onRead: (String) -> Unit = {},
+    onReadJump: (entryId: String, offset: Long) -> Unit = { _, _ -> },
+    onOpenFiles: () -> Unit = {},
 ) {
     val vm: BookDetailViewModel = viewModel(factory = BookDetailViewModel.Factory(container, baseUrl, entryId))
     val state by vm.state.collectAsState()
@@ -174,10 +179,10 @@ fun BookDetailScreen(
                 Header(state, baseUrl)
                 FactsPanel(state)
                 ShelfPanel(state, vm)
-                PositionPanel(state, onScan = { showScan = true })
+                PositionPanel(state, onScan = { showScan = true }, onRead = { onRead(entryId) })
                 SessionsPanel(state, onAdd = { showSessions = true })
                 CopiesPanel(state, vm, onRegister = { showRegister = true })
-                FilesPanel(state)
+                FilesPanel(state, vm, canManageMedia, onOpenFiles)
                 SharePanel(state, vm)
                 DangerPanel(vm, onConfirm = { confirmDelete = true })
             }
@@ -220,12 +225,21 @@ fun BookDetailScreen(
     }
     if (showSearch) {
         ModalBottomSheet(onDismissRequest = { showSearch = false }) {
-            SearchInBookSheet(container, baseUrl, entryId, state.entry, onOpen)
+            SearchInBookSheet(
+                container = container,
+                baseUrl = baseUrl,
+                entryId = entryId,
+                entry = state.entry,
+                onOpen = onOpen,
+                onJump = { offset ->
+                    showSearch = false
+                    onReadJump(entryId, offset)
+                },
+            )
         }
     }
     }
 }
-
 /* ------------------------------------------------------------------ header */
 
 @Composable
@@ -424,7 +438,7 @@ private fun FactRow(label: String, value: String) {
 /* --------------------------------------------------------------- position */
 
 @Composable
-private fun PositionPanel(state: BookDetailState, onScan: () -> Unit) {
+private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: () -> Unit) {
     val p = Backhog.palette
     val entry = state.entry ?: return
     val position = state.position ?: return
@@ -432,6 +446,7 @@ private fun PositionPanel(state: BookDetailState, onScan: () -> Unit) {
     val copy = state.drivingCopy
     val pageCount = pageCountFor(editions, copy?.editionId, entry.editionId)
     val paged = position.positionMode == "page"
+    val hasText = state.files?.files?.any { it.kind == "epub" } == true
 
     Panel {
         Row(
@@ -477,10 +492,18 @@ private fun PositionPanel(state: BookDetailState, onScan: () -> Unit) {
             }
         }
 
+        // The reader opens whenever there is something to read: an attached
+        // text, or a paged primary. The button says what it does.
+        if (hasText || paged) {
+            Button(onClick = onRead, modifier = Modifier.fillMaxWidth()) {
+                Text(if (position.updatedAt == null) "Start reading" else "Continue reading")
+            }
+        }
+
         if (!paged) {
             val scannable = copy != null && position.charCount > 0
             if (scannable) {
-                Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Scan a page") }
+                OutlinedButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Scan a page") }
                 if (entry.startedAt == null) {
                     Text(
                         "Not started — a scan sets your place.",
@@ -773,33 +796,309 @@ private fun RegisterCopyDialog(state: BookDetailState, vm: BookDetailViewModel, 
 
 /* ------------------------------------------------------------------- files */
 
-/** Reader-safe: the server blanks NAS paths for a reader, and nothing here needs them. */
+/**
+ * The attached-files surface. A manager sees the whole file layer — formats,
+ * recordings, promotion with its stated consequences, detachment, and the
+ * alignment queue. A reader sees the reader-safe summary: the server blanks
+ * NAS paths for them, and audio presence is the useful fact.
+ */
 @Composable
-private fun FilesPanel(state: BookDetailState) {
+private fun FilesPanel(
+    state: BookDetailState,
+    vm: BookDetailViewModel,
+    canManageMedia: Boolean,
+    onOpenFiles: () -> Unit,
+) {
     val p = Backhog.palette
     val files = state.files ?: return
     if (files.files.isEmpty() && files.audioEditions.isEmpty()) return
 
+    if (!canManageMedia) {
+        Panel {
+            SectionLabel("Attached")
+            val text = files.files.filter { it.kind == "epub" }
+            if (text.isNotEmpty()) {
+                Text("Ebook attached — read it from Where you are.", style = MaterialTheme.typography.bodySmall, color = p.c400)
+            }
+            files.audioEditions.forEach { edition ->
+                val badge = buildList {
+                    add("${edition.trackCount} tracks")
+                    add(formatTimecode(edition.totalDuration))
+                    if (edition.primary) add("the one that plays")
+                    if (edition.degraded) add("durations incomplete")
+                    if (edition.missingCount > 0) add("${edition.missingCount} missing")
+                }.joinToString(" · ")
+                Text(edition.label.ifEmpty { "A recording" }, style = MaterialTheme.typography.labelMedium, color = p.c300)
+                Text(badge, style = MaterialTheme.typography.labelSmall, color = p.c500)
+            }
+        }
+        return
+    }
+
+    val texts = files.files.filter { it.kind == "epub" }
+    val editions = files.audioEditions
+    val current = texts.firstOrNull { it.primaryText }
+    val currentEdition = editions.firstOrNull { it.primary }
+
     Panel {
-        SectionLabel("Attached")
-        val text = files.files.filter { it.kind == "epub" }
-        if (text.isNotEmpty()) {
+        SectionLabel("Files")
+        Text(
+            "What this book is read and listened from. Nothing under the NAS mounts is ever written — only these associations.",
+            style = MaterialTheme.typography.labelSmall,
+            color = p.c500,
+        )
+
+        if (files.files.any { it.missingAt != null } || editions.any { it.missingCount > 0 }) {
             Text(
-                "Ebook attached — the reader lands in Stage 5.",
-                style = MaterialTheme.typography.bodySmall,
-                color = p.c400,
+                "Some files are missing from the NAS right now — the drive is probably offline. The associations are kept; nothing is deleted, and a scan marks them restored when the drive returns.",
+                style = MaterialTheme.typography.labelSmall,
+                color = p.hlBright,
             )
         }
-        files.audioEditions.forEach { edition ->
-            val badge = buildList {
-                add("${edition.trackCount} tracks")
-                add(formatTimecode(edition.totalDuration))
-                if (edition.primary) add("the one that plays")
-                if (edition.degraded) add("durations incomplete")
-                if (edition.missingCount > 0) add("${edition.missingCount} missing")
-            }.joinToString(" · ")
-            Text(edition.label.ifEmpty { "A recording" }, style = MaterialTheme.typography.labelMedium, color = p.c300)
-            Text(badge, style = MaterialTheme.typography.labelSmall, color = p.c500)
+
+        // --- ebook formats: which text everything is measured against ---
+        if (texts.size >= 2) {
+            Text("Ebook formats", style = MaterialTheme.typography.titleSmall, color = p.c200)
+            Text(
+                "One of these is the text your place, percentage and audio alignment are measured against.",
+                style = MaterialTheme.typography.labelSmall,
+                color = p.c500,
+            )
+            var confirmPromote by remember { mutableStateOf<Long?>(null) }
+            texts.forEach { file ->
+                val name = file.path.split('/').lastOrNull() ?: file.path
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(name, style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace, color = p.c300, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (file.missingAt != null) {
+                            Text("missing from the NAS right now", style = MaterialTheme.typography.labelSmall, color = p.hlBright)
+                        }
+                    }
+                    if (file.primaryText) {
+                        ToneChip("Reading this", Tones.Played)
+                    } else {
+                        TextButton(
+                            onClick = { confirmPromote = file.id },
+                            enabled = file.missingAt == null,
+                        ) { Text("Read this instead") }
+                    }
+                }
+            }
+            Text(
+                "Switching keeps your percentage through the book and recomputes the exact spot in the new text. Any audio alignment is dropped, because it was built against ${current?.path?.split('/')?.lastOrNull() ?: "the other file"} and would point at the wrong words.",
+                style = MaterialTheme.typography.labelSmall,
+                color = p.c600,
+            )
+            confirmPromote?.let { fileId ->
+                AlertDialog(
+                    onDismissRequest = { confirmPromote = null },
+                    title = { Text("Change the reading text?") },
+                    text = {
+                        Text("Your position is carried over by percentage and recomputed on the new text — the exact paragraph may move. Any audio alignment is deleted.")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            vm.promoteTextFile(fileId)
+                            confirmPromote = null
+                        }) { Text("Switch") }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmPromote = null }) { Text("Cancel") } },
+                )
+            }
+        }
+
+        // --- audio editions: which recording plays ---
+        if (editions.size >= 2) {
+            Text("Audiobook versions", style = MaterialTheme.typography.titleSmall, color = p.c200)
+            Text(
+                "One of these is the audiobook — the one the player plays, and the one your place in the audio is measured against.",
+                style = MaterialTheme.typography.labelSmall,
+                color = p.c500,
+            )
+            editions.forEach { edition ->
+                val unplayable = edition.missingCount >= edition.trackCount
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(edition.label, style = MaterialTheme.typography.labelMedium, color = p.c300, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            buildString {
+                                edition.narrator?.let { append("read by $it · ") }
+                                append(if (edition.degraded) "length unknown" else formatTimecode(edition.totalDuration))
+                                append(" · ${edition.trackCount} file${if (edition.trackCount == 1) "" else "s"}")
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = p.c600,
+                        )
+                        if (edition.missingCount > 0) {
+                            Text(
+                                if (unplayable) "missing from the NAS right now" else "${edition.missingCount} of its files are missing from the NAS right now",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = p.hlBright,
+                            )
+                        }
+                    }
+                    if (edition.primary) {
+                        ToneChip("Listening to this", Tones.Played)
+                    } else {
+                        TextButton(
+                            onClick = { vm.promoteAudioEdition(edition.id) },
+                            enabled = !unplayable,
+                        ) { Text("Listen to this instead") }
+                    }
+                }
+            }
+            Text(
+                "Switching keeps how far through the book you are and resumes at the same fraction of the new recording. Any audio alignment is dropped, because it was built against ${currentEdition?.label ?: "the other recording"}.",
+                style = MaterialTheme.typography.labelSmall,
+                color = p.c600,
+            )
+        } else {
+            editions.forEach { edition ->
+                Text(
+                    buildString {
+                        append(edition.label.ifEmpty { "A recording" })
+                        append(" · ${edition.trackCount} tracks · ")
+                        append(if (edition.degraded) "durations incomplete" else formatTimecode(edition.totalDuration))
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = p.c500,
+                )
+            }
+        }
+
+        // --- every file: detach ---
+        Text("Attached files", style = MaterialTheme.typography.titleSmall, color = p.c200)
+        var confirmDetach by remember { mutableStateOf<Long?>(null) }
+        files.files.forEach { file ->
+            val name = file.path.split('/').lastOrNull() ?: file.path
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(name, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, color = p.c400, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (file.primaryText) Text("the reading text", style = MaterialTheme.typography.labelSmall, color = p.c600)
+                }
+                TextButton(onClick = { confirmDetach = file.id }) { Text("Detach") }
+            }
+        }
+        confirmDetach?.let { fileId ->
+            AlertDialog(
+                onDismissRequest = { confirmDetach = null },
+                title = { Text("Detach this file?") },
+                text = { Text("The book stops being read or listened from it. The file itself stays on the NAS.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        vm.detachFile(fileId)
+                        confirmDetach = null
+                    }) { Text("Detach") }
+                },
+                dismissButton = { TextButton(onClick = { confirmDetach = null }) { Text("Cancel") } },
+            )
+        }
+
+        OutlinedButton(onClick = onOpenFiles, modifier = Modifier.fillMaxWidth()) {
+            Text("Scan and attach in Book files")
+        }
+    }
+
+    // --- alignment: the text↔audio map --------------------------------
+    val hasText = texts.isNotEmpty()
+    val hasAudio = editions.isNotEmpty()
+    LaunchedEffect(hasText, hasAudio) {
+        if (hasText && hasAudio) vm.loadAlign()
+    }
+    if (hasText || hasAudio) {
+        AlignmentPanel(state, vm)
+    }
+}
+
+/** The states an alignment can be in, each with its honest words. */
+@Composable
+private fun AlignmentPanel(state: BookDetailState, vm: BookDetailViewModel) {
+    val p = Backhog.palette
+    val align = state.align
+
+    Panel {
+        SectionLabel("Audio alignment")
+        Text("The map that lets reading and listening hand off to each other.", style = MaterialTheme.typography.labelSmall, color = p.c500)
+
+        when {
+            align == null -> {}
+            align.job != null && align.job!!.state in setOf("queued", "claimed", "transcribing", "aligning") -> {
+                val job = align.job!!
+                val label = when (job.state) {
+                    "queued" -> if (!align.workerEnabled) "Queued — no worker running" else "Queued"
+                    "claimed" -> "Starting"
+                    "transcribing" -> "Transcribing ${Math.round(job.progress * 100)}%"
+                    else -> "Aligning ${Math.round(job.progress * 100)}%"
+                }
+                Text(label, style = MaterialTheme.typography.titleSmall, color = p.hlBright)
+                if (job.state == "transcribing" || job.state == "aligning") {
+                    ProgressBar((job.progress * 100).toFloat().coerceIn(2f, 100f))
+                }
+                Text(
+                    when {
+                        job.state == "queued" && !align.workerEnabled ->
+                            "No alignment worker is running, so this will wait until one is. The rest of the book keeps working meanwhile."
+                        job.state == "queued" -> "Waiting for the alignment worker to pick it up."
+                        job.stageDetail.isNotEmpty() -> job.stageDetail
+                        else -> "Turning the audiobook into text and matching it to the pages. This runs at a few times listening speed, so a long book takes a while."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = p.c400,
+                )
+                if (job.state == "queued") {
+                    TextButton(onClick = vm::clearAlignment) { Text("Cancel") }
+                }
+            }
+            align.job?.state == "failed" -> {
+                Text("Alignment failed", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
+                Text(align.job!!.error ?: "The worker could not finish this alignment.", style = MaterialTheme.typography.labelSmall, color = p.c400)
+                OutlinedButton(onClick = vm::enqueueAlignment) { Text("Try again") }
+            }
+            align.alignment != null && align.alignment!!.state in setOf("ready", "low_confidence") -> {
+                val record = align.alignment!!
+                Text(
+                    if (record.state == "ready") "Ready" else "Low confidence",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (record.state == "ready") Tones.Played else Tones.Wishlist,
+                )
+                Text(
+                    "${Math.round(record.coverage * 100)}% covered · ${Math.round(record.meanConfidence * 100)}% confident",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = p.c300,
+                )
+                if (record.state == "low_confidence") {
+                    Text(
+                        "This audiobook doesn't match this ebook closely enough — it may be abridged or a different translation. Handoff between reading and listening still works, but expect it to land near, not exactly on, your page.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Tones.Wishlist,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = vm::enqueueAlignment) { Text("Re-run alignment") }
+                    TextButton(onClick = vm::clearAlignment) { Text("Clear") }
+                }
+            }
+            else -> {
+                Text("Not aligned", style = MaterialTheme.typography.titleSmall, color = p.c300)
+                Text(
+                    "Aligning transcribes the audiobook and matches it against the text, so positions translate both ways.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = p.c400,
+                )
+                OutlinedButton(onClick = vm::enqueueAlignment, enabled = !state.busy) { Text("Align this book") }
+            }
         }
     }
 }

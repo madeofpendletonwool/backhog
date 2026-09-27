@@ -114,8 +114,9 @@ class SearchInBookViewModel(
  * Search inside one book. Every hit comes back already placed in the other
  * coordinates — chapter, printed page with its error bar, audio timestamp —
  * because the offset is the answer and those are the same answer said in the
- * spaces a reader can act on. Jumps into the reader and player arrive with
- * Stages 5–6; the buttons say so honestly until then.
+ * spaces a reader can act on. Text hits jump into the reader as a peek — a
+ * look that never overwrites the stored place; page hits jump the paged
+ * reader the same way. The player jump arrives with Stage 6.
  */
 @Composable
 fun SearchInBookSheet(
@@ -124,6 +125,7 @@ fun SearchInBookSheet(
     entryId: String,
     entry: Entry?,
     onOpen: (String) -> Unit,
+    onJump: (offset: Long) -> Unit = {},
 ) {
     val vm: SearchInBookViewModel = viewModel(factory = SearchInBookViewModel.Factory(container, baseUrl, entryId))
     val state by vm.state.collectAsState()
@@ -214,7 +216,7 @@ fun SearchInBookSheet(
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = { notice = "The reader lands in Stage 5." }) {
+                                OutlinedButton(onClick = { onJump(hit.charOffset) }) {
                                     Text("Read here")
                                 }
                                 if (hit.audio != null) {
@@ -243,6 +245,9 @@ fun SearchInBookSheet(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = p.c500,
                             )
+                            OutlinedButton(onClick = { onJump(hit.pageIndex.toLong()) }) {
+                                Text("View page")
+                            }
                         }
                     }
                 }

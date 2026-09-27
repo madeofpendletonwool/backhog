@@ -278,12 +278,14 @@ data class BookSearchAny(
 @Serializable
 data class MediaFile(
     val id: Long,
+    val root: String = "",
     val path: String = "",
     /** "audio" or "epub". */
     val kind: String = "",
     @SerialName("size_bytes") val sizeBytes: Long = 0,
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
     @SerialName("primary_text") val primaryText: Boolean = false,
+    @SerialName("attached_by") val attachedBy: String? = null,
     @SerialName("missing_at") val missingAt: String? = null,
 )
 

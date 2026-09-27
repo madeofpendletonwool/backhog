@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ViewList
@@ -76,6 +77,7 @@ fun BookLibraryScreen(
     baseUrl: String,
     onOpen: (String) -> Unit,
     onDashboard: () -> Unit,
+    onOpenFiles: (() -> Unit)? = null,
 ) {
     val vm: BookLibraryViewModel = viewModel(factory = BookLibraryViewModel.Factory(container, baseUrl))
     val state by vm.state.collectAsState()
@@ -95,6 +97,13 @@ fun BookLibraryScreen(
                     actionIconContentColor = p.c300,
                 ),
                 actions = {
+                    // The file layer's front door: readers never see it —
+                    // the server would 403 every request the screen makes.
+                    if (onOpenFiles != null) {
+                        IconButton(onClick = onOpenFiles) {
+                            Icon(Icons.Filled.FolderOpen, contentDescription = "Book files")
+                        }
+                    }
                     IconButton(onClick = onDashboard) {
                         Icon(Icons.Filled.Insights, contentDescription = "Reading dashboard")
                     }

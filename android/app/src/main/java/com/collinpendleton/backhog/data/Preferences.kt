@@ -38,6 +38,16 @@ data class ThemeSettings(
     }
 }
 
+/** The shelf's remembered face: filters, sort and grid/table, like the web's localStorage. */
+data class BookShelfState(
+    val status: String = "",
+    val sort: String = "title",
+    val author: String = "",
+    val subject: String = "",
+    val language: String = "",
+    val grid: Boolean = true,
+)
+
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "backhog")
 
 /** Everything the device remembers. The server owns all data; this is only where to find it and how it looks. */
@@ -86,10 +96,39 @@ class AppPreferences(private val store: DataStore<Preferences>) {
         store.edit { it[ARENA] = arena.key }
     }
 
+    /** The books shelf remembers its filters between visits, the web's `backhog:books:*` keys. */
+    val bookShelf: Flow<BookShelfState> = store.data.map { prefs ->
+        BookShelfState(
+            status = prefs[SHELF_STATUS] ?: "",
+            sort = prefs[SHELF_SORT] ?: "title",
+            author = prefs[SHELF_AUTHOR] ?: "",
+            subject = prefs[SHELF_SUBJECT] ?: "",
+            language = prefs[SHELF_LANGUAGE] ?: "",
+            grid = prefs[SHELF_GRID] ?: true,
+        )
+    }
+
+    suspend fun setBookShelf(state: BookShelfState) {
+        store.edit {
+            it[SHELF_STATUS] = state.status
+            it[SHELF_SORT] = state.sort
+            it[SHELF_AUTHOR] = state.author
+            it[SHELF_SUBJECT] = state.subject
+            it[SHELF_LANGUAGE] = state.language
+            it[SHELF_GRID] = state.grid
+        }
+    }
+
     private companion object {
         val BASE_URL = stringPreferencesKey("base_url")
         val THEME_LINKED = booleanPreferencesKey("theme:linked")
         val ARENA = stringPreferencesKey("arena")
+        val SHELF_STATUS = stringPreferencesKey("books:status")
+        val SHELF_SORT = stringPreferencesKey("books:sort")
+        val SHELF_AUTHOR = stringPreferencesKey("books:author")
+        val SHELF_SUBJECT = stringPreferencesKey("books:subject")
+        val SHELF_LANGUAGE = stringPreferencesKey("books:language")
+        val SHELF_GRID = booleanPreferencesKey("books:grid")
         fun themeKey(arena: Arena) = stringPreferencesKey("theme:${arena.key}")
     }
 }

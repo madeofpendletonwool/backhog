@@ -92,6 +92,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
+    implementation(libs.compose.material.icons.extended)
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.retrofit)
@@ -100,6 +101,19 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+
+    // Covers, straight from the public cover endpoints.
+    implementation(libs.coil.compose)
+
+    // The camera paths: barcode adds and page scanning. ML Kit's bundled
+    // variants carry their models in the APK — no Play Services at runtime,
+    // and nothing leaves the device but the passage text the matcher gets.
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.mlkit.barcode.scanning)
+    implementation(libs.mlkit.text.recognition)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)

@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Barcode adds and page scanning. Asked at use; both flows fall back
+         to typing when it is refused or absent. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Not required: the typed paths are the floor, not the fallback. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- No networkSecurityConfig: servers are HTTPS (Let's Encrypt), and the
          platform default already refuses cleartext at targetSdk 28+. -->

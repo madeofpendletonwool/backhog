@@ -30,9 +30,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.api.User
 import com.collinpendleton.backhog.data.Arena
+import com.collinpendleton.backhog.ui.books.BookDetailScreen
+import com.collinpendleton.backhog.ui.books.BookLibraryScreen
+import com.collinpendleton.backhog.ui.books.ReadingDashboardScreen
 import com.collinpendleton.backhog.ui.components.ToneChip
 import com.collinpendleton.backhog.ui.settings.SettingsScreen
 import com.collinpendleton.backhog.ui.theme.Backhog
@@ -46,6 +50,8 @@ import kotlinx.serialization.Serializable
 @Serializable data object GamesHome
 @Serializable data object BooksGraph
 @Serializable data object BooksHome
+@Serializable data class BookDetail(val entryId: String)
+@Serializable data object ReadingDashboard
 @Serializable data object SettingsRoute
 
 private data class Tab(val route: Any, val label: String, val icon: ImageVector, val arena: Arena?)
@@ -103,7 +109,31 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                 composable<GamesHome> { ArenaHome(Arena.Games, user) }
             }
             navigation<BooksGraph>(startDestination = BooksHome) {
-                composable<BooksHome> { ArenaHome(Arena.Books, user) }
+                composable<BooksHome> {
+                    BookLibraryScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
+                        onDashboard = { nav.navigate(ReadingDashboard) },
+                    )
+                }
+                composable<BookDetail> { entry ->
+                    BookDetailScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        entryId = entry.toRoute<BookDetail>().entryId,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { id -> nav.navigate(BookDetail(id)) },
+                    )
+                }
+                composable<ReadingDashboard> {
+                    ReadingDashboardScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
+                    )
+                }
             }
             composable<SettingsRoute> { SettingsScreen(container, user, baseUrl) }
         }

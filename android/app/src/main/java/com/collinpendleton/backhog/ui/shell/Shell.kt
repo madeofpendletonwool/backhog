@@ -2,7 +2,6 @@ package com.collinpendleton.backhog.ui.shell
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -10,7 +9,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -18,6 +16,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -37,10 +36,11 @@ import com.collinpendleton.backhog.data.Arena
 import com.collinpendleton.backhog.ui.books.BookDetailScreen
 import com.collinpendleton.backhog.ui.books.BookLibraryScreen
 import com.collinpendleton.backhog.ui.books.ReadingDashboardScreen
-import com.collinpendleton.backhog.ui.components.ToneChip
+import com.collinpendleton.backhog.ui.games.GameDetailScreen
+import com.collinpendleton.backhog.ui.games.LibraryScreen
+import com.collinpendleton.backhog.ui.games.QueueScreen
 import com.collinpendleton.backhog.ui.settings.SettingsScreen
 import com.collinpendleton.backhog.ui.theme.Backhog
-import com.collinpendleton.backhog.ui.theme.Tones
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -48,6 +48,8 @@ import kotlinx.serialization.Serializable
 // that arena's back stack — Back and Up stay inside the arena you are in.
 @Serializable data object GamesGraph
 @Serializable data object GamesHome
+@Serializable data object GamesQueue
+@Serializable data class GameDetail(val entryId: String)
 @Serializable data object BooksGraph
 @Serializable data object BooksHome
 @Serializable data class BookDetail(val entryId: String)
@@ -68,6 +70,10 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
     val scope = rememberCoroutineScope()
     val entry by nav.currentBackStackEntryAsState()
     val p = Backhog.palette
+    // Read the opening arena once: a live value here would rebuild the graph
+    // (and drop each arena's saved back stack) every time the tab changed.
+    val initialArena = remember { startArena }
+    val openGame = { id: String -> nav.navigate(GameDetail(id)) }
 
     Scaffold(
         containerColor = p.c950,
@@ -102,11 +108,26 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = if (startArena == Arena.Books) BooksGraph else GamesGraph,
+            startDestination = if (initialArena == Arena.Books) BooksGraph else GamesGraph,
             modifier = Modifier.padding(padding),
         ) {
             navigation<GamesGraph>(startDestination = GamesHome) {
-                composable<GamesHome> { ArenaHome(Arena.Games, user) }
+                composable<GamesHome> {
+                    LibraryScreen(container, baseUrl, onOpenGame = openGame, onOpenQueue = { nav.navigate(GamesQueue) })
+                }
+                composable<GamesQueue> {
+                    QueueScreen(container, baseUrl, onOpenGame = openGame, onBack = { nav.popBackStack() })
+                }
+                composable<GameDetail> { backStack ->
+                    val route = backStack.toRoute<GameDetail>()
+                    GameDetailScreen(
+                        container,
+                        baseUrl,
+                        route.entryId,
+                        onBack = { nav.popBackStack() },
+                        onRemoved = { nav.popBackStack() },
+                    )
+                }
             }
             navigation<BooksGraph>(startDestination = BooksHome) {
                 composable<BooksHome> {
@@ -136,34 +157,6 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                 }
             }
             composable<SettingsRoute> { SettingsScreen(container, user, baseUrl) }
-        }
-    }
-}
-
-/** Stage 1's placeholder for each arena's home — themed, empty, and honest about it. */
-@Composable
-private fun ArenaHome(arena: Arena, user: User) {
-    val p = Backhog.palette
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(arena.label, style = MaterialTheme.typography.headlineMedium, color = p.c100)
-        Text(
-            when (arena) {
-                Arena.Games -> "Hi ${user.username}. Your library, queue and dashboard land here next."
-                Arena.Books -> "Hi ${user.username}. Your shelf, reader and audiobooks land here next."
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = p.c400,
-        )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ToneChip("Backlog", Tones.Backlog)
-            ToneChip(if (arena == Arena.Games) "Playing" else "Reading", Tones.Playing)
-            ToneChip(if (arena == Arena.Games) "Played" else "Read", Tones.Played)
-            ToneChip("Dropped", Tones.Dropped)
         }
     }
 }

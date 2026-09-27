@@ -39,7 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.api.Book
-import com.collinpendleton.backhog.api.Status
+import com.collinpendleton.backhog.api.EntryStatus
 import com.collinpendleton.backhog.books.byline
 import com.collinpendleton.backhog.books.editionIsbn
 import com.collinpendleton.backhog.books.editionLabel
@@ -51,7 +51,7 @@ import com.collinpendleton.backhog.ui.components.PrimaryButton
 import com.collinpendleton.backhog.ui.theme.Backhog
 
 /** The statuses a book can be added in. */
-private val ADD_STATUSES = listOf(Status.Backlog, Status.Playing, Status.Played, Status.Wishlist)
+private val ADD_STATUSES = listOf(EntryStatus.Backlog, EntryStatus.Playing, EntryStatus.Played, EntryStatus.Wishlist)
 
 /**
  * Three ways to put a book on the shelf, in the order they are fastest:
@@ -233,7 +233,7 @@ private fun SearchStep(state: AddBookState, baseUrl: String, vm: AddBookViewMode
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BookCover(book, baseUrl, Modifier.width(36.dp).aspectRatio(2f / 3f))
+                    BookCover(book.title, book.coverUrl, book.accentHex, baseUrl, book.id, Modifier.width(36.dp).aspectRatio(2f / 3f))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
                             book.title,
@@ -242,9 +242,9 @@ private fun SearchStep(state: AddBookState, baseUrl: String, vm: AddBookViewMode
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (byline(book).isNotEmpty() || publishYear(book).isNotEmpty()) {
+                        if (byline(book.authors).isNotEmpty() || publishYear(book.firstPublishYear).isNotEmpty()) {
                             Text(
-                                listOf(byline(book), publishYear(book)).filter { it.isNotEmpty() }
+                                listOf(byline(book.authors), publishYear(book.firstPublishYear)).filter { it.isNotEmpty() }
                                     .joinToString(" · "),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = p.c400,
@@ -272,7 +272,7 @@ private fun ConfirmStep(state: AddBookState, vm: AddBookViewModel, baseUrl: Stri
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            BookCover(book, baseUrl, Modifier.width(84.dp).aspectRatio(2f / 3f))
+            BookCover(book.title, book.coverUrl, book.accentHex, baseUrl, book.id, Modifier.width(84.dp).aspectRatio(2f / 3f))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     book.title,
@@ -280,7 +280,7 @@ private fun ConfirmStep(state: AddBookState, vm: AddBookViewModel, baseUrl: Stri
                     color = p.c100,
                 )
                 Text(
-                    listOf(byline(book), publishYear(book)).filter { it.isNotEmpty() }
+                    listOf(byline(book.authors), publishYear(book.firstPublishYear)).filter { it.isNotEmpty() }
                         .joinToString(" · ").ifEmpty { "Unknown author" },
                     style = MaterialTheme.typography.bodyMedium,
                     color = p.c400,
@@ -319,7 +319,7 @@ private fun ConfirmStep(state: AddBookState, vm: AddBookViewModel, baseUrl: Stri
 }
 
 @Composable
-private fun StatusPicker(current: Status, pick: (Status) -> Unit) {
+private fun StatusPicker(current: EntryStatus, pick: (EntryStatus) -> Unit) {
     val p = Backhog.palette
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionLabel("Shelf")

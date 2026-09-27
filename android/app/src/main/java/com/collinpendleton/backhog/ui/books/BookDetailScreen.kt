@@ -52,7 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.collinpendleton.backhog.AppContainer
-import com.collinpendleton.backhog.api.Status
+import com.collinpendleton.backhog.api.EntryStatus
 import com.collinpendleton.backhog.books.byline
 import com.collinpendleton.backhog.books.chapterTitle
 import com.collinpendleton.backhog.books.describeSource
@@ -231,12 +231,24 @@ fun BookDetailScreen(
 @Composable
 private fun Header(state: BookDetailState, baseUrl: String) {
     val p = Backhog.palette
-    val book = state.book ?: state.entry?.book ?: return
+    val book = state.book
+    val brief = state.entry?.book
+    if (book == null && brief == null) return
+    val title = book?.title ?: brief!!.title
+    val line = listOf(byline(book?.authors), publishYear(book?.firstPublishYear))
+        .filter { it.isNotEmpty() }
+        .joinToString(" · ")
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        BookCover(book, baseUrl, Modifier.width(96.dp).aspectRatio(2f / 3f))
+        BookCover(
+            title,
+            book?.coverUrl ?: brief!!.coverUrl,
+            book?.accentHex ?: brief!!.accentHex,
+            baseUrl,
+            book?.id ?: brief!!.id,
+            Modifier.width(96.dp).aspectRatio(2f / 3f),
+        )
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(book.title, style = MaterialTheme.typography.titleLarge, color = p.cMax)
-            val line = listOf(byline(book), publishYear(book)).filter { it.isNotEmpty() }.joinToString(" · ")
+            Text(title, style = MaterialTheme.typography.titleLarge, color = p.cMax)
             if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodyMedium, color = p.c400)
             LenderBadge(state.entry?.sharedBy)
             state.entry?.let { entry ->
@@ -253,12 +265,12 @@ private fun Header(state: BookDetailState, baseUrl: String) {
     }
 }
 
-internal fun statusTone(status: Status) = when (status) {
-    Status.Backlog -> Tones.Backlog
-    Status.Playing -> Tones.Playing
-    Status.Played -> Tones.Played
-    Status.Dropped, Status.Ignored -> Tones.Dropped
-    Status.Wishlist -> Tones.Silver
+internal fun statusTone(status: EntryStatus) = when (status) {
+    EntryStatus.Backlog -> Tones.Backlog
+    EntryStatus.Playing -> Tones.Playing
+    EntryStatus.Played -> Tones.Played
+    EntryStatus.Dropped, EntryStatus.Ignored -> Tones.Dropped
+    EntryStatus.Wishlist -> Tones.Silver
 }
 
 /* ------------------------------------------------------------------- facts */
@@ -322,7 +334,7 @@ private fun ShelfPanel(state: BookDetailState, vm: BookDetailViewModel) {
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Status.entries.chunked(3).forEach { row ->
+            EntryStatus.entries.chunked(3).forEach { row ->
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         row.forEach { status ->

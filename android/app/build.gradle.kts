@@ -93,6 +93,9 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
     implementation(libs.compose.material.icons.extended)
+
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.retrofit)
@@ -101,9 +104,6 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
-
-    // Covers, straight from the public cover endpoints.
-    implementation(libs.coil.compose)
 
     // The camera paths: barcode adds and page scanning. ML Kit's bundled
     // variants carry their models in the APK — no Play Services at runtime,

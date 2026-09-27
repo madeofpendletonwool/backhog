@@ -61,9 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.api.Entry
-import com.collinpendleton.backhog.api.Status
+import com.collinpendleton.backhog.api.EntryStatus
 import com.collinpendleton.backhog.ui.theme.Backhog
-import com.collinpendleton.backhog.ui.theme.Tones
 
 /**
  * The shelf. Deliberately the same controls the games shelf has — status
@@ -148,8 +147,8 @@ fun BookLibraryScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 StatusTab("", "All", state.shelf.status, vm::setStatus)
-                Status.Quick.forEach { status ->
-                    StatusTab(status.name.lowercase(), status.bookLabel, state.shelf.status, vm::setStatus)
+                EntryStatus.quick.forEach { status ->
+                    StatusTab(status.key, status.bookLabel, state.shelf.status, vm::setStatus)
                 }
                 AssistChip(
                     onClick = { showFilters = true },
@@ -297,6 +296,7 @@ private fun BookGrid(
         modifier = Modifier.fillMaxSize(),
     ) {
         items(entries, key = { it.id }) { entry ->
+            val book = entry.book ?: return@items
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -304,9 +304,12 @@ private fun BookGrid(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 BookCover(
-                    entry.book ?: return@items,
-                    baseUrl,
-                    Modifier
+                    title = book.title,
+                    coverUrl = book.coverUrl,
+                    accentHex = book.accentHex,
+                    baseUrl = baseUrl,
+                    bookId = book.id,
+                    modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(2f / 3f),
                 )
@@ -368,21 +371,12 @@ private fun BookTable(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                BookCover(book, baseUrl, Modifier.size(width = 38.dp, height = 56.dp))
+                BookCover(book.title, book.coverUrl, book.accentHex, baseUrl, book.id, Modifier.size(width = 38.dp, height = 56.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     BookCaption(entry)
                 }
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    com.collinpendleton.backhog.ui.components.ToneChip(
-                        entry.status.bookLabel,
-                        when (entry.status) {
-                            Status.Backlog -> Tones.Backlog
-                            Status.Playing -> Tones.Playing
-                            Status.Played -> Tones.Played
-                            Status.Dropped, Status.Ignored -> Tones.Dropped
-                            Status.Wishlist -> Tones.Silver
-                        },
-                    )
+                    com.collinpendleton.backhog.ui.components.ToneChip(entry.status.bookLabel, statusTone(entry.status))
                     entry.loggedMinutes.takeIf { it > 0 }?.let {
                         Text("${it / 60}h ${it % 60}m", style = MaterialTheme.typography.labelSmall, color = p.c500)
                     }

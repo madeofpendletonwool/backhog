@@ -2,6 +2,7 @@ package com.collinpendleton.backhog.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import com.collinpendleton.backhog.api.EntryStatus
 
 /** A theme family: how the chrome is built, not just its colours. Arcade is deferred past v1. */
 enum class ThemeFamily(val label: String, val blurb: String) {
@@ -178,9 +179,21 @@ object Tones {
     val Playing = Color(0xFF22D3EE)
     val Played = Color(0xFF34D399)
     val Dropped = Color(0xFFF87171)
+    val Ignored = Color(0xFFA1A1AA)
+    val Wishlist = Color(0xFFFBBF24)
 
     val Bronze = Color(0xFFD9A06B)
     val Silver = Color(0xFFC4CCD8)
     val Gold = Color(0xFFE6C35C)
     val Legendary = Color(0xFF82E6FF)
+
+    /** The hue each status always renders in — the web's STATUS_TONE, at the ladder's 400 shade. */
+    fun forStatus(status: EntryStatus): Color = when (status) {
+        EntryStatus.Backlog -> Backlog
+        EntryStatus.Playing -> Playing
+        EntryStatus.Played -> Played
+        EntryStatus.Dropped -> Dropped
+        EntryStatus.Ignored -> Ignored
+        EntryStatus.Wishlist -> Wishlist
+    }
 }

@@ -8,7 +8,7 @@ import com.collinpendleton.backhog.api.AddBookRequest
 import com.collinpendleton.backhog.api.ApiError
 import com.collinpendleton.backhog.api.Book
 import com.collinpendleton.backhog.api.BookSearchResponse
-import com.collinpendleton.backhog.api.Status
+import com.collinpendleton.backhog.api.EntryStatus
 import com.collinpendleton.backhog.api.apiCall
 import com.collinpendleton.backhog.books.sortEditions
 import kotlinx.coroutines.FlowPreview
@@ -38,7 +38,7 @@ data class AddBookState(
     /** The printings of the picked work, newest-and-counted first. */
     val editions: List<com.collinpendleton.backhog.api.BookEdition> = emptyList(),
     val editionId: String = "",
-    val status: Status = Status.Backlog,
+    val status: EntryStatus = EntryStatus.Backlog,
     val adding: Boolean = false,
     val addError: String? = null,
     /** A code the scanner read that is not a book ISBN. */
@@ -140,7 +140,7 @@ class AddBookViewModel(
     }
 
     fun setEdition(id: String) = _state.update { it.copy(editionId = id) }
-    fun setStatus(status: Status) = _state.update { it.copy(status = status) }
+    fun setStatus(status: EntryStatus) = _state.update { it.copy(status = status) }
 
     fun add(onAdded: () -> Unit) {
         val s = _state.value

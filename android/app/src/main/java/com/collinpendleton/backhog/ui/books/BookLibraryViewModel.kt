@@ -109,8 +109,9 @@ class BookLibraryViewModel(
         val id = ++queryId
         val result = apiCall {
             api().library(
+                media = "book",
                 status = s.shelf.status.ifEmpty { null },
-                query = s.search.trim().ifEmpty { null },
+                q = s.search.trim().ifEmpty { null },
                 sort = s.shelf.sort,
                 author = s.shelf.author.ifEmpty { null },
                 subject = s.shelf.subject.ifEmpty { null },

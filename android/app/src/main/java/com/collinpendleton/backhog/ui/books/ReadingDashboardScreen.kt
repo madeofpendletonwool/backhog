@@ -165,7 +165,7 @@ private fun ContinueRow(books: List<ReadingNowBook>, baseUrl: String, onOpen: (S
                 ) {
                     val book = item.entry.book
                     if (book != null) {
-                        BookCover(book, baseUrl, Modifier.fillMaxWidth().aspectRatio(2f / 3f))
+                        BookCover(book.title, book.coverUrl, book.accentHex, baseUrl, book.id, Modifier.fillMaxWidth().aspectRatio(2f / 3f))
                     }
                     BookCaption(item.entry, compact = true)
                     ProgressBar(item.percent.toFloat() / 100f)

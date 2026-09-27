@@ -1,6 +1,5 @@
 package com.collinpendleton.backhog.books
 
-import com.collinpendleton.backhog.api.Book
 import com.collinpendleton.backhog.api.BookEdition
 import com.collinpendleton.backhog.api.BookPosition
 import com.collinpendleton.backhog.api.PositionChapter
@@ -13,11 +12,11 @@ class BookFormatTest {
 
     @Test
     fun `byline joins authors the way the web does`() {
-        assertEquals("", byline(book(authors = null)))
-        assertEquals("", byline(book(authors = emptyList())))
-        assertEquals("Le Guin", byline(book(authors = listOf("Le Guin"))))
-        assertEquals("Gaiman & Pratchett", byline(book(authors = listOf("Gaiman", "Pratchett"))))
-        assertEquals("A & 2 others", byline(book(authors = listOf("A", "B", "C"))))
+        assertEquals("", byline(null))
+        assertEquals("", byline(emptyList()))
+        assertEquals("Le Guin", byline(listOf("Le Guin")))
+        assertEquals("Gaiman & Pratchett", byline(listOf("Gaiman", "Pratchett")))
+        assertEquals("A & 2 others", byline(listOf("A", "B", "C")))
     }
 
     @Test
@@ -115,12 +114,6 @@ class BookFormatTest {
         val sorted = sortEditions(listOf(old, uncounted, new))
         assertEquals(listOf("new", "old", "uncounted"), sorted.map { it.id })
     }
-
-    private fun book(authors: List<String>?) = Book(
-        id = "OL123W",
-        title = "Anathem",
-        authors = authors,
-    )
 
     private fun edition(id: String, pages: Int?, year: Int? = null) = BookEdition(
         id = id,

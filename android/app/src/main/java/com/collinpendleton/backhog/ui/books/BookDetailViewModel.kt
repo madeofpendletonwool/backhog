@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.collinpendleton.backhog.AppContainer
+import com.collinpendleton.backhog.api.AchievementStatus
 import com.collinpendleton.backhog.api.AddSessionRequest
 import com.collinpendleton.backhog.api.ApiError
 import com.collinpendleton.backhog.api.Book
@@ -13,29 +14,24 @@ import com.collinpendleton.backhog.api.CopiesResponse
 import com.collinpendleton.backhog.api.CopyResponse
 import com.collinpendleton.backhog.api.CreateCopyRequest
 import com.collinpendleton.backhog.api.Entry
-import com.collinpendleton.backhog.api.EntryUpdateResult
+import com.collinpendleton.backhog.api.EntryStatus
 import com.collinpendleton.backhog.api.PageAnchor
 import com.collinpendleton.backhog.api.PassageRequest
 import com.collinpendleton.backhog.api.PassageResult
+import com.collinpendleton.backhog.api.PatchEntryResponse
 import com.collinpendleton.backhog.api.PhysicalCopy
 import com.collinpendleton.backhog.api.PlaySession
 import com.collinpendleton.backhog.api.PositionWrite
 import com.collinpendleton.backhog.api.SaveAnchorRequest
 import com.collinpendleton.backhog.api.ShareCandidate
 import com.collinpendleton.backhog.api.ShareRequest
-import com.collinpendleton.backhog.api.Status
-import com.collinpendleton.backhog.api.UnlockToast
 import com.collinpendleton.backhog.api.apiCall
+import com.collinpendleton.backhog.api.entryPatch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 data class BookDetailState(
     val entryId: String = "",
@@ -50,7 +46,7 @@ data class BookDetailState(
     val sessions: List<PlaySession> = emptyList(),
     val shareCandidates: List<ShareCandidate> = emptyList(),
     /** Achievements a mutation unlocked, queued for a toast. */
-    val unlocks: List<UnlockToast> = emptyList(),
+    val unlocks: List<AchievementStatus> = emptyList(),
     val busy: Boolean = false,
     val actionError: String? = null,
     val deleted: Boolean = false,
@@ -86,7 +82,7 @@ class BookDetailViewModel(
         val id = _state.value.entryId
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
-            apiCall { api().getEntry(id) }
+            apiCall { api().entry(id) }
                 .onSuccess { entry ->
                     _state.update { it.copy(entry = entry) }
                     entry.book?.let { book ->
@@ -126,10 +122,10 @@ class BookDetailViewModel(
     fun clearActionError() = _state.update { it.copy(actionError = null) }
 
     /** The entry PATCH path: writes land, the entry is read back, unlocks queue. */
-    private fun patchEntry(body: JsonObject, after: (suspend () -> Unit)? = null) {
+    private fun patch(body: kotlinx.serialization.json.JsonObject, after: (suspend () -> Unit)? = null) {
         runMutation(
-            call = { api().updateEntry(_state.value.entryId, body) },
-            onDone = { result: EntryUpdateResult ->
+            call = { api().patchEntry(_state.value.entryId, body) },
+            onDone = { result: PatchEntryResponse ->
                 _state.update { it.copy(entry = result.entry, unlocks = result.unlocks) }
                 after?.invoke()
             },
@@ -158,22 +154,16 @@ class BookDetailViewModel(
         }
     }
 
-    fun setStatus(status: Status) = patchEntry(buildJsonObject { put("status", status.name.lowercase()) })
+    fun setStatus(status: EntryStatus) = patch(entryPatch { status(status) })
 
-    fun setRating(score: Int?) = patchEntry(
-        // A null rating is a real write: "no opinion" clears the column, and
-        // explicitNulls=false would drop a typed null from the body.
-        buildJsonObject {
-            put("user_rating", score?.let { JsonPrimitive(it) } ?: JsonNull)
-        },
-    )
+    fun setRating(score: Int?) = patch(entryPatch { rating(score) })
 
-    fun setNotes(notes: String) = patchEntry(buildJsonObject { put("notes", notes) })
+    fun setNotes(notes: String) = patch(entryPatch { notes(notes) })
 
     fun addSession(minutes: Int, note: String) {
         if (minutes <= 0) return
         runMutation(
-            call = { api().addSession(_state.value.entryId, AddSessionRequest(minutes, note)) },
+            call = { api().addSession(_state.value.entryId, AddSessionRequest(minutes, note = note.takeIf { it.isNotBlank() })) },
             onDone = { result ->
                 _state.update { it.copy(unlocks = result.unlocks) }
                 refreshSessions()
@@ -285,7 +275,7 @@ class BookDetailViewModel(
                 write.onFailure { e -> _state.update { it.copy(actionError = e.message) } }
             }
             refreshCopiesAndPosition()
-            apiCall { api().getEntry(_state.value.entryId) }.onSuccess { entry ->
+            apiCall { api().entry(_state.value.entryId) }.onSuccess { entry ->
                 _state.update { it.copy(entry = entry) }
             }
         }

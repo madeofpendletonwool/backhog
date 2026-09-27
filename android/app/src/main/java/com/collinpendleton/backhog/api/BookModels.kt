@@ -4,34 +4,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // The Stage 4 surface, transcribed from web/src/lib/types.ts (the source of
-// truth). Everything here is also written by the games arena's shared routes;
+// truth). Entry, EntryStatus, LibraryResponse, PlaySession and the session/
+// achievement shapes are shared with the games arena and live in Models.kt;
 // only the book-specific shapes live in this file.
-
-@Serializable
-enum class Status {
-    @SerialName("backlog") Backlog,
-    @SerialName("playing") Playing,
-    @SerialName("played") Played,
-    @SerialName("dropped") Dropped,
-    @SerialName("ignored") Ignored,
-    @SerialName("wishlist") Wishlist;
-
-    /** The label in the books arena — "Reading" a book and "Played" a book are not English. */
-    val bookLabel: String
-        get() = when (this) {
-            Backlog -> "To read"
-            Playing -> "Reading"
-            Played -> "Read"
-            Dropped -> "Abandoned"
-            Ignored -> "Ignored"
-            Wishlist -> "Wishlist"
-        }
-
-    companion object {
-        /** The quick-access shelf tabs; Wishlist lives on the detail page only. */
-        val Quick = listOf(Backlog, Playing, Played, Dropped, Ignored)
-    }
-}
 
 /** A book work: "The Hobbit", not any particular printing of it. */
 @Serializable
@@ -64,40 +39,11 @@ data class BookEdition(
     @SerialName("cover_url") val coverUrl: String = "",
 )
 
-/** One item on the shelf. `book` is set on every entry the books arena returns. */
-@Serializable
-data class Entry(
-    val id: String,
-    @SerialName("media_type") val mediaType: String,
-    val status: Status,
-    val book: Book? = null,
-    /** Whose attached files this book is read through, when they are not yours. */
-    @SerialName("shared_by") val sharedBy: String? = null,
-    @SerialName("edition_id") val editionId: String? = null,
-    @SerialName("user_rating") val userRating: Int? = null,
-    val notes: String = "",
-    @SerialName("queue_position") val queuePosition: Int? = null,
-    @SerialName("logged_minutes") val loggedMinutes: Int = 0,
-    @SerialName("started_at") val startedAt: String? = null,
-    @SerialName("finished_at") val finishedAt: String? = null,
-    @SerialName("created_at") val createdAt: String = "",
-    @SerialName("updated_at") val updatedAt: String = "",
-    @SerialName("progress_percent") val progressPercent: Double? = null,
-    @SerialName("last_read_at") val lastReadAt: String? = null,
-    @SerialName("progress_source") val progressSource: String? = null,
-)
-
-@Serializable
-data class LibraryResponse(
-    val entries: List<Entry>,
-    val total: Int,
-)
-
 @Serializable
 data class AddBookRequest(
     @SerialName("book_id") val bookId: String,
     @SerialName("edition_id") val editionId: String? = null,
-    val status: Status? = null,
+    val status: EntryStatus? = null,
 )
 
 /** The books counterpart of Stats, for the shelf's strip. */
@@ -132,45 +78,9 @@ data class BookSearchResult(
 @Serializable
 data class BookSearchResponse(val results: List<BookSearchResult>)
 
-@Serializable
-data class PlaySession(
-    val id: String,
-    @SerialName("entry_id") val entryId: String,
-    @SerialName("played_on") val playedOn: String,
-    val minutes: Int,
-    val note: String = "",
-    @SerialName("created_at") val createdAt: String = "",
-)
-
-@Serializable
-data class AddSessionRequest(
-    val minutes: Int,
-    val note: String = "",
-    @SerialName("played_on") val playedOn: String? = null,
-)
-
-@Serializable
-data class SessionsResponse(val sessions: List<PlaySession> = emptyList())
-
-@Serializable
-data class AddSessionResponse(
-    val session: PlaySession,
-    val unlocks: List<UnlockToast> = emptyList(),
-)
-
-/** An achievement the mutation unlocked — shown as a toast, nothing more. */
-@Serializable
-data class UnlockToast(
-    val id: String,
-    val title: String,
-    @SerialName("unlocked_at") val unlockedAt: String? = null,
-)
-
-@Serializable
-data class EntryUpdateResult(
-    val entry: Entry,
-    val unlocks: List<UnlockToast> = emptyList(),
-)
+// PlaySession, AddSessionRequest, SessionsResponse, AchievementStatus (the
+// unlock toast) and PatchEntryResponse are shared with the games arena and
+// live in Models.kt.
 
 // --- position: one place, three views --------------------------------------
 

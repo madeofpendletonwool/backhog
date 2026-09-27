@@ -23,8 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import com.collinpendleton.backhog.api.Book
+import coil3.compose.AsyncImage
 import com.collinpendleton.backhog.api.BookStats
 import com.collinpendleton.backhog.api.Entry
 import com.collinpendleton.backhog.books.byline
@@ -45,13 +44,14 @@ fun bookCoverUrl(baseUrl: String, bookId: String): String =
 /**
  * A book's cover, or the tinted placeholder the web shows when Open Library
  * has none: the accent wash with the title set in it, so a shelf of unknown
- * covers still reads as a shelf.
+ * covers still reads as a shelf. Takes the bare fields so it serves both the
+ * full Book and the queue-facing BookBrief.
  */
 @Composable
-fun BookCover(book: Book, baseUrl: String, modifier: Modifier = Modifier) {
+fun BookCover(title: String, coverUrl: String, accentHex: String, baseUrl: String, bookId: String, modifier: Modifier = Modifier) {
     val p = Backhog.palette
     val shape = RoundedCornerShape(6.dp)
-    val accent = accentColor(book.accentHex)
+    val accent = accentColor(accentHex)
     Box(
         modifier
             .clip(shape)
@@ -59,10 +59,10 @@ fun BookCover(book: Book, baseUrl: String, modifier: Modifier = Modifier) {
             .border(1.dp, p.edgeStrong, shape),
         contentAlignment = Alignment.Center,
     ) {
-        if (book.coverUrl.isNotEmpty()) {
+        if (coverUrl.isNotEmpty()) {
             AsyncImage(
-                model = bookCoverUrl(baseUrl, book.id),
-                contentDescription = book.title,
+                model = bookCoverUrl(baseUrl, bookId),
+                contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .clip(shape)
@@ -70,7 +70,7 @@ fun BookCover(book: Book, baseUrl: String, modifier: Modifier = Modifier) {
             )
         } else {
             Text(
-                book.title,
+                title,
                 color = p.toneInk(accent),
                 style = MaterialTheme.typography.labelSmall,
                 textAlign = TextAlign.Center,
@@ -182,6 +182,7 @@ fun LenderBadge(sharedBy: String?) {
 fun BookCaption(entry: Entry, compact: Boolean = false) {
     val p = Backhog.palette
     val book = entry.book ?: return
+    val authors = byline(book.authors)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             book.title,
@@ -190,9 +191,9 @@ fun BookCaption(entry: Entry, compact: Boolean = false) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        if (byline(book).isNotEmpty()) {
+        if (authors.isNotEmpty()) {
             Text(
-                byline(book),
+                authors,
                 style = MaterialTheme.typography.labelSmall,
                 color = p.c400,
                 maxLines = 1,

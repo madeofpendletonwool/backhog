@@ -1,6 +1,5 @@
 package com.collinpendleton.backhog.books
 
-import com.collinpendleton.backhog.api.Book
 import com.collinpendleton.backhog.api.BookEdition
 import com.collinpendleton.backhog.api.PositionChapter
 import com.collinpendleton.backhog.api.PositionPage
@@ -12,18 +11,18 @@ import kotlin.math.roundToInt
 // their contract with each other.
 
 /** "Ursula K. Le Guin", "Gaiman & Pratchett", "" — the byline, one line long. */
-fun byline(book: Book): String {
-    val authors = book.authors ?: return ""
-    return when (authors.size) {
+fun byline(authors: List<String>?): String {
+    val list = authors ?: return ""
+    return when (list.size) {
         0 -> ""
-        1 -> authors[0]
-        2 -> "${authors[0]} & ${authors[1]}"
-        else -> "${authors[0]} & ${authors.size - 1} others"
+        1 -> list[0]
+        2 -> "${list[0]} & ${list[1]}"
+        else -> "${list[0]} & ${list.size - 1} others"
     }
 }
 
 /** The year the work first appeared, as a string; "" when unknown. */
-fun publishYear(book: Book): String = book.firstPublishYear?.toString() ?: ""
+fun publishYear(year: Int?): String = year?.toString() ?: ""
 
 /**
  * Strips the separators people type and scanners emit, so "978-0-14-118776-1"

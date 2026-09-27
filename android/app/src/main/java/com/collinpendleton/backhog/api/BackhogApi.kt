@@ -141,7 +141,78 @@ interface BackhogApi {
     suspend fun bookPosition(@Path("entryId") entryId: String): BookPosition
 
     @PUT("books/{entryId}/position")
-    suspend fun putBookPosition(@Path("entryId") entryId: String, @Body write: PositionWrite): Ok
+    suspend fun putBookPosition(@Path("entryId") entryId: String, @Body write: PositionWrite): PositionWriteResult
+
+    /**
+     * The same write as [putBookPosition] on the verb a client that may die
+     * before its next request uses — the web's sendBeacon form. The reader
+     * fires it when the app leaves the foreground.
+     */
+    @POST("books/{entryId}/position")
+    suspend fun postBookPosition(@Path("entryId") entryId: String, @Body write: PositionWrite): PositionWriteResult
+
+    // --- canonical text (the reader) ---------------------------------------
+
+    /** The spine with block offsets. Parses the EPUB on first call — the slow one. */
+    @GET("books/{entryId}/text/chapters")
+    suspend fun bookTextChapters(@Path("entryId") entryId: String): BookTextChapters
+
+    /** One spine document as prose, block for block with its offsets. */
+    @GET("books/{entryId}/text/display")
+    suspend fun bookTextDisplay(@Path("entryId") entryId: String, @Query("spine") spine: Int): BookTextDisplay
+
+    /** The paged reader's manifest: an image-native PDF's page axis. */
+    @GET("books/{entryId}/pages")
+    suspend fun bookPages(@Path("entryId") entryId: String): BookPagesResponse
+
+    // --- the file layer (member/admin) ---------------------------------------
+
+    @GET("media/scan")
+    suspend fun mediaScanStatus(): MediaScanStatus
+
+    @POST("media/scan")
+    suspend fun kickMediaScan(): StartedResponse
+
+    @GET("media/files")
+    suspend fun mediaFiles(
+        @Query("kind") kind: String? = null,
+        @Query("unattached") unattached: Boolean? = null,
+        @Query("include_missing") includeMissing: Boolean? = null,
+    ): MediaFilesResponse
+
+    @GET("media/candidates")
+    suspend fun mediaCandidates(): MediaCandidatesResponse
+
+    @POST("media/ignore")
+    suspend fun ignoreMediaFiles(@Body body: IgnoreFilesRequest): IgnoreFilesResponse
+
+    @DELETE("media/ignore/{fileId}")
+    suspend fun unignoreMediaFile(@Path("fileId") fileId: Long): UnignoreFileResponse
+
+    @POST("books/{entryId}/files")
+    suspend fun attachFiles(@Path("entryId") entryId: String, @Body body: AttachFilesRequest): AttachFilesResponse
+
+    @DELETE("books/{entryId}/files/{fileId}")
+    suspend fun detachFile(@Path("entryId") entryId: String, @Path("fileId") fileId: Long): DetachFileResponse
+
+    /** Makes one of a book's text files its canonical text. */
+    @PUT("books/{entryId}/files/{fileId}/primary")
+    suspend fun setPrimaryTextFile(@Path("entryId") entryId: String, @Path("fileId") fileId: Long): PromoteFileResponse
+
+    /** Makes one of a book's audiobooks the one that plays. */
+    @PUT("books/{entryId}/audio-editions/{editionId}/primary")
+    suspend fun setPrimaryAudioEdition(@Path("entryId") entryId: String, @Path("editionId") editionId: Long): Ok
+
+    @GET("books/{entryId}/align")
+    suspend fun alignStatus(@Path("entryId") entryId: String): AlignmentStatusView
+
+    @POST("books/{entryId}/align")
+    suspend fun enqueueAlignment(@Path("entryId") entryId: String): AlignmentEnqueueResponse
+
+    /** 204, no body — clears the map and cancels any in-flight job. */
+    @DELETE("books/{entryId}/align")
+    suspend fun clearAlignment(@Path("entryId") entryId: String): Response<Unit>
+
 
     // --- the paper bridge --------------------------------------------------
 

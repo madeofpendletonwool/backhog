@@ -36,9 +36,11 @@ import com.collinpendleton.backhog.data.Arena
 import com.collinpendleton.backhog.ui.books.BookDetailScreen
 import com.collinpendleton.backhog.ui.books.BookLibraryScreen
 import com.collinpendleton.backhog.ui.books.ReadingDashboardScreen
+import com.collinpendleton.backhog.ui.books.reader.ReaderScreen
 import com.collinpendleton.backhog.ui.games.GameDetailScreen
 import com.collinpendleton.backhog.ui.games.LibraryScreen
 import com.collinpendleton.backhog.ui.games.QueueScreen
+import com.collinpendleton.backhog.ui.media.MediaFilesScreen
 import com.collinpendleton.backhog.ui.settings.SettingsScreen
 import com.collinpendleton.backhog.ui.theme.Backhog
 import kotlinx.coroutines.launch
@@ -55,6 +57,12 @@ import kotlinx.serialization.Serializable
 @Serializable data class BookDetail(val entryId: String)
 @Serializable data object ReadingDashboard
 @Serializable data object SettingsRoute
+
+/** The reader. A jump offset (−1 when absent) lands on a paragraph; with `peek` it is a look that never writes a position. */
+@Serializable data class BookReader(val entryId: String, val offset: Long = -1L, val peek: Boolean = false)
+
+/** The file layer — member/admin only, the server's RequireMediaManager gate. */
+@Serializable data object BookFilesRoute
 
 private data class Tab(val route: Any, val label: String, val icon: ImageVector, val arena: Arena?)
 
@@ -136,6 +144,9 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                         baseUrl = baseUrl,
                         onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
                         onDashboard = { nav.navigate(ReadingDashboard) },
+                        onOpenFiles = if (user.canManageMedia) {
+                            { nav.navigate(BookFilesRoute) }
+                        } else null,
                     )
                 }
                 composable<BookDetail> { entry ->
@@ -145,6 +156,10 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                         entryId = entry.toRoute<BookDetail>().entryId,
                         onBack = { nav.popBackStack() },
                         onOpen = { id -> nav.navigate(BookDetail(id)) },
+                        canManageMedia = user.canManageMedia,
+                        onRead = { id -> nav.navigate(BookReader(id)) },
+                        onReadJump = { id, offset -> nav.navigate(BookReader(id, offset, peek = true)) },
+                        onOpenFiles = { nav.navigate(BookFilesRoute) },
                     )
                 }
                 composable<ReadingDashboard> {
@@ -153,6 +168,24 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                         baseUrl = baseUrl,
                         onBack = { nav.popBackStack() },
                         onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
+                    )
+                }
+                composable<BookReader> { backStack ->
+                    val route = backStack.toRoute<BookReader>()
+                    ReaderScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        entryId = route.entryId,
+                        jumpOffset = route.offset.takeIf { it >= 0 },
+                        jumpPeek = route.peek,
+                        onBack = { nav.popBackStack() },
+                    )
+                }
+                composable<BookFilesRoute> {
+                    MediaFilesScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onBack = { nav.popBackStack() },
                     )
                 }
             }

@@ -25,6 +25,7 @@ import com.collinpendleton.backhog.api.PositionWrite
 import com.collinpendleton.backhog.api.SaveAnchorRequest
 import com.collinpendleton.backhog.api.ShareCandidate
 import com.collinpendleton.backhog.api.ShareRequest
+import com.collinpendleton.backhog.api.AlignmentStatusView
 import com.collinpendleton.backhog.api.apiCall
 import com.collinpendleton.backhog.api.entryPatch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,8 @@ data class BookDetailState(
     val files: BookFilesResponse? = null,
     val sessions: List<PlaySession> = emptyList(),
     val shareCandidates: List<ShareCandidate> = emptyList(),
+    /** Where the entry's text↔audio alignment stands; null until asked for. */
+    val align: AlignmentStatusView? = null,
     /** Achievements a mutation unlocked, queued for a toast. */
     val unlocks: List<AchievementStatus> = emptyList(),
     val busy: Boolean = false,
@@ -296,6 +299,78 @@ class BookDetailViewModel(
     private suspend fun refreshShares() {
         apiCall { api().shareCandidates(_state.value.entryId) }.onSuccess { shares ->
             _state.update { it.copy(shareCandidates = shares.candidates) }
+        }
+    }
+
+    // --- the file layer (member/admin) -----------------------------------
+
+    private suspend fun refreshFiles() {
+        apiCall { api().bookFiles(_state.value.entryId) }.onSuccess { files ->
+            _state.update { it.copy(files = files) }
+        }
+        // The position's derived views move with the files that back them.
+        apiCall { api().bookPosition(_state.value.entryId) }.onSuccess { position ->
+            _state.update { it.copy(position = position) }
+        }
+    }
+
+    /**
+     * Makes one of the book's text files its canonical text. The server
+     * migrates the stored position (exactly when the containers
+     * canonicalize alike, by percentage when not) and drops any alignment,
+     * because it was built against the text being left behind.
+     */
+    fun promoteTextFile(fileId: Long) {
+        runMutation(
+            call = { api().setPrimaryTextFile(_state.value.entryId, fileId) },
+            onDone = { refreshFiles() },
+        )
+    }
+
+    /** Makes one of the book's recordings the one that plays. */
+    fun promoteAudioEdition(editionId: Long) {
+        runMutation(
+            call = { api().setPrimaryAudioEdition(_state.value.entryId, editionId) },
+            onDone = { refreshFiles() },
+        )
+    }
+
+    /**
+     * Detach a file. A file flagged missing can still be detached — the
+     * association is the thing being removed, not the bytes — but the UI
+     * explains what missing means before it lets anyone touch anything.
+     */
+    fun detachFile(fileId: Long) {
+        runMutation(
+            call = { api().detachFile(_state.value.entryId, fileId) },
+            onDone = { refreshFiles() },
+        )
+    }
+
+    /** Where the alignment stands; polled while a job is running. */
+    fun loadAlign() {
+        viewModelScope.launch {
+            apiCall { api().alignStatus(_state.value.entryId) }.onSuccess { status ->
+                _state.update { it.copy(align = status) }
+            }
+            val active = _state.value.align?.job?.state in setOf("queued", "claimed", "transcribing", "aligning")
+            if (active) {
+                kotlinx.coroutines.delay(4000)
+                loadAlign()
+            }
+        }
+    }
+
+    fun enqueueAlignment() {
+        runMutation(
+            call = { api().enqueueAlignment(_state.value.entryId) },
+            onDone = { loadAlign() },
+        )
+    }
+
+    fun clearAlignment() {
+        viewModelScope.launch {
+            apiCall { api().clearAlignment(_state.value.entryId) }.onSuccess { loadAlign() }
         }
     }
 

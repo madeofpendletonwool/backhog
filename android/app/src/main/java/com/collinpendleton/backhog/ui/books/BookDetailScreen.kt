@@ -179,7 +179,12 @@ fun BookDetailScreen(
                 Header(state, baseUrl)
                 FactsPanel(state)
                 ShelfPanel(state, vm)
-                PositionPanel(state, onScan = { showScan = true }, onRead = { onRead(entryId) })
+                PositionPanel(
+                    state,
+                    onScan = { showScan = true },
+                    onRead = { onRead(entryId) },
+                    onListen = { container.player.open(entryId) },
+                )
                 SessionsPanel(state, onAdd = { showSessions = true })
                 CopiesPanel(state, vm, onRegister = { showRegister = true })
                 FilesPanel(state, vm, canManageMedia, onOpenFiles)
@@ -438,7 +443,7 @@ private fun FactRow(label: String, value: String) {
 /* --------------------------------------------------------------- position */
 
 @Composable
-private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: () -> Unit) {
+private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: () -> Unit, onListen: () -> Unit = {}) {
     val p = Backhog.palette
     val entry = state.entry ?: return
     val position = state.position ?: return
@@ -497,6 +502,14 @@ private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: ()
         if (hasText || paged) {
             Button(onClick = onRead, modifier = Modifier.fillMaxWidth()) {
                 Text(if (position.updatedAt == null) "Start reading" else "Continue reading")
+            }
+        }
+
+        // The player opens whenever a designated recording exists; the audio
+        // view of the stored position says whether the tape has been started.
+        if (state.files?.audioEditions?.isNotEmpty() == true) {
+            OutlinedButton(onClick = onListen, modifier = Modifier.fillMaxWidth()) {
+                Text(if (position.audio != null && position.updatedAt != null) "Continue listening" else "Listen")
             }
         }
 

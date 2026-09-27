@@ -115,6 +115,14 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.mlkit.text.recognition)
 
+    // The audiobook engine: ExoPlayer behind a MediaLibrarySession (the
+    // notification, the lock screen and Android Auto all talk to the session,
+    // not the app), streaming cookie-authenticated track bytes over OkHttp so
+    // the player and the API share one session cookie jar.
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.session)
+    implementation(libs.media3.datasource.okhttp)
+
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)

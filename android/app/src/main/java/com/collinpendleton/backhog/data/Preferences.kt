@@ -216,6 +216,32 @@ class AppPreferences(private val store: DataStore<Preferences>) {
         }
     }
 
+    // --- the audiobook player ---------------------------------------------
+
+    /**
+     * Speed is a preference, not a per-book setting (the web's
+     * `backhog:audio-rate`): whoever listens at 1.75x listens at 1.75x to the
+     * next one too. Stored pre-clamped; the ladder is the UI's.
+     */
+    val audioRate: Flow<Float> = store.data.map { it[AUDIO_RATE] ?: 1f }
+
+    suspend fun setAudioRate(rate: Float) {
+        store.edit { it[AUDIO_RATE] = rate }
+    }
+
+    /**
+     * The entry the tape last held, so a service restarted after process
+     * death re-opens the book that was playing instead of an empty session.
+     * Cleared when the listener closes the player.
+     */
+    val lastAudioEntry: Flow<String?> = store.data.map { it[LAST_AUDIO_ENTRY] }
+
+    suspend fun setLastAudioEntry(entryId: String?) {
+        store.edit {
+            if (entryId == null) it.remove(LAST_AUDIO_ENTRY) else it[LAST_AUDIO_ENTRY] = entryId
+        }
+    }
+
     private companion object {
         val BASE_URL = stringPreferencesKey("base_url")
         val THEME_LINKED = booleanPreferencesKey("theme:linked")
@@ -235,6 +261,8 @@ class AppPreferences(private val store: DataStore<Preferences>) {
         val LIBRARY_PLATFORM = stringPreferencesKey("library:games:platform")
         val LIBRARY_GENRE = stringPreferencesKey("library:games:genre")
         val LIBRARY_VIEW = stringPreferencesKey("library:games:view")
+        val AUDIO_RATE = floatPreferencesKey("audio:rate")
+        val LAST_AUDIO_ENTRY = stringPreferencesKey("audio:last-entry")
 
         fun themeKey(arena: Arena) = stringPreferencesKey("theme:${arena.key}")
     }

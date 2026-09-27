@@ -1,6 +1,12 @@
 package com.collinpendleton.backhog.ui.shell
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -15,12 +21,17 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -41,6 +52,8 @@ import com.collinpendleton.backhog.ui.games.GameDetailScreen
 import com.collinpendleton.backhog.ui.games.LibraryScreen
 import com.collinpendleton.backhog.ui.games.QueueScreen
 import com.collinpendleton.backhog.ui.media.MediaFilesScreen
+import com.collinpendleton.backhog.ui.player.FullPlayer
+import com.collinpendleton.backhog.ui.player.MiniPlayer
 import com.collinpendleton.backhog.ui.settings.SettingsScreen
 import com.collinpendleton.backhog.ui.theme.Backhog
 import kotlinx.coroutines.launch
@@ -83,37 +96,58 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
     val initialArena = remember { startArena }
     val openGame = { id: String -> nav.navigate(GameDetail(id)) }
 
-    Scaffold(
-        containerColor = p.c950,
-        bottomBar = {
-            NavigationBar(containerColor = p.c900) {
-                tabs.forEach { tab ->
-                    val selected = entry?.destination?.hierarchy?.any { it.hasRoute(tab.route::class) } == true
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            // Standing in an arena picks its theme; Settings keeps the last arena's.
-                            tab.arena?.let { scope.launch { container.preferences.setArena(it) } }
-                            nav.navigate(tab.route) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = { Icon(tab.icon, contentDescription = null) },
-                        label = { Text(tab.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = p.hlBright,
-                            selectedTextColor = p.c100,
-                            indicatorColor = p.fillActive,
-                            unselectedIconColor = p.c500,
-                            unselectedTextColor = p.c500,
-                        ),
+    // The tape outlives every screen: connect to the playback service once,
+    // and the bar below the content renders whatever it is holding.
+    LaunchedEffect(Unit) { container.player.ensure() }
+    val player by container.player.state.collectAsStateWithLifecycle()
+    var showPlayer by rememberSaveable { mutableStateOf(false) }
+    val openFullPlayer = {
+        showPlayer = true
+        container.player.pollPositionForUi()
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = p.c950,
+            bottomBar = {
+                Column {
+                    MiniPlayer(
+                        state = player,
+                        onToggle = container.player::toggle,
+                        onSkipBack = container.player::skipBack,
+                        onSkipForward = container.player::skipForward,
+                        onExpand = { openFullPlayer() },
+                        onClose = container.player::close,
                     )
+                    NavigationBar(containerColor = p.c900) {
+                        tabs.forEach { tab ->
+                            val selected = entry?.destination?.hierarchy?.any { it.hasRoute(tab.route::class) } == true
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = {
+                                    // Standing in an arena picks its theme; Settings keeps the last arena's.
+                                    tab.arena?.let { scope.launch { container.preferences.setArena(it) } }
+                                    nav.navigate(tab.route) {
+                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                icon = { Icon(tab.icon, contentDescription = null) },
+                                label = { Text(tab.label) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = p.hlBright,
+                                    selectedTextColor = p.c100,
+                                    indicatorColor = p.fillActive,
+                                    unselectedIconColor = p.c500,
+                                    unselectedTextColor = p.c500,
+                                ),
+                            )
+                        }
+                    }
                 }
-            }
-        },
-    ) { padding ->
+            },
+        ) { padding ->
         NavHost(
             navController = nav,
             startDestination = if (initialArena == Arena.Books) BooksGraph else GamesGraph,
@@ -191,5 +225,37 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
             }
             composable<SettingsRoute> { SettingsScreen(container, user, baseUrl) }
         }
+    }
+
+    // "Now playing" over the whole app: raised by the bar's identity block,
+    // dropped by Back or its own chevron. The tape keeps playing under it.
+    AnimatedVisibility(
+        visible = showPlayer && player.hasBook,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+    ) {
+        FullPlayer(
+            container = container,
+            baseUrl = baseUrl,
+            state = player,
+            onToggle = container.player::toggle,
+            onSeek = container.player::seekTo,
+            onSkip = { delta -> if (delta > 0) container.player.skipForward() else container.player.skipBack() },
+            onNextTrack = container.player::nextTrack,
+            onPreviousTrack = container.player::previousTrack,
+            onSetRate = container.player::setRate,
+            onSetSleep = container.player::setSleep,
+            onReload = container.player::reload,
+            onClose = { showPlayer = false },
+            onOpenBook = { entryId ->
+                showPlayer = false
+                nav.navigate(BookDetail(entryId))
+            },
+            onContinueReading = { entryId, offset ->
+                showPlayer = false
+                nav.navigate(BookReader(entryId, offset))
+            },
+        )
+    }
     }
 }

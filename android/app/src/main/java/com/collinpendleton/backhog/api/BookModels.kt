@@ -144,6 +144,57 @@ data class PositionWrite(
     val source: String? = null,
 )
 
+// --- the audiobook tape -------------------------------------------------------
+
+/**
+ * One file's slot on a book's audio timeline. `global_start` is where this
+ * track begins in the whole book, the coordinate the player works in — track
+ * boundaries are the server's business, not the listener's.
+ *
+ * `measured` is false when the file's length could not be read out of its
+ * container: the track still holds its place in the running order, it just
+ * contributes no time, and every later `global_start` is short by its real
+ * length. `missing` marks a file whose path is currently absent from its
+ * root — an unmounted NAS, not a deleted book.
+ */
+@Serializable
+data class AudioTrack(
+    val id: Long,
+    @SerialName("track_number") val trackNumber: Int = 0,
+    val path: String = "",
+    val title: String = "",
+    @SerialName("size_bytes") val sizeBytes: Long = 0,
+    @SerialName("duration_seconds") val durationSeconds: Double = 0.0,
+    @SerialName("global_start") val globalStart: Double = 0.0,
+    val measured: Boolean = false,
+    val missing: Boolean = false,
+)
+
+/** GET /api/books/{entryId}/audio — the book as one continuous tape. */
+@Serializable
+data class AudioTimeline(
+    val tracks: List<AudioTrack> = emptyList(),
+    @SerialName("total_duration") val totalDuration: Double = 0.0,
+    /** At least one track is unmeasured, so the offsets after it are wrong. */
+    val degraded: Boolean = false,
+)
+
+/** GET /api/books/{entryId}/position?char=|audio= — one position translated, nothing stored. */
+@Serializable
+data class PositionTranslation(
+    @SerialName("char_offset") val charOffset: Long = 0,
+    val percent: Double = 0.0,
+    @SerialName("char_count") val charCount: Long = 0,
+    val chapter: PositionChapter? = null,
+    /** Only present for `?char=` lookups, and only when an alignment exists. */
+    val audio: PositionAudio? = null,
+    /** Only present for `?char=` lookups, and only when a page map exists. */
+    val page: PositionPage? = null,
+    val derived: Boolean = false,
+    val confidence: Double = 0.0,
+    @SerialName("anchor_distance") val anchorDistance: Double = 0.0,
+)
+
 // --- passage matching (page scanning) ---------------------------------------
 
 @Serializable

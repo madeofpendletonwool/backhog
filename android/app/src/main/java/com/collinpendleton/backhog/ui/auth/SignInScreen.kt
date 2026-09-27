@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -47,7 +48,9 @@ fun SignInScreen(session: SessionManager, state: SessionState.SignedOut) {
 
     var email by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    // Plain remember: a password belongs to the process, not the saved-instance
+    // store the system can persist across process death.
+    var password by remember { mutableStateOf("") }
     var inviteInput by rememberSaveable { mutableStateOf("") }
     var prefilled by rememberSaveable { mutableStateOf(false) }
 

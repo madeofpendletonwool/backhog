@@ -18,6 +18,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -30,10 +31,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.api.User
 import com.collinpendleton.backhog.data.Arena
 import com.collinpendleton.backhog.ui.components.ToneChip
+import com.collinpendleton.backhog.ui.games.GameDetailScreen
+import com.collinpendleton.backhog.ui.games.LibraryScreen
+import com.collinpendleton.backhog.ui.games.QueueScreen
 import com.collinpendleton.backhog.ui.settings.SettingsScreen
 import com.collinpendleton.backhog.ui.theme.Backhog
 import com.collinpendleton.backhog.ui.theme.Tones
@@ -44,6 +49,8 @@ import kotlinx.serialization.Serializable
 // that arena's back stack — Back and Up stay inside the arena you are in.
 @Serializable data object GamesGraph
 @Serializable data object GamesHome
+@Serializable data object GamesQueue
+@Serializable data class GameDetail(val entryId: String)
 @Serializable data object BooksGraph
 @Serializable data object BooksHome
 @Serializable data object SettingsRoute
@@ -62,6 +69,10 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
     val scope = rememberCoroutineScope()
     val entry by nav.currentBackStackEntryAsState()
     val p = Backhog.palette
+    // Read the opening arena once: a live value here would rebuild the graph
+    // (and drop each arena's saved back stack) every time the tab changed.
+    val initialArena = remember { startArena }
+    val openGame = { id: String -> nav.navigate(GameDetail(id)) }
 
     Scaffold(
         containerColor = p.c950,
@@ -96,11 +107,26 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = if (startArena == Arena.Books) BooksGraph else GamesGraph,
+            startDestination = if (initialArena == Arena.Books) BooksGraph else GamesGraph,
             modifier = Modifier.padding(padding),
         ) {
             navigation<GamesGraph>(startDestination = GamesHome) {
-                composable<GamesHome> { ArenaHome(Arena.Games, user) }
+                composable<GamesHome> {
+                    LibraryScreen(container, baseUrl, onOpenGame = openGame, onOpenQueue = { nav.navigate(GamesQueue) })
+                }
+                composable<GamesQueue> {
+                    QueueScreen(container, baseUrl, onOpenGame = openGame, onBack = { nav.popBackStack() })
+                }
+                composable<GameDetail> { backStack ->
+                    val route = backStack.toRoute<GameDetail>()
+                    GameDetailScreen(
+                        container,
+                        baseUrl,
+                        route.entryId,
+                        onBack = { nav.popBackStack() },
+                        onRemoved = { nav.popBackStack() },
+                    )
+                }
             }
             navigation<BooksGraph>(startDestination = BooksHome) {
                 composable<BooksHome> { ArenaHome(Arena.Books, user) }

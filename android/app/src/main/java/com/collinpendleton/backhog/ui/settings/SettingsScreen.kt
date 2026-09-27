@@ -244,7 +244,14 @@ private fun ChangePassword(container: AppContainer) {
                         current = ""; next = ""; confirm = ""
                         done = true
                     }
-                    .onFailure { error = (it as ApiError).message }
+                    .onFailure {
+                        val apiError = it as ApiError
+                        error = apiError.message
+                        // The server also answers 401 here from Require when the
+                        // session is gone; a real dead session should land on
+                        // sign-in, a wrong current password stays inline.
+                        if (apiError.isUnauthorized) scope.launch { container.session.restore() }
+                    }
                 busy = false
             }
         },

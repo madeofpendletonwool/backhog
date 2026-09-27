@@ -58,10 +58,13 @@ To sign locally, set `BACKHOG_KEYSTORE_PATH`, `BACKHOG_KEYSTORE_PASSWORD`,
 ```
 app/src/main/java/com/collinpendleton/backhog/
   api/        Retrofit surface, models (from web/src/lib/types.ts), cookie jar, errors
-  data/       DataStore preferences, server-URL / invite-link parsing
+  data/       DataStore preferences (themes, arena, remembered library filters), server-URL parsing
   session/    SessionManager: server → sign-in → signed-in state machine
   ui/theme/   Midnight + Library (Paper / Hearth), ported from web/src/themes
   ui/auth/    server config, sign in, register (open, setup, invite)
   ui/shell/   bottom nav, one back stack per arena
+  ui/games/   library (grid/table, facets, remembered filters), add-game search sheet,
+              game detail (dossier + status/rating/notes/platform/sessions), play queue
+              (drag reorder, quick moves, mark finished)
   ui/settings/
 ```

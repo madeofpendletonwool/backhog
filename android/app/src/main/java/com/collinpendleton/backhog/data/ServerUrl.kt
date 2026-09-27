@@ -33,6 +33,10 @@ object ServerUrl {
     /** `{base}/api/` — Retrofit wants the trailing slash. */
     fun apiRoot(baseUrl: String): String = "${baseUrl.trimEnd('/')}/api/"
 
+    /** `{base}/api/covers/game/{id}` — public (no session), JPEG, immutable-cached. */
+    fun gameCoverUrl(baseUrl: String, gameId: Long): String =
+        "${baseUrl.trimEnd('/')}/api/covers/game/$gameId"
+
     private fun format(url: HttpUrl, segments: List<String>): String {
         val builder = url.newBuilder().query(null).fragment(null).encodedPath("/")
         segments.forEach { builder.addPathSegment(it) }

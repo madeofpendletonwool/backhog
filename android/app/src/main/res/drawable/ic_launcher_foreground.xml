@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The web's pixel hog, unfiltered so it stays crisp, inset into the
+     adaptive icon's safe zone. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="22%">
+    <bitmap
+        android:filter="false"
+        android:src="@drawable/hog_art" />
+</inset>

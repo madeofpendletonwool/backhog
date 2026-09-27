@@ -1,0 +1,178 @@
+name: Android
+
+# Builds the app on every PR into main, on main itself, and on android-v* tags,
+# and archives the APKs as workflow artifacts. A tag also publishes the signed
+# release APK to a GitHub Release. Never distributed through Google Play.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - android/**
+      - .github/workflows/android.yml
+  push:
+    branches: [main]
+    paths:
+      - android/**
+      - .github/workflows/android.yml
+    tags: ["android-v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: android
+    outputs:
+      version: ${{ steps.version.outputs.name }}
+      signed: ${{ steps.keystore.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags, so a dev build can name the release it follows.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Validates the wrapper jar and caches Gradle's downloads (written from
+      # main only; PRs read the cache).
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The runner image ships the SDK; compileSdk 37 may be newer than it.
+      - run: yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+      - run: |
+          "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-37.0" >/dev/null
+
+      # versionName: the tag on a tag build (android-v1.2.0 → 1.2.0), otherwise
+      # the last release plus where this build came from. versionCode: the run
+      # number, which only climbs, so each archived APK installs over the last.
+      - name: Version
+        id: version
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          sha=$(git rev-parse --short=7 "${{ github.event.pull_request.head.sha || github.sha }}")
+          if [[ "$GITHUB_REF" == refs/tags/android-v* ]]; then
+            name="${GITHUB_REF#refs/tags/android-v}"
+          else
+            base=$(git describe --tags --match 'android-v*' --abbrev=0 2>/dev/null | sed 's/^android-v//')
+            base=${base:-0.1.0}
+            if [[ -n "$PR_NUMBER" ]]; then
+              name="${base}-pr${PR_NUMBER}.${sha}"
+            else
+              name="${base}-${GITHUB_REF_NAME//\//-}.${sha}"
+            fi
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "BACKHOG_VERSION_NAME=$name" >> "$GITHUB_ENV"
+          echo "BACKHOG_VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      # Release signing is optional until the ANDROID_KEYSTORE_* secrets exist
+      # (and never available to fork PRs): without it the release build still
+      # runs, so R8 is exercised, but only the debug APK is archived.
+      - name: Keystore
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" ]]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release keystore configured; archiving the debug APK only."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          {
+            echo "BACKHOG_KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
+            echo "BACKHOG_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "BACKHOG_KEY_ALIAS=$KEY_ALIAS"
+            echo "BACKHOG_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+          } >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Lint, test, build
+        run: ./gradlew lintDebug testDebugUnitTest assembleDebug assembleRelease --console=plain
+
+      - name: Name APKs
+        env:
+          VERSION: ${{ steps.version.outputs.name }}
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/backhog-${VERSION}-debug.apk"
+          if [[ "${{ steps.keystore.outputs.signed }}" == "true" ]]; then
+            cp app/build/outputs/apk/release/app-release.apk "dist/backhog-${VERSION}.apk"
+          fi
+          (cd dist && sha256sum ./*.apk > SHA256SUMS)
+          {
+            echo "### Backhog for Android \`${VERSION}\` (code ${BACKHOG_VERSION_CODE})"
+            echo
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backhog-android-debug-${{ steps.version.outputs.name }}
+          path: |
+            android/dist/*-debug.apk
+            android/dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
+      - uses: actions/upload-artifact@v4
+        if: steps.keystore.outputs.signed == 'true'
+        with:
+          name: backhog-android-release-${{ steps.version.outputs.name }}
+          path: |
+            android/dist/backhog-${{ steps.version.outputs.name }}.apk
+            android/dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-reports
+          path: android/app/build/reports
+
+  # A tag publishes the signed APK where it can be downloaded without a
+  # GitHub login. Refuses to publish an unsigned build.
+  release:
+    if: startsWith(github.ref, 'refs/tags/android-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Require signing
+        if: needs.build.outputs.signed != 'true'
+        run: |
+          echo "::error::Tag builds need the ANDROID_KEYSTORE_* secrets; nothing was published."
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: backhog-android-release-${{ needs.build.outputs.version }}
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Backhog for Android $VERSION" \
+            --generate-notes

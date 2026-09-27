@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+
+# The repo root ignores data/ (local server data); here it is a Kotlin package.
+!app/src/**/data/

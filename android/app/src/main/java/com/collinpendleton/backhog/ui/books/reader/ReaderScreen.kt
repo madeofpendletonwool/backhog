@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.collinpendleton.backhog.AppContainer
+import com.collinpendleton.backhog.api.apiCall
 import com.collinpendleton.backhog.books.ReaderPages
 import com.collinpendleton.backhog.books.chapterTitle
 import com.collinpendleton.backhog.books.describeToc
@@ -162,6 +164,29 @@ fun ReaderScreen(
     var showType by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
 
+    /**
+     * "Start narration here": the reader's half of the handoff. The stored
+     * position's audio view is derived exactly when an alignment exists —
+     * the same check the web's player makes — and the translation from the
+     * paragraph on screen to a second on the tape is the server's.
+     */
+    val aligned = state.position?.audio?.derived == true
+    val listenFromHere: (() -> Unit)? = if (aligned) {
+        {
+            val from = state.liveOffset
+            container.appScope.launch {
+                val api = container.session.api(baseUrl) ?: return@launch
+                val seconds = apiCall { api.translatePosition(entryId, char = from) }
+                    .getOrNull()
+                    ?.audio
+                    ?.seconds
+                if (seconds != null) container.player.open(entryId, startAt = seconds)
+            }
+        }
+    } else {
+        null
+    }
+
     Box(Modifier.fillMaxSize().background(surface.bg)) {
         when (state.mode) {
             ReaderMode.Loading -> Column(
@@ -198,6 +223,7 @@ fun ReaderScreen(
                 onBackToPlace = vm::backToMyPlace,
                 onReadFromHere = vm::endPeek,
                 onLanded = vm::landed,
+                onListenFromHere = listenFromHere,
             )
         }
     }
@@ -300,6 +326,7 @@ private fun TextReader(
     onBackToPlace: () -> Unit,
     onReadFromHere: () -> Unit,
     onLanded: () -> Unit,
+    onListenFromHere: (() -> Unit)? = null,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -395,6 +422,15 @@ private fun TextReader(
                 progressLabel = null,
                 onBack = onBack,
                 actions = {
+                    onListenFromHere?.let { listen ->
+                        IconButton(onClick = listen) {
+                            Icon(
+                                Icons.Filled.Headphones,
+                                contentDescription = "Start narration here",
+                                tint = surface.muted,
+                            )
+                        }
+                    }
                     IconButton(onClick = onSearch) {
                         Icon(Icons.Filled.Search, contentDescription = "Search inside", tint = surface.muted)
                     }

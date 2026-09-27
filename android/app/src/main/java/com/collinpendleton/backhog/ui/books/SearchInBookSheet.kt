@@ -219,8 +219,12 @@ fun SearchInBookSheet(
                                 OutlinedButton(onClick = { onJump(hit.charOffset) }) {
                                     Text("Read here")
                                 }
-                                if (hit.audio != null) {
-                                    OutlinedButton(onClick = { notice = "The player lands in Stage 6." }) {
+                                hit.audio?.let { audio ->
+                                    // The hit's audio view is a global second on
+                                    // the tape; the player lands on it.
+                                    OutlinedButton(onClick = {
+                                        container.player.open(entryId, startAt = audio.seconds)
+                                    }) {
                                         Text("Listen here")
                                     }
                                 }

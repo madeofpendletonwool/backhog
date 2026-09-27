@@ -151,6 +151,18 @@ interface BackhogApi {
     @POST("books/{entryId}/position")
     suspend fun postBookPosition(@Path("entryId") entryId: String, @Body write: PositionWrite): PositionWriteResult
 
+    /** The attached audiobook as one continuous timeline; 404 when there is none. */
+    @GET("books/{entryId}/audio")
+    suspend fun bookAudio(@Path("entryId") entryId: String): AudioTimeline
+
+    /** A speculative lookup: translate one position without touching stored progress. */
+    @GET("books/{entryId}/position")
+    suspend fun translatePosition(
+        @Path("entryId") entryId: String,
+        @Query("char") char: Long? = null,
+        @Query("audio") audio: Double? = null,
+    ): PositionTranslation
+
     // --- canonical text (the reader) ---------------------------------------
 
     /** The spine with block offsets. Parses the EPUB on first call — the slow one. */

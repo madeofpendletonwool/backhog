@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The audiobook engine's foreground service: background playback, the
+         media notification, and Android Auto's connection to it. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- ExoPlayer holds a partial wake lock while the tape runs screen-off. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Barcode adds and page scanning. Asked at use; both flows fall back
          to typing when it is refused or absent. -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -29,6 +35,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The audiobook engine. One service, one session: the app's player
+             UI, the system notification and Android Auto are all controllers
+             of this same tape. The legacy MediaBrowserService filter is what
+             a car head unit binds to; no store listing, no car app templates. -->
+        <service
+            android:name=".player.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

@@ -6,6 +6,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.Response
@@ -42,7 +43,13 @@ interface BackhogApi {
 
     // --- library ------------------------------------------------------
 
-    /** The library list. `media=game` is pinned by the games screens, like the web. */
+    /**
+     * The library list. One route, two arenas: `media=game` is pinned by the
+     * games screens and `media=book` by the books screens, like the web;
+     * the platform/genre filters are the games facets, author/subject/
+     * language the books ones — the server ignores whichever half does not
+     * match `media`.
+     */
     @GET("library")
     suspend fun library(
         @Query("media") media: String = "game",
@@ -51,6 +58,9 @@ interface BackhogApi {
         @Query("sort") sort: String? = null,
         @Query("platform") platform: Long? = null,
         @Query("genre") genre: Long? = null,
+        @Query("author") author: String? = null,
+        @Query("subject") subject: String? = null,
+        @Query("language") language: String? = null,
         @Query("limit") limit: Int? = null,
         @Query("offset") offset: Int? = null,
     ): LibraryResponse
@@ -101,4 +111,107 @@ interface BackhogApi {
     /** Client-triggered easter eggs: idempotent and rate-limited server-side. */
     @POST("achievements/{id}/egg")
     suspend fun egg(@Path("id") id: String): EggResponse
+
+    // --- books: the works ----------------------------------------------
+
+    @GET("books/search")
+    suspend fun searchBooks(@Query("q") query: String): BookSearchResponse
+
+    /** Resolves a barcode or hand-typed ISBN to the work it is a printing of. */
+    @GET("books/isbn/{isbn}")
+    suspend fun bookByIsbn(@Path("isbn") isbn: String): Book
+
+    /** A work by its Open Library key, editions included. */
+    @GET("books/{bookId}")
+    suspend fun getBook(@Path("bookId") bookId: String): Book
+
+    /** Adds a work — `POST /library` under a book-shaped body; `addEntry` is the games side. */
+    @POST("library")
+    suspend fun addBook(@Body body: AddBookRequest): Entry
+
+    @GET("library/stats")
+    suspend fun bookStats(@Query("media") media: String = "book"): BookStats
+
+    @GET("library/facets")
+    suspend fun bookFacets(@Query("media") media: String = "book"): BookFacets
+
+    // --- one position, three views ---------------------------------------
+
+    @GET("books/{entryId}/position")
+    suspend fun bookPosition(@Path("entryId") entryId: String): BookPosition
+
+    @PUT("books/{entryId}/position")
+    suspend fun putBookPosition(@Path("entryId") entryId: String, @Body write: PositionWrite): Ok
+
+    // --- the paper bridge --------------------------------------------------
+
+    @POST("books/{entryId}/passage")
+    suspend fun matchPassage(@Path("entryId") entryId: String, @Body body: PassageRequest): PassageResult
+
+    @GET("books/{entryId}/copies")
+    suspend fun copies(@Path("entryId") entryId: String): CopiesResponse
+
+    @POST("books/{entryId}/copies")
+    suspend fun createCopy(@Path("entryId") entryId: String, @Body body: CreateCopyRequest): CopyResponse
+
+    @POST("books/{entryId}/copies/{copyId}/return")
+    suspend fun returnCopy(@Path("entryId") entryId: String, @Path("copyId") copyId: String): CopyResponse
+
+    @POST("books/{entryId}/copies/{copyId}/reopen")
+    suspend fun reopenCopy(@Path("entryId") entryId: String, @Path("copyId") copyId: String): CopyResponse
+
+    @POST("books/{entryId}/copies/{copyId}/own")
+    suspend fun ownCopy(@Path("entryId") entryId: String, @Path("copyId") copyId: String): CopyResponse
+
+    @DELETE("books/{entryId}/copies/{copyId}")
+    suspend fun deleteCopy(@Path("entryId") entryId: String, @Path("copyId") copyId: String): Ok
+
+    @GET("books/{entryId}/copies/{copyId}/pages")
+    suspend fun copyPages(@Path("entryId") entryId: String, @Path("copyId") copyId: String): AnchorsResponse
+
+    @POST("books/{entryId}/copies/{copyId}/pages")
+    suspend fun savePageAnchor(
+        @Path("entryId") entryId: String,
+        @Path("copyId") copyId: String,
+        @Body body: SaveAnchorRequest,
+    ): AnchorResponse
+
+    // --- search in book -----------------------------------------------------
+
+    @GET("books/{entryId}/search")
+    suspend fun searchInBook(@Path("entryId") entryId: String, @Query("q") query: String): BookSearchAny
+
+    // --- files (reader-safe: paths blanked server-side for a reader) ---------
+
+    @GET("books/{entryId}/files")
+    suspend fun bookFiles(@Path("entryId") entryId: String): BookFilesResponse
+
+    // --- sharing ---------------------------------------------------------------
+
+    @GET("books/{entryId}/shares")
+    suspend fun shareCandidates(@Path("entryId") entryId: String): ShareCandidatesResponse
+
+    @POST("books/{entryId}/shares")
+    suspend fun shareBook(@Path("entryId") entryId: String, @Body body: ShareRequest): BookShare
+
+    @DELETE("books/{entryId}/shares/{userId}")
+    suspend fun unshareBook(@Path("entryId") entryId: String, @Path("userId") userId: String): Ok
+
+    /** Both halves of "who has what": shared out, and shared with me. */
+    @GET("shares")
+    suspend fun sharesOverview(): SharesOverview
+
+    // --- the reading dashboard --------------------------------------------------
+
+    @GET("library/insights")
+    suspend fun readingInsights(@Query("media") media: String = "book"): ReadingInsights
+
+    @GET("library/debt")
+    suspend fun readingDebt(@Query("media") media: String = "book"): ReadingDebt
+
+    @GET("library/reading")
+    suspend fun readingNow(): ReadingNow
+
+    @GET("achievements/reading-season")
+    suspend fun readingSeason(@Query("year") year: Int? = null): ReadingSeason
 }

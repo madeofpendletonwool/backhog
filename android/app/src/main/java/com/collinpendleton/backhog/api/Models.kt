@@ -219,6 +219,12 @@ data class Entry(
     val status: EntryStatus = EntryStatus.Backlog,
     @SerialName("shared_by") val sharedBy: String? = null,
     @SerialName("platform_id") val platformId: Long? = null,
+    /**
+     * The printing this copy is anchored to (Stage 4): the page count its
+     * progress is measured in. Null for a book added by title alone, and
+     * always for a game.
+     */
+    @SerialName("edition_id") val editionId: String? = null,
     @SerialName("user_rating") val userRating: Int? = null,
     val notes: String = "",
     @SerialName("queue_position") val queuePosition: Double? = null,
@@ -227,6 +233,14 @@ data class Entry(
     @SerialName("finished_at") val finishedAt: String? = null,
     @SerialName("created_at") val createdAt: String,
     @SerialName("updated_at") val updatedAt: String,
+    /**
+     * The stored reading position as a percentage (Stage 4), and when it was
+     * last written. Absent for a game and for a book never opened.
+     */
+    @SerialName("progress_percent") val progressPercent: Double? = null,
+    @SerialName("last_read_at") val lastReadAt: String? = null,
+    /** What last wrote the position: "read", "listen", "scan" or "manual". */
+    @SerialName("progress_source") val progressSource: String? = null,
 ) {
     val isBook: Boolean get() = mediaType == "book"
     val isGame: Boolean get() = !isBook

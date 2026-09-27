@@ -2,7 +2,6 @@ package com.collinpendleton.backhog.ui.shell
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -10,7 +9,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -35,13 +33,14 @@ import androidx.navigation.toRoute
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.api.User
 import com.collinpendleton.backhog.data.Arena
-import com.collinpendleton.backhog.ui.components.ToneChip
+import com.collinpendleton.backhog.ui.books.BookDetailScreen
+import com.collinpendleton.backhog.ui.books.BookLibraryScreen
+import com.collinpendleton.backhog.ui.books.ReadingDashboardScreen
 import com.collinpendleton.backhog.ui.games.GameDetailScreen
 import com.collinpendleton.backhog.ui.games.LibraryScreen
 import com.collinpendleton.backhog.ui.games.QueueScreen
 import com.collinpendleton.backhog.ui.settings.SettingsScreen
 import com.collinpendleton.backhog.ui.theme.Backhog
-import com.collinpendleton.backhog.ui.theme.Tones
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -53,6 +52,8 @@ import kotlinx.serialization.Serializable
 @Serializable data class GameDetail(val entryId: String)
 @Serializable data object BooksGraph
 @Serializable data object BooksHome
+@Serializable data class BookDetail(val entryId: String)
+@Serializable data object ReadingDashboard
 @Serializable data object SettingsRoute
 
 private data class Tab(val route: Any, val label: String, val icon: ImageVector, val arena: Arena?)
@@ -129,37 +130,33 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                 }
             }
             navigation<BooksGraph>(startDestination = BooksHome) {
-                composable<BooksHome> { ArenaHome(Arena.Books, user) }
+                composable<BooksHome> {
+                    BookLibraryScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
+                        onDashboard = { nav.navigate(ReadingDashboard) },
+                    )
+                }
+                composable<BookDetail> { entry ->
+                    BookDetailScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        entryId = entry.toRoute<BookDetail>().entryId,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { id -> nav.navigate(BookDetail(id)) },
+                    )
+                }
+                composable<ReadingDashboard> {
+                    ReadingDashboardScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
+                    )
+                }
             }
             composable<SettingsRoute> { SettingsScreen(container, user, baseUrl) }
-        }
-    }
-}
-
-/** Stage 1's placeholder for each arena's home — themed, empty, and honest about it. */
-@Composable
-private fun ArenaHome(arena: Arena, user: User) {
-    val p = Backhog.palette
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(arena.label, style = MaterialTheme.typography.headlineMedium, color = p.c100)
-        Text(
-            when (arena) {
-                Arena.Games -> "Hi ${user.username}. Your library, queue and dashboard land here next."
-                Arena.Books -> "Hi ${user.username}. Your shelf, reader and audiobooks land here next."
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = p.c400,
-        )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ToneChip("Backlog", Tones.Backlog)
-            ToneChip(if (arena == Arena.Games) "Playing" else "Reading", Tones.Playing)
-            ToneChip(if (arena == Arena.Games) "Played" else "Read", Tones.Played)
-            ToneChip("Dropped", Tones.Dropped)
         }
     }
 }

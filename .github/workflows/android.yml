@@ -119,6 +119,10 @@ jobs:
           {
             echo "### Backhog for Android \`${VERSION}\` (code ${BACKHOG_VERSION_CODE})"
             echo
+            for apk in dist/*.apk; do
+              printf -- '- `%s` — %s\n' "$(basename "$apk")" "$(du -h "$apk" | cut -f1)"
+            done
+            echo
             echo '```'
             cat dist/SHA256SUMS
             echo '```'

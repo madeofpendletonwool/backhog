@@ -196,4 +196,12 @@ object Tones {
         EntryStatus.Ignored -> Ignored
         EntryStatus.Wishlist -> Wishlist
     }
+
+    /** The hue each achievement tier renders in; unknown tiers read as bronze, like the web's tierOf. */
+    fun forTier(tier: String): Color = when (tier) {
+        "silver" -> Silver
+        "gold" -> Gold
+        "legendary" -> Legendary
+        else -> Bronze
+    }
 }

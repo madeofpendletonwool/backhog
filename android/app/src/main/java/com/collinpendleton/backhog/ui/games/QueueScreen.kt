@@ -116,7 +116,7 @@ fun QueueScreen(
     onBack: () -> Unit,
 ) {
     val vm: QueueViewModel = viewModel(key = "queue|$baseUrl") {
-        QueueViewModel(container.session, baseUrl)
+        QueueViewModel(container.session, baseUrl, container.unlocks)
     }
     val ui by vm.state.collectAsStateWithLifecycle()
     val p = Backhog.palette
@@ -222,7 +222,7 @@ fun QueueScreen(
                         onDrag = drag::drag,
                         onDragEnd = drag::end,
                         onMove = { kind ->
-                            vm.move(index, QueueMoves.targetIndex(index, ui.entries.size, kind))
+                            vm.move(index, QueueMoves.targetIndex(index, ui.entries.size, kind), kind)
                         },
                         onStart = { vm.markPlaying(entry.id) },
                         onDone = { vm.markFinished(entry.id) },

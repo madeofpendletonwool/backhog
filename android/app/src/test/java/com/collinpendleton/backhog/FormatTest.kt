@@ -82,4 +82,27 @@ class FormatTest {
     @Test fun `today is an iso date`() {
         assertEquals(true, Regex("""\d{4}-\d{2}-\d{2}""").matches(Format.today()))
     }
+
+    @Test fun `years render months under a year and decimals above`() {
+        assertEquals("6 mo", Format.years(0.5))
+        assertEquals("1.0 yr", Format.years(1.0))
+        assertEquals("2.4 yr", Format.years(2.42))
+    }
+
+    @Test fun `timespans bucket weeks months and years like the web`() {
+        assertEquals("no time at all", Format.timespan(0.0))
+        assertEquals("1 week", Format.timespan(1.0))
+        assertEquals("8 weeks", Format.timespan(8.3))
+        assertEquals("3 months", Format.timespan(13.0)) // 91 days ≈ 2.99 months → 3
+        assertEquals("1 year 6 months", Format.timespan(78.0)) // 546 days ≈ 17.9 months
+        assertEquals("2 years", Format.timespan(104.4)) // 730.8 days ≈ 24.0 months
+    }
+
+    @Test fun `month year renders or never`() {
+        assertEquals("never", Format.monthYear(null))
+        assertEquals("never", Format.monthYear(""))
+        val text = Format.monthYear("2027-03-05")
+        assertEquals(true, text.startsWith("March"))
+        assertEquals(true, text.endsWith("2027"))
+    }
 }

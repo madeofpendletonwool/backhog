@@ -328,7 +328,12 @@ data class AchievementStatus(
     val hidden: Boolean = false,
     val egg: Boolean = false,
     @SerialName("unlocked_at") val unlockedAt: String? = null,
+    /** The entry that tipped it over, on gallery reads and unlock toasts. */
+    val entry: Entry? = null,
 )
+
+@Serializable
+data class AchievementsResponse(val achievements: List<AchievementStatus> = emptyList())
 
 @Serializable
 data class PatchEntryResponse(
@@ -355,6 +360,8 @@ data class ListSummary(
     val name: String,
     val description: String = "",
     val kind: String = "manual",
+    /** The compiled rule set, on smart lists. */
+    val rules: RuleSet? = null,
     val count: Int = 0,
     @SerialName("created_at") val createdAt: String = "",
 )
@@ -367,4 +374,304 @@ data class ListsIndexResponse(val lists: List<ListSummary> = emptyList())
 data class EggResponse(
     val unlocked: Boolean = false,
     val achievement: AchievementStatus? = null,
+)
+
+// --- lists, series, projects, dashboard, picks, Steam, achievements (Stage 3) ---
+
+/** One condition of a smart rule set. The value is string | number | string[] on the wire. */
+@Serializable
+data class Rule(
+    val field: String,
+    val op: String,
+    /** JsonPrimitive / JsonArray-of-strings / null; built and read through SmartLists. */
+    val value: kotlinx.serialization.json.JsonElement? = null,
+)
+
+@Serializable
+data class RuleSort(val field: String, val dir: String = "desc")
+
+@Serializable
+data class RuleSet(
+    val match: String = "all",
+    val rules: List<Rule> = emptyList(),
+    val sort: RuleSort? = null,
+    val limit: Int = 0,
+)
+
+/** One queryable field as `GET /api/lists/fields` describes it — the builder's whitelist. */
+@Serializable
+data class SmartField(
+    val key: String,
+    val label: String,
+    val type: String,
+    val ops: List<String> = emptyList(),
+    val enum: List<String> = emptyList(),
+    val media: String? = null,
+)
+
+@Serializable
+data class SmartFieldsResponse(val fields: List<SmartField> = emptyList())
+
+@Serializable
+data class CreateListRequest(
+    val name: String,
+    val description: String = "",
+    val kind: String = "manual",
+    /** Omitted for manual lists — encodeDefaults is off, so null drops the key. */
+    val rules: RuleSet? = null,
+)
+
+/** The list-with-entries payload of `GET /api/lists/{id}`. */
+@Serializable
+data class ListDetailResponse(
+    val list: ListSummary,
+    val entries: List<Entry> = emptyList(),
+)
+
+@Serializable
+data class ListItemsRequest(
+    @SerialName("entry_id") val entryId: String? = null,
+    @SerialName("entry_ids") val entryIds: List<String>? = null,
+)
+
+@Serializable
+data class ProjectsResponse(@SerialName("project_ids") val projectIds: List<String> = emptyList())
+
+@Serializable
+data class ProjectProgress(
+    @SerialName("target_count") val targetCount: Int = 0,
+    @SerialName("completed_count") val completedCount: Int = 0,
+    @SerialName("est_hours_total") val estHoursTotal: Double = 0.0,
+    @SerialName("est_hours_done") val estHoursDone: Double = 0.0,
+    @SerialName("est_hours_remaining") val estHoursRemaining: Double = 0.0,
+    val percent: Double = 0.0,
+)
+
+@Serializable
+data class Project(
+    val id: String,
+    val name: String,
+    val description: String = "",
+    val kind: String = "checklist",
+    @SerialName("media_scope") val mediaScope: String = "game",
+    @SerialName("target_count") val targetCount: Int? = null,
+    val rules: RuleSet? = null,
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("completed_at") val completedAt: String? = null,
+    val progress: ProjectProgress = ProjectProgress(),
+)
+
+@Serializable
+data class ProjectItem(
+    val entry: Entry,
+    val done: Boolean? = null,
+)
+
+@Serializable
+data class ProjectsIndexResponse(val projects: List<Project> = emptyList())
+
+@Serializable
+data class CreateProjectRequest(
+    val name: String,
+    val description: String = "",
+    val kind: String = "checklist",
+    val media: String = "game",
+    @SerialName("target_count") val targetCount: Int? = null,
+    val rules: RuleSet? = null,
+)
+
+@Serializable
+data class ProjectDetailResponse(
+    val project: Project,
+    val items: List<ProjectItem> = emptyList(),
+)
+
+// --- series -----------------------------------------------------------------
+
+@Serializable
+data class SeriesSummary(
+    val id: String,
+    @SerialName("igdb_collection_id") val igdbCollectionId: Long? = null,
+    @SerialName("igdb_franchise_id") val igdbFranchiseId: Long? = null,
+    val name: String,
+    val slug: String = "",
+    @SerialName("owned_count") val ownedCount: Int = 0,
+    @SerialName("played_count") val playedCount: Int = 0,
+    val completion: Double = 0.0,
+    @SerialName("remaining_hours") val remainingHours: Double = 0.0,
+    @SerialName("next_game") val nextGame: NamedRef? = null,
+)
+
+@Serializable
+data class SeriesIndexResponse(val series: List<SeriesSummary> = emptyList())
+
+@Serializable
+data class SeriesMember(
+    val game: Game,
+    val kind: String = "game",
+    val status: String = "unowned",
+    @SerialName("entry_id") val entryId: String? = null,
+    val position: Double? = null,
+    @SerialName("logged_minutes") val loggedMinutes: Int = 0,
+) {
+    val owned: Boolean get() = status != "unowned"
+}
+
+@Serializable
+data class SeriesDetail(
+    val id: String,
+    val name: String,
+    val slug: String = "",
+    @SerialName("play_order") val playOrder: String = "release",
+    val members: List<SeriesMember> = emptyList(),
+    @SerialName("owned_count") val ownedCount: Int = 0,
+    @SerialName("played_count") val playedCount: Int = 0,
+    val completion: Double = 0.0,
+    @SerialName("remaining_hours") val remainingHours: Double = 0.0,
+    @SerialName("dlc_hours") val dlcHours: Double = 0.0,
+)
+
+@Serializable
+data class PlayOrderRequest(@SerialName("play_order") val playOrder: String)
+
+@Serializable
+data class SeriesReorderRequest(
+    @SerialName("game_id") val gameId: Long,
+    @SerialName("before_id") val beforeId: Long = 0,
+    @SerialName("after_id") val afterId: Long = 0,
+)
+
+@Serializable
+data class BackfillStatus(val running: Boolean = false)
+
+@Serializable
+data class BackfillKickResponse(val started: Boolean = false)
+
+// --- dashboard ---------------------------------------------------------------
+
+@Serializable
+data class Stats(
+    val total: Int = 0,
+    val backlog: Int = 0,
+    val playing: Int = 0,
+    val played: Int = 0,
+    val dropped: Int = 0,
+    val ignored: Int = 0,
+    val wishlist: Int = 0,
+    @SerialName("backlog_hours") val backlogHours: Double = 0.0,
+    @SerialName("played_hours") val playedHours: Double = 0.0,
+)
+
+@Serializable
+data class InsightsHeadline(
+    @SerialName("games_owned") val gamesOwned: Int = 0,
+    @SerialName("unplayed_games") val unplayedGames: Int = 0,
+    @SerialName("hours_remaining") val hoursRemaining: Double = 0.0,
+    @SerialName("years_at_current_rate") val yearsAtCurrentRate: Double? = null,
+)
+
+@Serializable
+data class SuperlativePayload(
+    val game: Game? = null,
+    @SerialName("entry_id") val entryId: String? = null,
+    @SerialName("added_on") val addedOn: String? = null,
+    val hours: Double? = null,
+    val name: String? = null,
+    val owned: Int = 0,
+    val played: Int = 0,
+    @SerialName("backlog_games") val backlogGames: Int = 0,
+    @SerialName("backlog_hours") val backlogHours: Double = 0.0,
+    val year: Int? = null,
+)
+
+@Serializable
+data class Superlative(
+    val kind: String,
+    val payload: SuperlativePayload = SuperlativePayload(),
+    val label: String = "",
+)
+
+@Serializable
+data class Insights(
+    val headline: InsightsHeadline = InsightsHeadline(),
+    val superlatives: List<Superlative> = emptyList(),
+)
+
+@Serializable
+data class Pace(
+    @SerialName("hours_per_week_90d") val hoursPerWeek90d: Double? = null,
+    @SerialName("hours_per_week_all") val hoursPerWeekAll: Double? = null,
+)
+
+// ClearanceScenario and DebtProjection live in BookModels.kt, shared by both
+// arenas' debt reports.
+
+@Serializable
+data class DebtReport(
+    @SerialName("total_hours") val totalHours: Double = 0.0,
+    @SerialName("main_backlog_hours") val mainBacklogHours: Double = 0.0,
+    @SerialName("started_hours") val startedHours: Double = 0.0,
+    @SerialName("short_games_hours") val shortGamesHours: Double = 0.0,
+    @SerialName("wishlist_hours") val wishlistHours: Double? = null,
+    @SerialName("dlc_hours") val dlcHours: Double? = null,
+    val pace: Pace = Pace(),
+    val projection: DebtProjection = DebtProjection(),
+)
+
+// --- tonight picks ------------------------------------------------------------
+
+@Serializable
+data class TonightPick(
+    val entry: Entry,
+    val score: Double = 0.0,
+    val reason: String = "",
+)
+
+@Serializable
+data class TonightPicksResult(
+    @SerialName("continue") val continuePick: TonightPick? = null,
+    @SerialName("short_win") val shortWin: TonightPick? = null,
+    @SerialName("wildcard") val wildcard: TonightPick? = null,
+    @SerialName("rescue") val rescue: TonightPick? = null,
+)
+
+// --- Steam import -------------------------------------------------------------
+
+@Serializable
+data class SteamPreviewRequest(@SerialName("steam_id") val steamId: String)
+
+@Serializable
+data class SteamMatch(
+    @SerialName("steam_name") val steamName: String,
+    @SerialName("app_id") val appId: Long = 0,
+    val game: Game? = null,
+    @SerialName("in_library") val inLibrary: Boolean = false,
+)
+
+@Serializable
+data class SteamPreviewResponse(
+    @SerialName("steam_id") val steamId: String = "",
+    val total: Int = 0,
+    val unmatched: Int = 0,
+    val matches: List<SteamMatch> = emptyList(),
+)
+
+@Serializable
+data class BulkAddRequest(
+    @SerialName("game_ids") val gameIds: List<Long>,
+    val status: EntryStatus? = null,
+)
+
+@Serializable
+data class BulkAddResponse(val added: Int = 0, val skipped: Int = 0)
+
+// --- achievements gallery -------------------------------------------------------
+
+@Serializable
+data class Season(
+    val year: Int = 0,
+    @SerialName("games_completed") val gamesCompleted: Int = 0,
+    @SerialName("hours_played") val hoursPlayed: Double = 0.0,
+    @SerialName("franchises_cleared") val franchisesCleared: Int = 0,
+    val rescues: Int = 0,
 )

@@ -31,6 +31,41 @@ object Format {
         else -> "${Math.round(hours)}h"
     }
 
+    /** The dashboard's pace figure: "8 mo" under a year, "2.4 yr" above (web formatYears). */
+    fun years(years: Double): String = when {
+        years < 1 -> "${Math.round(years * 12)} mo"
+        else -> String.format(Locale.ROOT, "%.1f yr", years)
+    }
+
+    /** "6 weeks" / "3 months" / "2 years 4 months" — clearance projections (web formatTimespan). */
+    fun timespan(weeks: Double): String {
+        if (weeks <= 0) return "no time at all"
+        val totalDays = weeks * 7
+        if (totalDays < 60) {
+            val w = Math.max(1, Math.round(weeks)).toInt()
+            return "$w week${if (w == 1) "" else "s"}"
+        }
+        // Average month/year lengths keep the rounding stable across year spans.
+        val totalMonths = totalDays / 30.44
+        val years = Math.floor(totalMonths / 12).toInt()
+        var months = Math.round(totalMonths - years * 12).toInt()
+        if (months == 12) return plural(years + 1, "year")
+        if (years == 0) return plural(Math.max(months, 1), "month")
+        if (months == 0) return plural(years, "year")
+        return "${plural(years, "year")} ${plural(months, "month")}"
+    }
+
+    private fun plural(n: Int, unit: String): String = "$n $unit${if (n == 1) "" else "s"}"
+
+    /** A stored `2027-03-05` → "March 2027"; "never" when null (web formatMonthYear). */
+    fun monthYear(isoDate: String?): String {
+        if (isoDate.isNullOrBlank()) return "never"
+        return runCatching {
+            LocalDate.parse(isoDate.take(10))
+                .format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))
+        }.getOrElse { "never" }
+    }
+
     /** "1h 30m" from a minutes count — the session log's unit. */
     fun minutes(minutes: Int): String {
         val hours = minutes / 60

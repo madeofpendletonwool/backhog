@@ -29,11 +29,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.BuildConfig
+import com.collinpendleton.backhog.R
 import com.collinpendleton.backhog.api.ApiError
 import com.collinpendleton.backhog.api.ChangePasswordRequest
 import com.collinpendleton.backhog.api.User
@@ -66,7 +70,7 @@ fun SettingsScreen(container: AppContainer, user: User, baseUrl: String) {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Text("Settings", style = MaterialTheme.typography.headlineMedium, color = p.c100)
+        HogHeader(container, baseUrl)
 
         Panel {
             Text(user.username, style = MaterialTheme.typography.titleLarge, color = p.c100)
@@ -143,6 +147,46 @@ private fun Section(title: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = Backhog.palette.c500)
         Panel { content() }
+    }
+}
+
+/**
+ * The settings header: the hog itself. Ten taps on the logo hatch the Hog
+ * Watcher egg — the app's identity surface, standing in for the web's
+ * sidebar logo. The counter resets on any leave, like one sitting.
+ */
+@Composable
+private fun HogHeader(container: AppContainer, baseUrl: String) {
+    val p = Backhog.palette
+    val scope = rememberCoroutineScope()
+    var taps by remember { mutableStateOf(0) }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        androidx.compose.foundation.Image(
+            bitmap = ImageBitmap.imageResource(R.drawable.hog_art),
+            contentDescription = "Backhog",
+            filterQuality = FilterQuality.None,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable {
+                    taps += 1
+                    if (taps >= 10) {
+                        taps = 0
+                        scope.launch {
+                            com.collinpendleton.backhog.api.apiCall {
+                                container.session.api(baseUrl).egg("hog_watcher")
+                            }.onSuccess { response ->
+                                if (response.unlocked) container.unlocks.unlock(response.achievement)
+                            }
+                        }
+                    }
+                },
+        )
+        Text("Settings", style = MaterialTheme.typography.headlineMedium, color = p.c100)
     }
 }
 

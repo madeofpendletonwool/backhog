@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -28,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -48,9 +50,19 @@ import com.collinpendleton.backhog.ui.books.BookDetailScreen
 import com.collinpendleton.backhog.ui.books.BookLibraryScreen
 import com.collinpendleton.backhog.ui.books.ReadingDashboardScreen
 import com.collinpendleton.backhog.ui.books.reader.ReaderScreen
+import com.collinpendleton.backhog.ui.components.AchievementToastsHost
+import com.collinpendleton.backhog.ui.games.AchievementsScreen
+import com.collinpendleton.backhog.ui.games.DashboardScreen
+import com.collinpendleton.backhog.ui.games.DebtScreen
 import com.collinpendleton.backhog.ui.games.GameDetailScreen
 import com.collinpendleton.backhog.ui.games.LibraryScreen
+import com.collinpendleton.backhog.ui.games.ListDetailScreen
+import com.collinpendleton.backhog.ui.games.ListsScreen
+import com.collinpendleton.backhog.ui.games.ProjectDetailScreen
+import com.collinpendleton.backhog.ui.games.ProjectsScreen
 import com.collinpendleton.backhog.ui.games.QueueScreen
+import com.collinpendleton.backhog.ui.games.SeriesDetailScreen
+import com.collinpendleton.backhog.ui.games.SeriesScreen
 import com.collinpendleton.backhog.ui.media.MediaFilesScreen
 import com.collinpendleton.backhog.ui.player.FullPlayer
 import com.collinpendleton.backhog.ui.player.MiniPlayer
@@ -65,6 +77,15 @@ import kotlinx.serialization.Serializable
 @Serializable data object GamesHome
 @Serializable data object GamesQueue
 @Serializable data class GameDetail(val entryId: String)
+@Serializable data object GamesDashboard
+@Serializable data object GamesLists
+@Serializable data class ListDetail(val listId: String)
+@Serializable data object GamesSeries
+@Serializable data class SeriesDetail(val seriesId: String)
+@Serializable data object GamesProjects
+@Serializable data class ProjectDetail(val projectId: String)
+@Serializable data object GamesAchievements
+@Serializable data object GamesDebt
 @Serializable data object BooksGraph
 @Serializable data object BooksHome
 @Serializable data class BookDetail(val entryId: String)
@@ -146,32 +167,109 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                         }
                     }
                 }
-            },
-        ) { padding ->
-        NavHost(
-            navController = nav,
-            startDestination = if (initialArena == Arena.Books) BooksGraph else GamesGraph,
-            modifier = Modifier.padding(padding),
-        ) {
-            navigation<GamesGraph>(startDestination = GamesHome) {
-                composable<GamesHome> {
-                    LibraryScreen(container, baseUrl, onOpenGame = openGame, onOpenQueue = { nav.navigate(GamesQueue) })
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            NavHost(
+                navController = nav,
+                startDestination = if (initialArena == Arena.Books) BooksGraph else GamesGraph,
+            ) {
+                navigation<GamesGraph>(startDestination = GamesHome) {
+                    composable<GamesHome> {
+                        LibraryScreen(
+                            container,
+                            baseUrl,
+                            onOpenGame = openGame,
+                            onOpenQueue = { nav.navigate(GamesQueue) },
+                            onOpenDashboard = { nav.navigate(GamesDashboard) },
+                            onOpenLists = { nav.navigate(GamesLists) },
+                            onOpenSeries = { nav.navigate(GamesSeries) },
+                            onOpenProjects = { nav.navigate(GamesProjects) },
+                            onOpenAchievements = { nav.navigate(GamesAchievements) },
+                            onOpenDebt = { nav.navigate(GamesDebt) },
+                        )
+                    }
+                    composable<GamesQueue> {
+                        QueueScreen(container, baseUrl, onOpenGame = openGame, onBack = { nav.popBackStack() })
+                    }
+                    composable<GameDetail> { backStack ->
+                        val route = backStack.toRoute<GameDetail>()
+                        GameDetailScreen(
+                            container,
+                            baseUrl,
+                            route.entryId,
+                            onBack = { nav.popBackStack() },
+                            onRemoved = { nav.popBackStack() },
+                        )
+                    }
+                    composable<GamesDashboard> {
+                        DashboardScreen(
+                            container,
+                            baseUrl,
+                            onBack = { nav.popBackStack() },
+                            onOpenGame = openGame,
+                            onOpenDebt = { nav.navigate(GamesDebt) },
+                        )
+                    }
+                    composable<GamesDebt> {
+                        DebtScreen(container, baseUrl, onBack = { nav.popBackStack() })
+                    }
+                    composable<GamesLists> {
+                        ListsScreen(container, baseUrl, onOpenList = { nav.navigate(ListDetail(it)) })
+                    }
+                    composable<ListDetail> { backStack ->
+                        val route = backStack.toRoute<ListDetail>()
+                        ListDetailScreen(
+                            container,
+                            baseUrl,
+                            route.listId,
+                            onBack = { nav.popBackStack() },
+                            onRemoved = { nav.popBackStack() },
+                            onOpenGame = openGame,
+                        )
+                    }
+                    composable<GamesSeries> {
+                        SeriesScreen(
+                            container,
+                            baseUrl,
+                            onBack = { nav.popBackStack() },
+                            onOpenSeries = { nav.navigate(SeriesDetail(it)) },
+                        )
+                    }
+                    composable<SeriesDetail> { backStack ->
+                        val route = backStack.toRoute<SeriesDetail>()
+                        SeriesDetailScreen(
+                            container,
+                            baseUrl,
+                            route.seriesId,
+                            onBack = { nav.popBackStack() },
+                            onOpenGame = openGame,
+                        )
+                    }
+                    composable<GamesProjects> {
+                        ProjectsScreen(container, baseUrl, onOpenProject = { nav.navigate(ProjectDetail(it)) })
+                    }
+                    composable<ProjectDetail> { backStack ->
+                        val route = backStack.toRoute<ProjectDetail>()
+                        ProjectDetailScreen(
+                            container,
+                            baseUrl,
+                            route.projectId,
+                            onBack = { nav.popBackStack() },
+                            onRemoved = { nav.popBackStack() },
+                            onOpenGame = openGame,
+                        )
+                    }
+                    composable<GamesAchievements> {
+                        AchievementsScreen(
+                            container,
+                            baseUrl,
+                            onBack = { nav.popBackStack() },
+                            onOpenGame = openGame,
+                        )
+                    }
                 }
-                composable<GamesQueue> {
-                    QueueScreen(container, baseUrl, onOpenGame = openGame, onBack = { nav.popBackStack() })
-                }
-                composable<GameDetail> { backStack ->
-                    val route = backStack.toRoute<GameDetail>()
-                    GameDetailScreen(
-                        container,
-                        baseUrl,
-                        route.entryId,
-                        onBack = { nav.popBackStack() },
-                        onRemoved = { nav.popBackStack() },
-                    )
-                }
-            }
-            navigation<BooksGraph>(startDestination = BooksHome) {
+                navigation<BooksGraph>(startDestination = BooksHome) {
                 composable<BooksHome> {
                     BookLibraryScreen(
                         container = container,
@@ -224,6 +322,10 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                 }
             }
             composable<SettingsRoute> { SettingsScreen(container, user, baseUrl) }
+            }
+
+            // The unlock toasts: above every screen, bottom-centre.
+            AchievementToastsHost(container, baseUrl)
         }
     }
 

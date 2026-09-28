@@ -130,8 +130,9 @@ data class Platform(
     val handheld: Boolean = false,
 )
 
+/** The server sends the link's kind as a ready-made label ("Steam", "Wiki", …). */
 @Serializable
-data class GameWebsite(val url: String, val category: Int? = null)
+data class GameWebsite(val url: String, val category: String? = null)
 
 @Serializable
 data class GameVideo(

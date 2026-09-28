@@ -31,11 +31,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -124,44 +121,40 @@ fun BookDetailScreen(
     }
 
     Box(Modifier.fillMaxSize()) {
-        Scaffold(
-        containerColor = p.c950,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        state.entry?.book?.title ?: "Book",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showSearch = true }) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search in this book")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = p.c950,
-                    titleContentColor = p.c100,
-                    navigationIconContentColor = p.c300,
-                    actionIconContentColor = p.c300,
-                ),
-            )
-        },
-    ) { padding ->
+        // Plain column + header row, like the games screens: the Shell's
+        // Scaffold already insets for the status and nav bars, so a nested
+        // one here would double-count them.
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = p.c300)
+                }
+                Text(
+                    state.entry?.book?.title ?: "Book",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = p.c100,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { showSearch = true }) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search in this book", tint = p.c300)
+                }
+            }
         when {
             state.loading -> Column(
-                Modifier.fillMaxSize().padding(padding),
+                Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) { CircularProgressIndicator() }
             state.error != null -> Column(
-                Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                Modifier.fillMaxSize().padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(state.error!!, color = MaterialTheme.colorScheme.error)
@@ -170,7 +163,6 @@ fun BookDetailScreen(
             else -> Column(
                 Modifier
                     .fillMaxSize()
-                    .padding(padding)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
                     .padding(bottom = 48.dp),

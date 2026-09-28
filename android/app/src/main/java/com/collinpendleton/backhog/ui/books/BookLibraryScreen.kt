@@ -39,11 +39,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -85,113 +82,112 @@ fun BookLibraryScreen(
     var showAdd by remember { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
 
-    Scaffold(
-        containerColor = p.c950,
-        topBar = {
-            TopAppBar(
-                title = { Text("Shelf") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = p.c950,
-                    titleContentColor = p.c100,
-                    navigationIconContentColor = p.c300,
-                    actionIconContentColor = p.c300,
-                ),
-                actions = {
-                    // The file layer's front door: readers never see it —
-                    // the server would 403 every request the screen makes.
-                    if (onOpenFiles != null) {
-                        IconButton(onClick = onOpenFiles) {
-                            Icon(Icons.Filled.FolderOpen, contentDescription = "Book files")
-                        }
-                    }
-                    IconButton(onClick = onDashboard) {
-                        Icon(Icons.Filled.Insights, contentDescription = "Reading dashboard")
-                    }
-                    IconButton(onClick = { vm.setGrid(!state.shelf.grid) }) {
-                        Icon(
-                            if (state.shelf.grid) Icons.Filled.ViewList else Icons.Filled.Apps,
-                            contentDescription = if (state.shelf.grid) "Table view" else "Grid view",
-                        )
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            androidx.compose.material3.ExtendedFloatingActionButton(
-                onClick = { showAdd = true },
-                containerColor = p.hlMid,
-                contentColor = p.hlInk,
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text("Add a book") },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            StatsStrip(state.stats)
-
-            OutlinedTextField(
-                value = state.search,
-                onValueChange = vm::setSearch,
-                placeholder = { Text("Search your shelf…") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (state.search.isNotEmpty()) {
-                        IconButton(onClick = { vm.setSearch("") }) {
-                            Icon(Icons.Filled.Clear, contentDescription = "Clear search")
-                        }
-                    }
-                },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StatusTab("", "All", state.shelf.status, vm::setStatus)
-                EntryStatus.quick.forEach { status ->
-                    StatusTab(status.key, status.bookLabel, state.shelf.status, vm::setStatus)
-                }
-                AssistChip(
-                    onClick = { showFilters = true },
-                    label = { Text("Filters") },
-                    leadingIcon = { Icon(Icons.Filled.FilterList, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                )
-                SortMenu(state.shelf.sort, vm::setSort)
-                Spacer(Modifier.size(4.dp))
-            }
-
-            val loadError = state.error
-            if (loadError != null) {
+    // The Shell's Scaffold already insets for the status and nav bars; a
+    // nested one would double that, so — like the games shelf — this screen
+    // is a plain column with its own header row.
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Shelf", style = MaterialTheme.typography.headlineSmall, color = p.c100)
                 Text(
-                    loadError,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(16.dp),
+                    if (state.loading && state.entries.isEmpty()) "Loading…"
+                    else "${state.total} book${if (state.total == 1) "" else "s"}" +
+                        (if (state.hasFilters) " matching your filters" else "") +
+                        (if (state.entries.size < state.total) " · showing ${state.entries.size}" else ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = p.c400,
                 )
             }
+            // The file layer's front door: readers never see it —
+            // the server would 403 every request the screen makes.
+            if (onOpenFiles != null) {
+                IconButton(onClick = onOpenFiles) {
+                    Icon(Icons.Filled.FolderOpen, contentDescription = "Book files", tint = p.c300)
+                }
+            }
+            IconButton(onClick = onDashboard) {
+                Icon(Icons.Filled.Insights, contentDescription = "Reading dashboard", tint = p.c300)
+            }
+            IconButton(onClick = { vm.setGrid(!state.shelf.grid) }) {
+                Icon(
+                    if (state.shelf.grid) Icons.Filled.ViewList else Icons.Filled.Apps,
+                    contentDescription = if (state.shelf.grid) "Table view" else "Grid view",
+                    tint = p.c300,
+                )
+            }
+            IconButton(onClick = { showAdd = true }) {
+                Icon(Icons.Filled.Add, contentDescription = "Add a book", tint = p.hlBright)
+            }
+        }
 
-            when {
-                state.loading && state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-                state.entries.isEmpty() && state.error == null -> EmptyShelf(state.hasFilters) {
-                    showAdd = true
-                }
-                else -> {
-                    val grid = state.entries
-                    if (state.shelf.grid) {
-                        BookGrid(grid, baseUrl, state.total, onOpen, vm::loadMore, state.loadingMore, state.hasMore)
-                    } else {
-                        BookTable(grid, baseUrl, state.total, onOpen, vm::loadMore, state.loadingMore, state.hasMore)
+        StatsStrip(state.stats)
+
+        OutlinedTextField(
+            value = state.search,
+            onValueChange = vm::setSearch,
+            placeholder = { Text("Search your shelf…") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            trailingIcon = {
+                if (state.search.isNotEmpty()) {
+                    IconButton(onClick = { vm.setSearch("") }) {
+                        Icon(Icons.Filled.Clear, contentDescription = "Clear search")
                     }
+                }
+            },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+        )
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusTab("", "All", state.shelf.status, vm::setStatus)
+            EntryStatus.quick.forEach { status ->
+                StatusTab(status.key, status.bookLabel, state.shelf.status, vm::setStatus)
+            }
+            AssistChip(
+                onClick = { showFilters = true },
+                label = { Text("Filters") },
+                leadingIcon = { Icon(Icons.Filled.FilterList, contentDescription = null, modifier = Modifier.size(16.dp)) },
+            )
+            SortMenu(state.shelf.sort, vm::setSort)
+            Spacer(Modifier.size(4.dp))
+        }
+
+        val loadError = state.error
+        if (loadError != null) {
+            Text(
+                loadError,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+        }
+
+        when {
+            state.loading && state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            state.entries.isEmpty() && state.error == null -> EmptyShelf(state.hasFilters) {
+                showAdd = true
+            }
+            else -> {
+                val grid = state.entries
+                if (state.shelf.grid) {
+                    BookGrid(grid, baseUrl, state.total, onOpen, vm::loadMore, state.loadingMore, state.hasMore)
+                } else {
+                    BookTable(grid, baseUrl, state.total, onOpen, vm::loadMore, state.loadingMore, state.hasMore)
                 }
             }
         }
@@ -297,9 +293,7 @@ private fun BookGrid(
     LazyVerticalGrid(
         columns = GridCells.Adaptive(104.dp),
         state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp,
-        ),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 12.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize(),
@@ -362,9 +356,7 @@ private fun BookTable(
     val p = Backhog.palette
     androidx.compose.foundation.lazy.LazyColumn(
         state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp,
-        ),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier.fillMaxSize(),
     ) {

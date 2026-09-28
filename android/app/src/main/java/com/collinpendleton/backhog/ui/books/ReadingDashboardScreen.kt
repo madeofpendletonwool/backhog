@@ -17,15 +17,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,7 +45,6 @@ import kotlin.math.roundToInt
  * pace, the year's Reading Season, and the superlatives the backend has
  * already written the copy for.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReadingDashboardScreen(
     container: AppContainer,
@@ -61,31 +56,34 @@ fun ReadingDashboardScreen(
     val state by vm.state.collectAsState()
     val p = Backhog.palette
 
-    Scaffold(
-        containerColor = p.c950,
-        topBar = {
-            TopAppBar(
-                title = { Text("Your Reading Problem") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = p.c950,
-                    titleContentColor = p.c100,
-                    navigationIconContentColor = p.c300,
-                ),
+    // Plain column + header row, like the games screens: the Shell's Scaffold
+    // already insets for the status and nav bars, so a nested one here would
+    // double-count them.
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Your Reading Problem",
+                style = MaterialTheme.typography.headlineSmall,
+                color = p.c100,
+                modifier = Modifier.weight(1f),
             )
-        },
-    ) { padding ->
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = p.c300)
+            }
+        }
+
         val loadError = state.error
         when {
-            state.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+            state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
             loadError != null -> Column(
-                Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                Modifier.fillMaxSize().padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(loadError, color = MaterialTheme.colorScheme.error)
@@ -94,9 +92,7 @@ fun ReadingDashboardScreen(
             else -> Column(
                 Modifier
                     .fillMaxSize()
-                    .padding(padding)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
                     .padding(bottom = 48.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {

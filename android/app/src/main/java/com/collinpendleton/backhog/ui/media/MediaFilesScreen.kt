@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -23,11 +24,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -91,46 +89,50 @@ fun MediaFilesScreen(
         }
     }
 
-    Scaffold(
-        containerColor = p.c950,
-        topBar = {
-            TopAppBar(
-                title = { Text("Book files", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    if (state.scan?.running == true) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(horizontal = 12.dp).padding(end = 4.dp),
-                            strokeWidth = 2.dp,
-                            color = p.hlBright,
-                        )
-                    }
-                    IconButton(
-                        onClick = { vm.kickScan() },
-                        enabled = state.scan?.running != true,
-                    ) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Scan now")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = p.c950,
-                    titleContentColor = p.c100,
-                    navigationIconContentColor = p.c300,
-                    actionIconContentColor = p.c300,
-                ),
-            )
-        },
-    ) { padding ->
-        Column(
+    // Plain column + header row, like the games screens: the Shell's Scaffold
+    // already insets for the status and nav bars, so a nested one here would
+    // double-count them.
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
             Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = p.c300)
+            }
+            Text(
+                "Book files",
+                style = MaterialTheme.typography.titleLarge,
+                color = p.c100,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (state.scan?.running == true) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(horizontal = 4.dp).size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = p.hlBright,
+                )
+            }
+            IconButton(
+                onClick = { vm.kickScan() },
+                enabled = state.scan?.running != true,
+            ) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Scan now", tint = p.c300)
+            }
+        }
+
+        Column(
+            Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             state.scan?.let { scan ->

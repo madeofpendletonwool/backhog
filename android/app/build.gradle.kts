@@ -105,6 +105,24 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
+    // The camera paths: barcode adds and page scanning. ML Kit's bundled
+    // variants carry their models in the APK — no Play Services at runtime,
+    // and nothing leaves the device but the passage text the matcher gets.
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.mlkit.barcode.scanning)
+    implementation(libs.mlkit.text.recognition)
+
+    // The audiobook engine: ExoPlayer behind a MediaLibrarySession (the
+    // notification, the lock screen and Android Auto all talk to the session,
+    // not the app), streaming cookie-authenticated track bytes over OkHttp so
+    // the player and the API share one session cookie jar.
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.session)
+    implementation(libs.media3.datasource.okhttp)
+
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)

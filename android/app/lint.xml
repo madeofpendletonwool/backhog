@@ -5,4 +5,12 @@
     <issue id="ObsoleteSdkInt">
         <ignore path="src/main/res/mipmap-anydpi-v26" />
     </issue>
+
+    <!-- ImageProxy.getImage() — the only way an analyzer reaches the pixels
+         CameraX handed it — has carried this marker for years without the
+         API changing. Lint cannot see @OptIn through the analyzer lambda,
+         so the opt-in is made project-wide here instead. -->
+    <issue id="UnsafeOptInUsageError">
+        <option name="opt-in" value="androidx.camera.core.ExperimentalGetImage" />
+    </issue>
 </lint>

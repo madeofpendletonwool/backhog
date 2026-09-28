@@ -107,6 +107,8 @@ fun SettingsScreen(container: AppContainer, user: User, baseUrl: String) {
 
         Section("Password") { ChangePassword(container) }
 
+        Section("Shared books") { SharedBooksSection(container, baseUrl) }
+
         Section("Account") {
             OutlinedButton(onClick = { scope.launch { container.session.logout() } }, modifier = Modifier.fillMaxWidth()) {
                 Text("Sign out")

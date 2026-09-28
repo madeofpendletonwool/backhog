@@ -6,6 +6,7 @@ import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
+import okhttp3.OkHttpClient
 
 class BackhogApp : Application(), SingletonImageLoader.Factory {
     lateinit var container: AppContainer
@@ -19,12 +20,22 @@ class BackhogApp : Application(), SingletonImageLoader.Factory {
 
     /**
      * The app-wide image loader: covers via the public cover endpoints, IGDB
-     * CDN art for screenshots and related games. OkHttp fetcher with a
-     * crossfade, sized for the grid.
+     * CDN art for screenshots and related games, and the reader's
+     * illustrations — which are cookie-authenticated, same-origin asset
+     * requests, exactly like the audio stream. The cookie jar is
+     * host-scoped, so a third-party CDN request carries nothing.
      */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
-            .components { add(OkHttpNetworkFetcherFactory()) }
+            .components {
+                add(
+                    OkHttpNetworkFetcherFactory(
+                        callFactory = OkHttpClient.Builder()
+                            .cookieJar(container.cookieJar)
+                            .build(),
+                    ),
+                )
+            }
             .crossfade(true)
             .build()
 }

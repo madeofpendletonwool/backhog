@@ -1,10 +1,13 @@
 package com.collinpendleton.backhog.ui.shell
 
-import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,20 +16,24 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -39,8 +46,11 @@ import androidx.navigation.toRoute
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.api.User
 import com.collinpendleton.backhog.data.Arena
+import com.collinpendleton.backhog.ui.books.BookDetailScreen
+import com.collinpendleton.backhog.ui.books.BookLibraryScreen
+import com.collinpendleton.backhog.ui.books.ReadingDashboardScreen
+import com.collinpendleton.backhog.ui.books.reader.ReaderScreen
 import com.collinpendleton.backhog.ui.components.AchievementToastsHost
-import com.collinpendleton.backhog.ui.components.ToneChip
 import com.collinpendleton.backhog.ui.games.AchievementsScreen
 import com.collinpendleton.backhog.ui.games.DashboardScreen
 import com.collinpendleton.backhog.ui.games.DebtScreen
@@ -53,9 +63,11 @@ import com.collinpendleton.backhog.ui.games.ProjectsScreen
 import com.collinpendleton.backhog.ui.games.QueueScreen
 import com.collinpendleton.backhog.ui.games.SeriesDetailScreen
 import com.collinpendleton.backhog.ui.games.SeriesScreen
+import com.collinpendleton.backhog.ui.media.MediaFilesScreen
+import com.collinpendleton.backhog.ui.player.FullPlayer
+import com.collinpendleton.backhog.ui.player.MiniPlayer
 import com.collinpendleton.backhog.ui.settings.SettingsScreen
 import com.collinpendleton.backhog.ui.theme.Backhog
-import com.collinpendleton.backhog.ui.theme.Tones
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -76,7 +88,15 @@ import kotlinx.serialization.Serializable
 @Serializable data object GamesDebt
 @Serializable data object BooksGraph
 @Serializable data object BooksHome
+@Serializable data class BookDetail(val entryId: String)
+@Serializable data object ReadingDashboard
 @Serializable data object SettingsRoute
+
+/** The reader. A jump offset (−1 when absent) lands on a paragraph; with `peek` it is a look that never writes a position. */
+@Serializable data class BookReader(val entryId: String, val offset: Long = -1L, val peek: Boolean = false)
+
+/** The file layer — member/admin only, the server's RequireMediaManager gate. */
+@Serializable data object BookFilesRoute
 
 private data class Tab(val route: Any, val label: String, val icon: ImageVector, val arena: Arena?)
 
@@ -97,35 +117,56 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
     val initialArena = remember { startArena }
     val openGame = { id: String -> nav.navigate(GameDetail(id)) }
 
-    Scaffold(
-        containerColor = p.c950,
-        bottomBar = {
-            NavigationBar(containerColor = p.c900) {
-                tabs.forEach { tab ->
-                    val selected = entry?.destination?.hierarchy?.any { it.hasRoute(tab.route::class) } == true
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            // Standing in an arena picks its theme; Settings keeps the last arena's.
-                            tab.arena?.let { scope.launch { container.preferences.setArena(it) } }
-                            nav.navigate(tab.route) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = { Icon(tab.icon, contentDescription = null) },
-                        label = { Text(tab.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = p.hlBright,
-                            selectedTextColor = p.c100,
-                            indicatorColor = p.fillActive,
-                            unselectedIconColor = p.c500,
-                            unselectedTextColor = p.c500,
-                        ),
+    // The tape outlives every screen: connect to the playback service once,
+    // and the bar below the content renders whatever it is holding.
+    LaunchedEffect(Unit) { container.player.ensure() }
+    val player by container.player.state.collectAsStateWithLifecycle()
+    var showPlayer by rememberSaveable { mutableStateOf(false) }
+    val openFullPlayer = {
+        showPlayer = true
+        container.player.pollPositionForUi()
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = p.c950,
+            bottomBar = {
+                Column {
+                    MiniPlayer(
+                        state = player,
+                        onToggle = container.player::toggle,
+                        onSkipBack = container.player::skipBack,
+                        onSkipForward = container.player::skipForward,
+                        onExpand = { openFullPlayer() },
+                        onClose = container.player::close,
                     )
+                    NavigationBar(containerColor = p.c900) {
+                        tabs.forEach { tab ->
+                            val selected = entry?.destination?.hierarchy?.any { it.hasRoute(tab.route::class) } == true
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = {
+                                    // Standing in an arena picks its theme; Settings keeps the last arena's.
+                                    tab.arena?.let { scope.launch { container.preferences.setArena(it) } }
+                                    nav.navigate(tab.route) {
+                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                icon = { Icon(tab.icon, contentDescription = null) },
+                                label = { Text(tab.label) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = p.hlBright,
+                                    selectedTextColor = p.c100,
+                                    indicatorColor = p.fillActive,
+                                    unselectedIconColor = p.c500,
+                                    unselectedTextColor = p.c500,
+                                ),
+                            )
+                        }
+                    }
                 }
-            }
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
@@ -229,41 +270,94 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                     }
                 }
                 navigation<BooksGraph>(startDestination = BooksHome) {
-                    composable<BooksHome> { ArenaHome(Arena.Books, user) }
+                composable<BooksHome> {
+                    BookLibraryScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
+                        onDashboard = { nav.navigate(ReadingDashboard) },
+                        onOpenFiles = if (user.canManageMedia) {
+                            { nav.navigate(BookFilesRoute) }
+                        } else null,
+                    )
                 }
-                composable<SettingsRoute> { SettingsScreen(container, user, baseUrl) }
+                composable<BookDetail> { entry ->
+                    BookDetailScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        entryId = entry.toRoute<BookDetail>().entryId,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { id -> nav.navigate(BookDetail(id)) },
+                        canManageMedia = user.canManageMedia,
+                        onRead = { id -> nav.navigate(BookReader(id)) },
+                        onReadJump = { id, offset -> nav.navigate(BookReader(id, offset, peek = true)) },
+                        onOpenFiles = { nav.navigate(BookFilesRoute) },
+                    )
+                }
+                composable<ReadingDashboard> {
+                    ReadingDashboardScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { entryId -> nav.navigate(BookDetail(entryId)) },
+                    )
+                }
+                composable<BookReader> { backStack ->
+                    val route = backStack.toRoute<BookReader>()
+                    ReaderScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        entryId = route.entryId,
+                        jumpOffset = route.offset.takeIf { it >= 0 },
+                        jumpPeek = route.peek,
+                        onBack = { nav.popBackStack() },
+                    )
+                }
+                composable<BookFilesRoute> {
+                    MediaFilesScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        onBack = { nav.popBackStack() },
+                    )
+                }
+            }
+            composable<SettingsRoute> { SettingsScreen(container, user, baseUrl) }
             }
 
             // The unlock toasts: above every screen, bottom-centre.
             AchievementToastsHost(container, baseUrl)
         }
     }
-}
 
-/** Stage 1's placeholder for each arena's home — themed, empty, and honest about it. */
-@Composable
-private fun ArenaHome(arena: Arena, user: User) {
-    val p = Backhog.palette
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    // "Now playing" over the whole app: raised by the bar's identity block,
+    // dropped by Back or its own chevron. The tape keeps playing under it.
+    AnimatedVisibility(
+        visible = showPlayer && player.hasBook,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
     ) {
-        Text(arena.label, style = MaterialTheme.typography.headlineMedium, color = p.c100)
-        Text(
-            when (arena) {
-                Arena.Games -> "Hi ${user.username}. Your library, queue and dashboard land here next."
-                Arena.Books -> "Hi ${user.username}. Your shelf, reader and audiobooks land here next."
+        FullPlayer(
+            container = container,
+            baseUrl = baseUrl,
+            state = player,
+            onToggle = container.player::toggle,
+            onSeek = container.player::seekTo,
+            onSkip = { delta -> if (delta > 0) container.player.skipForward() else container.player.skipBack() },
+            onNextTrack = container.player::nextTrack,
+            onPreviousTrack = container.player::previousTrack,
+            onSetRate = container.player::setRate,
+            onSetSleep = container.player::setSleep,
+            onReload = container.player::reload,
+            onClose = { showPlayer = false },
+            onOpenBook = { entryId ->
+                showPlayer = false
+                nav.navigate(BookDetail(entryId))
             },
-            style = MaterialTheme.typography.bodyLarge,
-            color = p.c400,
+            onContinueReading = { entryId, offset ->
+                showPlayer = false
+                nav.navigate(BookReader(entryId, offset))
+            },
         )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ToneChip("Backlog", Tones.Backlog)
-            ToneChip(if (arena == Arena.Games) "Playing" else "Reading", Tones.Playing)
-            ToneChip(if (arena == Arena.Games) "Played" else "Read", Tones.Played)
-            ToneChip("Dropped", Tones.Dropped)
-        }
+    }
     }
 }

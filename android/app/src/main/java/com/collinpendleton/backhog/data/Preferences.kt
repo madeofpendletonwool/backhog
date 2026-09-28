@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.collinpendleton.backhog.api.EntryStatus
@@ -38,6 +39,30 @@ data class ThemeSettings(
         Arena.Books -> books
     }
 }
+
+/** The shelf's remembered face: filters, sort and grid/table, like the web's localStorage. */
+data class BookShelfState(
+    val status: String = "",
+    val sort: String = "title",
+    val author: String = "",
+    val subject: String = "",
+    val language: String = "",
+    val grid: Boolean = true,
+)
+
+/**
+ * The reader's type controls, the web's `backhog:reader` shape: body size in
+ * sp, line height as a multiplier, the face, and which paper the column is —
+ * "auto" takes whichever surface the app's own theme implies.
+ */
+data class ReaderPrefs(
+    val fontSize: Int = 19,
+    val lineHeight: Float = 1.65f,
+    /** "serif" or "sans". */
+    val face: String = "serif",
+    /** "auto" | "dark" | "sepia" | "light". */
+    val surface: String = "auto",
+)
 
 /**
  * The library state the web persists in localStorage
@@ -126,6 +151,49 @@ class AppPreferences(private val store: DataStore<Preferences>) {
         store.edit { it[ARENA] = arena.key }
     }
 
+    /** The books shelf remembers its filters between visits, the web's `backhog:books:*` keys. */
+    val bookShelf: Flow<BookShelfState> = store.data.map { prefs ->
+        BookShelfState(
+            status = prefs[SHELF_STATUS] ?: "",
+            sort = prefs[SHELF_SORT] ?: "title",
+            author = prefs[SHELF_AUTHOR] ?: "",
+            subject = prefs[SHELF_SUBJECT] ?: "",
+            language = prefs[SHELF_LANGUAGE] ?: "",
+            grid = prefs[SHELF_GRID] ?: true,
+        )
+    }
+
+    suspend fun setBookShelf(state: BookShelfState) {
+        store.edit {
+            it[SHELF_STATUS] = state.status
+            it[SHELF_SORT] = state.sort
+            it[SHELF_AUTHOR] = state.author
+            it[SHELF_SUBJECT] = state.subject
+            it[SHELF_LANGUAGE] = state.language
+            it[SHELF_GRID] = state.grid
+        }
+    }
+
+    // --- the reader's type controls --------------------------------------
+
+    val readerPrefs: Flow<ReaderPrefs> = store.data.map { prefs ->
+        ReaderPrefs(
+            fontSize = (prefs[READER_FONT] ?: 19f).toInt(),
+            lineHeight = prefs[READER_LINE_HEIGHT] ?: 1.65f,
+            face = prefs[READER_FACE] ?: "serif",
+            surface = prefs[READER_SURFACE] ?: "auto",
+        )
+    }
+
+    suspend fun setReaderPrefs(prefs: ReaderPrefs) {
+        store.edit {
+            it[READER_FONT] = prefs.fontSize.toFloat()
+            it[READER_LINE_HEIGHT] = prefs.lineHeight
+            it[READER_FACE] = prefs.face
+            it[READER_SURFACE] = prefs.surface
+        }
+    }
+
     // --- the games library's remembered state ---------------------------
 
     val libraryFilters: Flow<LibraryFilters> = store.data.map { prefs ->
@@ -148,15 +216,53 @@ class AppPreferences(private val store: DataStore<Preferences>) {
         }
     }
 
+    // --- the audiobook player ---------------------------------------------
+
+    /**
+     * Speed is a preference, not a per-book setting (the web's
+     * `backhog:audio-rate`): whoever listens at 1.75x listens at 1.75x to the
+     * next one too. Stored pre-clamped; the ladder is the UI's.
+     */
+    val audioRate: Flow<Float> = store.data.map { it[AUDIO_RATE] ?: 1f }
+
+    suspend fun setAudioRate(rate: Float) {
+        store.edit { it[AUDIO_RATE] = rate }
+    }
+
+    /**
+     * The entry the tape last held, so a service restarted after process
+     * death re-opens the book that was playing instead of an empty session.
+     * Cleared when the listener closes the player.
+     */
+    val lastAudioEntry: Flow<String?> = store.data.map { it[LAST_AUDIO_ENTRY] }
+
+    suspend fun setLastAudioEntry(entryId: String?) {
+        store.edit {
+            if (entryId == null) it.remove(LAST_AUDIO_ENTRY) else it[LAST_AUDIO_ENTRY] = entryId
+        }
+    }
+
     private companion object {
         val BASE_URL = stringPreferencesKey("base_url")
         val THEME_LINKED = booleanPreferencesKey("theme:linked")
         val ARENA = stringPreferencesKey("arena")
+        val SHELF_STATUS = stringPreferencesKey("books:status")
+        val SHELF_SORT = stringPreferencesKey("books:sort")
+        val SHELF_AUTHOR = stringPreferencesKey("books:author")
+        val SHELF_SUBJECT = stringPreferencesKey("books:subject")
+        val SHELF_LANGUAGE = stringPreferencesKey("books:language")
+        val SHELF_GRID = booleanPreferencesKey("books:grid")
+        val READER_FONT = floatPreferencesKey("reader:font")
+        val READER_LINE_HEIGHT = floatPreferencesKey("reader:lineHeight")
+        val READER_FACE = stringPreferencesKey("reader:face")
+        val READER_SURFACE = stringPreferencesKey("reader:surface")
         val LIBRARY_STATUS = stringPreferencesKey("library:games:status")
         val LIBRARY_SORT = stringPreferencesKey("library:games:sort")
         val LIBRARY_PLATFORM = stringPreferencesKey("library:games:platform")
         val LIBRARY_GENRE = stringPreferencesKey("library:games:genre")
         val LIBRARY_VIEW = stringPreferencesKey("library:games:view")
+        val AUDIO_RATE = floatPreferencesKey("audio:rate")
+        val LAST_AUDIO_ENTRY = stringPreferencesKey("audio:last-entry")
 
         fun themeKey(arena: Arena) = stringPreferencesKey("theme:${arena.key}")
     }

@@ -1,6 +1,7 @@
 package com.collinpendleton.backhog
 
 import android.content.Context
+import com.collinpendleton.backhog.achievements.UnlockBus
 import com.collinpendleton.backhog.api.PersistentCookieJar
 import com.collinpendleton.backhog.api.SharedPrefsCookieStore
 import com.collinpendleton.backhog.data.AppPreferences
@@ -13,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val preferences = AppPreferences(context)
+    val unlocks = UnlockBus()
     val cookieJar = PersistentCookieJar(
         SharedPrefsCookieStore(context.getSharedPreferences("backhog_cookies", Context.MODE_PRIVATE)),
     )

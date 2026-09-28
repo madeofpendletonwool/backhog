@@ -104,7 +104,7 @@ fun GameDetailScreen(
     onRemoved: () -> Unit,
 ) {
     val vm: GameDetailViewModel = viewModel(key = "entry|$baseUrl|$entryId") {
-        GameDetailViewModel(container.session, baseUrl, entryId)
+        GameDetailViewModel(container.session, baseUrl, entryId, container.unlocks)
     }
     val ui by vm.state.collectAsStateWithLifecycle()
     val p = Backhog.palette
@@ -169,7 +169,8 @@ private fun DetailBody(
             if (extras != null && extras.dlcs.isNotEmpty()) RelatedPanel("DLC & add-ons", extras.dlcs)
 
             TimelinePanel(entry)
-            if (ui.listNames.isNotEmpty()) ListsPanel(ui.listNames)
+            ListMembershipPanel(ui, vm)
+            if (ui.checklists.isNotEmpty()) ProjectMembershipPanel(ui, vm)
             if (game.platforms.isNotEmpty()) PlatformPanel(entry, game, vm)
             if (extras != null && extras.websites.isNotEmpty()) LinksPanel(extras)
 
@@ -828,14 +829,94 @@ private fun TimelinePanel(entry: Entry) {
     }
 }
 
+/**
+ * Manual-list membership, the web's EntryMembership. Smart lists are excluded:
+ * their contents are decided by rules, so a checkbox here would be a lie —
+ * they render read-only in their own chips below.
+ */
 @Composable
-private fun ListsPanel(names: List<String>) {
+private fun ListMembershipPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
     val p = Backhog.palette
     Panel {
         Text("Lists", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            names.forEach { name ->
-                ToneChip(name, p.hlMid)
+        val smartNames = ui.listNames.filter { name -> ui.manualLists.none { it.name == name } }
+        if (smartNames.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                smartNames.forEach { name -> ToneChip(name, p.hlMid) }
+            }
+        }
+        if (ui.manualLists.isEmpty()) {
+            Text(
+                "No manual lists yet. Create one from the Lists page to group games however you like.",
+                style = MaterialTheme.typography.labelMedium,
+                color = p.c500,
+            )
+        } else {
+            ui.manualLists.forEach { list ->
+                val member = list.id in ui.listMembership
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .clickable { vm.toggleList(list.id, member) }
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = member,
+                        onCheckedChange = { vm.toggleList(list.id, member) },
+                    )
+                    Text(
+                        list.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = p.c200,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text("${list.count}", style = MaterialTheme.typography.labelSmall, color = p.c600)
+                }
+            }
+        }
+    }
+}
+
+/** Checklist-project membership: goal projects are excluded — their target is not a curated list. */
+@Composable
+private fun ProjectMembershipPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
+    val p = Backhog.palette
+    Panel {
+        Text("Projects", style = MaterialTheme.typography.titleSmall, color = p.c200)
+        Text("Working on something? Check it in.", style = MaterialTheme.typography.labelSmall, color = p.c500)
+        ui.checklists.forEach { project ->
+            val member = project.id in ui.projectMembership
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.small)
+                    .clickable { vm.toggleProject(project.id, member) }
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                androidx.compose.material3.Checkbox(
+                    checked = member,
+                    onCheckedChange = { vm.toggleProject(project.id, member) },
+                )
+                Text(
+                    project.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = p.c200,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${project.progress.completedCount}/${project.progress.targetCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = p.c600,
+                )
             }
         }
     }

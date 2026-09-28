@@ -25,13 +25,22 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Reorder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.VideogameAsset
@@ -82,7 +91,8 @@ internal val AccentFallback = Color(0xFF8B5CF6)
 
 /**
  * The games library: status tabs, title filter, facet panel, cover grid or
- * dense table — the web's LibraryPage, arena-pinned to `media=game`.
+ * dense table — the web's LibraryPage, arena-pinned to `media=game`. The
+ * header also carries the tonight dice and the arena's other destinations.
  */
 @Composable
 fun LibraryScreen(
@@ -90,6 +100,12 @@ fun LibraryScreen(
     baseUrl: String,
     onOpenGame: (String) -> Unit,
     onOpenQueue: () -> Unit,
+    onOpenDashboard: () -> Unit = {},
+    onOpenLists: () -> Unit = {},
+    onOpenSeries: () -> Unit = {},
+    onOpenProjects: () -> Unit = {},
+    onOpenAchievements: () -> Unit = {},
+    onOpenDebt: () -> Unit = {},
 ) {
     val vm: LibraryViewModel = viewModel(key = "library|$baseUrl") {
         LibraryViewModel(container.session, baseUrl, container.preferences)
@@ -97,6 +113,9 @@ fun LibraryScreen(
     val ui by vm.state.collectAsStateWithLifecycle()
     var addOpen by rememberSaveable { mutableStateOf(false) }
     var filtersOpen by rememberSaveable { mutableStateOf(false) }
+    var tonightOpen by rememberSaveable { mutableStateOf(false) }
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+    var steamOpen by rememberSaveable { mutableStateOf(false) }
     val p = Backhog.palette
 
     // Status/rating edits in detail should be visible the moment we come back.
@@ -123,8 +142,14 @@ fun LibraryScreen(
                     color = p.c400,
                 )
             }
+            IconButton(onClick = { tonightOpen = true }) {
+                Icon(Icons.Filled.Casino, contentDescription = "What should I play tonight?", tint = p.hlBright)
+            }
             IconButton(onClick = onOpenQueue) {
                 Icon(Icons.Filled.Reorder, contentDescription = "Play queue", tint = p.c300)
+            }
+            IconButton(onClick = { menuOpen = true }) {
+                Icon(Icons.Filled.Menu, contentDescription = "More", tint = p.c300)
             }
             IconButton(onClick = { addOpen = true }) {
                 Icon(Icons.Filled.Add, contentDescription = "Add a game", tint = p.hlBright)
@@ -177,6 +202,85 @@ fun LibraryScreen(
 
     if (addOpen) {
         AddGameSheet(container, baseUrl, onDismiss = { addOpen = false })
+    }
+    if (tonightOpen) {
+        TonightSheet(container, baseUrl, onDismiss = { tonightOpen = false }, onOpenGame = onOpenGame)
+    }
+    if (steamOpen) {
+        SteamImportSheet(
+            container,
+            baseUrl,
+            onDismiss = { steamOpen = false },
+            onLibraryChanged = { vm.onReturned() },
+        )
+    }
+    if (menuOpen) {
+        ArenaMenuSheet(
+            onDismiss = { menuOpen = false },
+            onOpenDashboard = onOpenDashboard,
+            onOpenLists = onOpenLists,
+            onOpenSeries = onOpenSeries,
+            onOpenProjects = onOpenProjects,
+            onOpenAchievements = onOpenAchievements,
+            onOpenDebt = onOpenDebt,
+            onOpenSteam = {
+                menuOpen = false
+                steamOpen = true
+            },
+        )
+    }
+}
+
+/** The arena's other destinations — the mobile stand-in for the web's sidebar. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ArenaMenuSheet(
+    onDismiss: () -> Unit,
+    onOpenDashboard: () -> Unit,
+    onOpenLists: () -> Unit,
+    onOpenSeries: () -> Unit,
+    onOpenProjects: () -> Unit,
+    onOpenAchievements: () -> Unit,
+    onOpenDebt: () -> Unit,
+    onOpenSteam: () -> Unit,
+) {
+    val p = Backhog.palette
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = p.c950,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
+            Text("Games", style = MaterialTheme.typography.titleLarge, color = p.c100)
+            Spacer(Modifier.height(12.dp))
+            MenuRow("Your Gaming Problem", "The ridiculous-stats dashboard", Icons.Filled.Insights) { onDismiss(); onOpenDashboard() }
+            MenuRow("Lists", "Manual and smart lists", Icons.Filled.List) { onDismiss(); onOpenLists() }
+            MenuRow("Series", "Franchises played as journeys", Icons.Filled.Layers) { onDismiss(); onOpenSeries() }
+            MenuRow("Projects", "Temporary objectives", Icons.Filled.TrackChanges) { onDismiss(); onOpenProjects() }
+            MenuRow("Achievements", "The trophy wall", Icons.Filled.EmojiEvents) { onDismiss(); onOpenAchievements() }
+            MenuRow("Backlog debt", "What you owe yourself", Icons.Filled.HourglassEmpty) { onDismiss(); onOpenDebt() }
+            MenuRow("Import from Steam", "Bulk-add your Steam library", Icons.Filled.CloudDownload) { onOpenSteam() }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun MenuRow(title: String, caption: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    val p = Backhog.palette
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = p.hlBright, modifier = Modifier.size(22.dp))
+        Column {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = p.c100)
+            Text(caption, style = MaterialTheme.typography.labelSmall, color = p.c500)
+        }
     }
 }
 

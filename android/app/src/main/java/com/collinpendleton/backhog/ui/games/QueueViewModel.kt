@@ -7,6 +7,7 @@ import com.collinpendleton.backhog.api.Entry
 import com.collinpendleton.backhog.api.EntryStatus
 import com.collinpendleton.backhog.api.apiCall
 import com.collinpendleton.backhog.api.entryPatch
+import com.collinpendleton.backhog.achievements.UnlockBus
 import com.collinpendleton.backhog.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,9 +39,17 @@ data class QueueUiState(
 class QueueViewModel(
     private val session: SessionManager,
     private val baseUrl: String,
+    private val unlocks: UnlockBus? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(QueueUiState())
     val state: StateFlow<QueueUiState> = _state.asStateFlow()
+
+    /**
+     * The gremlin watch: shuttling the same game back to the top five times
+     * in one sitting hatches the Chaos Gremlin egg. Each game counts its own
+     * runs — the streak has to be one game, five times (web QueuePage).
+     */
+    private val topMoves = mutableMapOf<String, Int>()
 
     init {
         load()
@@ -63,11 +72,26 @@ class QueueViewModel(
     }
 
     /** A quick-move button: one local move plus the server call for it. */
-    fun move(from: Int, to: Int) {
+    fun move(from: Int, to: Int, kind: QueueMoves.Kind? = null) {
         if (from == to) return
         val entryId = _state.value.entries.getOrNull(from)?.id ?: return
+        if (kind == QueueMoves.Kind.Top) noteTopMove(entryId)
         moveLocal(from, to)
         commit(entryId)
+    }
+
+    /** Same game to the top five times in one sitting: the queue_shuffler egg. */
+    private fun noteTopMove(entryId: String) {
+        val count = (topMoves[entryId] ?: 0) + 1
+        if (count >= 5) {
+            topMoves.remove(entryId)
+            viewModelScope.launch {
+                apiCall { session.api(baseUrl).egg("queue_shuffler") }
+                    .onSuccess { response -> if (response.unlocked) unlocks?.unlock(response.achievement) }
+            }
+            return
+        }
+        topMoves[entryId] = count
     }
 
     /** Persist an entry's position against its current neighbours (drag end). */
@@ -93,7 +117,7 @@ class QueueViewModel(
 
     /**
      * Mark finished from the row — the web's next_up achievement path. The
-     * server stamps finished_at and fires the unlock; toasts arrive in Stage 3.
+     * server stamps finished_at and fires the unlock; the toast rides the bus.
      */
     fun markFinished(entryId: String) = flip(entryId, EntryStatus.Played)
 
@@ -102,7 +126,8 @@ class QueueViewModel(
         _state.update { it.copy(marking = entryId) }
         viewModelScope.launch {
             apiCall { session.api(baseUrl).patchEntry(entryId, entryPatch { status(status) }) }
-                .onSuccess {
+                .onSuccess { response ->
+                    unlocks?.unlock(response.unlocks)
                     _state.update { current ->
                         current.copy(entries = current.entries.filterNot { e -> e.id == entryId }, marking = null)
                     }

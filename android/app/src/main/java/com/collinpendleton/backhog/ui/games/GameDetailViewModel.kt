@@ -4,10 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.collinpendleton.backhog.api.ApiError
 import com.collinpendleton.backhog.api.Entry
+import com.collinpendleton.backhog.api.ListItemsRequest
+import com.collinpendleton.backhog.api.ListSummary
 import com.collinpendleton.backhog.api.PlaySession
+import com.collinpendleton.backhog.api.Project
 import com.collinpendleton.backhog.api.apiCall
 import com.collinpendleton.backhog.api.AddSessionRequest
 import com.collinpendleton.backhog.api.entryPatch
+import com.collinpendleton.backhog.achievements.UnlockBus
 import com.collinpendleton.backhog.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +30,12 @@ data class GameDetailUiState(
     val sessions: List<PlaySession> = emptyList(),
     /** The names of the lists this entry belongs to, manual or smart. */
     val listNames: List<String> = emptyList(),
+    /** The interactive membership column: every manual list + this entry's standing. */
+    val manualLists: List<ListSummary> = emptyList(),
+    val listMembership: Set<String> = emptySet(),
+    /** Open checklist projects in this entry's arena. */
+    val checklists: List<Project> = emptyList(),
+    val projectMembership: Set<String> = emptySet(),
     val notesDraft: String? = null,
     val deleted: Boolean = false,
 ) {
@@ -35,14 +45,15 @@ data class GameDetailUiState(
 
 /**
  * One library entry's page: the game dossier plus the user's column — status,
- * rating, notes, platform, sessions, lists membership — everything the web's
- * GameDetailPage renders. Status transitions ride the server's automatic
- * start/finish timestamps; the client never writes them.
+ * rating, notes, platform, sessions, lists and projects membership —
+ * everything the web's GameDetailPage renders. Status transitions ride the
+ * server's automatic start/finish timestamps; the client never writes them.
  */
 class GameDetailViewModel(
     private val session: SessionManager,
     private val baseUrl: String,
     private val entryId: String,
+    private val unlocks: UnlockBus? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(GameDetailUiState())
     val state: StateFlow<GameDetailUiState> = _state.asStateFlow()
@@ -61,7 +72,7 @@ class GameDetailViewModel(
                 .onSuccess { entry ->
                     _state.update { it.copy(entry = entry, loading = false, notesDraft = entry.notes) }
                     loadSessions()
-                    loadListNames()
+                    loadMemberships()
                 }
                 .onFailure { e ->
                     _state.update { it.copy(loading = false, error = (e as ApiError).message) }
@@ -75,6 +86,7 @@ class GameDetailViewModel(
         viewModelScope.launch {
             apiCall { session.api(baseUrl).patchEntry(entryId, entryPatch(block)) }
                 .onSuccess { response ->
+                    unlocks?.unlock(response.unlocks)
                     _state.update {
                         it.copy(
                             entry = response.entry,
@@ -103,6 +115,7 @@ class GameDetailViewModel(
         viewModelScope.launch {
             apiCall { session.api(baseUrl).addSession(entryId, AddSessionRequest(minutes, playedOn, note?.takeIf { s -> s.isNotBlank() })) }
                 .onSuccess { response ->
+                    unlocks?.unlock(response.unlocks)
                     _state.update { it.copy(busy = false, sessions = listOf(response.session) + it.sessions) }
                     // Logging a session auto-flips backlog/wishlist to playing server-side;
                     // refresh so the status column reflects it.
@@ -133,6 +146,36 @@ class GameDetailViewModel(
         }
     }
 
+    /** Manual-list checkbox: add to or remove from one list. */
+    fun toggleList(listId: String, member: Boolean) {
+        viewModelScope.launch {
+            if (member) {
+                apiCall { session.api(baseUrl).removeListItem(listId, entryId) }
+                    .onSuccess { refreshMemberships() }
+                    .onFailure { e -> _state.update { it.copy(actionError = (e as ApiError).message) } }
+            } else {
+                apiCall { session.api(baseUrl).addListItem(listId, ListItemsRequest(entryId = entryId)) }
+                    .onSuccess { refreshMemberships() }
+                    .onFailure { e -> _state.update { it.copy(actionError = (e as ApiError).message) } }
+            }
+        }
+    }
+
+    /** Checklist-project checkbox: check in or out. */
+    fun toggleProject(projectId: String, member: Boolean) {
+        viewModelScope.launch {
+            if (member) {
+                apiCall { session.api(baseUrl).removeProjectItem(projectId, entryId) }
+                    .onSuccess { refreshMemberships() }
+                    .onFailure { e -> _state.update { it.copy(actionError = (e as ApiError).message) } }
+            } else {
+                apiCall { session.api(baseUrl).addProjectItem(projectId, ListItemsRequest(entryId = entryId)) }
+                    .onSuccess { refreshMemberships() }
+                    .onFailure { e -> _state.update { it.copy(actionError = (e as ApiError).message) } }
+            }
+        }
+    }
+
     private fun refreshEntryOnly() {
         viewModelScope.launch {
             apiCall { session.api(baseUrl).entry(entryId) }
@@ -145,30 +188,44 @@ class GameDetailViewModel(
             .onSuccess { response -> _state.update { it.copy(sessions = response.sessions) } }
     }
 
-    private suspend fun loadListNames() {
-        val api = session.api(baseUrl)
-        val memberships = apiCall { api.entryLists(entryId) }.getOrNull()?.listIds ?: return
-        if (memberships.isEmpty()) {
-            _state.update { it.copy(listNames = emptyList()) }
-            return
+    /** Loads both membership columns; also composes the read-only smart names. */
+    private fun loadMemberships() = refreshMemberships()
+
+    private fun refreshMemberships() {
+        viewModelScope.launch {
+            val api = session.api(baseUrl)
+            val index = apiCall { api.lists() }.getOrNull()?.lists ?: emptyList()
+            val memberships = apiCall { api.entryLists(entryId) }.getOrNull()?.listIds?.toSet() ?: emptySet()
+            val projectIndex = apiCall { api.projects() }.getOrNull()?.projects ?: emptyList()
+            val projectMemberships = apiCall { api.entryProjects(entryId) }.getOrNull()?.projectIds?.toSet() ?: emptySet()
+
+            val media = _state.value.entry?.mediaType ?: "game"
+            _state.update {
+                it.copy(
+                    manualLists = index.filter { l -> l.kind == "manual" },
+                    listMembership = memberships,
+                    checklists = projectIndex.filter { p ->
+                        p.kind == "checklist" && p.completedAt == null && p.mediaScope == media
+                    },
+                    projectMembership = projectMemberships,
+                    listNames = index.filter { l -> l.id in memberships }.map { l -> l.name },
+                )
+            }
         }
-        val names = apiCall { api.lists() }.getOrNull()?.lists
-            ?.filter { it.id in memberships }
-            ?.map { it.name }
-            .orEmpty()
-        _state.update { it.copy(listNames = names) }
     }
 
     /**
      * The night-owl egg is judged by the user's local clock at logging time,
      * on purpose (web `useSessions.ts`): 3:00–4:59 AM counts as night owl.
-     * Idempotent and rate-limited server-side; the result surfaces in Stage 3.
+     * Idempotent and rate-limited server-side; the toast rides the bus when
+     * this call is the one that unlocked it.
      */
     private fun maybeNightOwl() {
         val hour = nowHour()
         if (hour !in 3..4) return
         viewModelScope.launch {
             apiCall { session.api(baseUrl).egg("night_owl") }
+                .onSuccess { response -> if (response.unlocked) unlocks?.unlock(response.achievement) }
         }
     }
 }

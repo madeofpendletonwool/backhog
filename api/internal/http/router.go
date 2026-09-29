@@ -141,7 +141,7 @@ func (s *Server) Routes() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
-	r.Use(auth.Middleware(s.store))
+	r.Use(auth.Middleware(s.store, s.store))
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/healthz", s.handleHealth)
@@ -352,6 +352,16 @@ func (s *Server) Routes() http.Handler {
 			// Both halves of "who has what": books this account shared
 			// out, and books other people shared with it.
 			r.Get("/shares", s.handleSharesOverview)
+
+			// Personal API tokens: bearer credentials for clients acting
+			// as this user from outside the web app. Managed only with
+			// the cookie session — the handlers refuse a token's own
+			// requests, so a token can never mint or survey tokens.
+			r.Route("/tokens", func(r chi.Router) {
+				r.Get("/", s.handleListAPITokens)
+				r.Post("/", s.handleCreateAPIToken)
+				r.Delete("/{tokenID}", s.handleRevokeAPIToken)
+			})
 
 			// Account management. Everything under here needs the admin
 			// role, which answers 403 rather than 404: this is a fixed

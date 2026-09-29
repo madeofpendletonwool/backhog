@@ -6,7 +6,7 @@ import { Field } from "./LoginPage";
 import { StatsStrip } from "@/components/StatsStrip";
 import { SteamImportDialog } from "@/components/SteamImportDialog";
 import { Gi } from "@/components/ui/Gi";
-import { Button, Input, Panel } from "@/components/ui/primitives";
+import { Button, Input, Panel, Select, Spinner } from "@/components/ui/primitives";
 import { useArena } from "@/hooks/useArena";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -19,7 +19,7 @@ import {
   type ThemeFamily,
 } from "@/hooks/useTheme";
 import { api } from "@/lib/api";
-import { ROLE_COPY } from "@/lib/types";
+import { ROLE_COPY, type APIToken } from "@/lib/types";
 import { ARENAS, ARENA_LABELS, type Arena } from "@/lib/arena";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/format";
@@ -148,6 +148,8 @@ export function SettingsPage() {
         </Panel>
 
         <SharingPanel />
+
+        <APITokensPanel />
 
         <Panel className="p-5">
           <h2 className="mb-1 text-sm font-semibold text-ink-200">Change password</h2>
@@ -313,6 +315,195 @@ function SharingPanel() {
         </div>
       )}
     </Panel>
+  );
+}
+
+/**
+ * Personal API tokens: the credential an outside client (an MCP assistant, a
+ * script) uses to act as you. Tokens are read-only for now — a token can read
+ * your library the way you can, and touch nothing else.
+ *
+ * The secret is shown exactly once, at creation, because the server keeps
+ * only a hash: a lost token is revoked and reissued, never recovered.
+ */
+function APITokensPanel() {
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: ["api-tokens"], queryFn: api.apiTokens });
+
+  const [name, setName] = useState("");
+  const [expiresDays, setExpiresDays] = useState(0);
+  const [error, setError] = useState("");
+  const [fresh, setFresh] = useState<APIToken | null>(null);
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createAPIToken({
+        name: name.trim(),
+        scopes: ["books:read"],
+        expires_days: expiresDays || undefined,
+      }),
+    onSuccess: (token) => {
+      setFresh(token);
+      setName("");
+      setError("");
+      void refresh();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const revoke = useMutation({
+    mutationFn: api.revokeAPIToken,
+    onSuccess: () => void refresh(),
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const tokens = data?.tokens ?? [];
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">API tokens</h2>
+      <p className="mb-4 text-xs leading-relaxed text-ink-500">
+        A personal key for clients that talk to your library from outside the app — an
+        MCP assistant, a script. It acts as you, read-only: your books, your reading
+        position, your searches. The key is shown once, when you make it; the server
+        keeps only a fingerprint.
+      </p>
+
+      <form
+        className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (name.trim()) create.mutate();
+        }}
+      >
+        <Field label="Name">
+          <Input
+            type="text"
+            value={name}
+            maxLength={64}
+            required
+            placeholder="claude-desktop"
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Field label="Expires">
+          <Select
+            value={expiresDays}
+            onChange={(event) => setExpiresDays(Number(event.target.value))}
+          >
+            <option value={0}>Never</option>
+            <option value={30}>In 30 days</option>
+            <option value={90}>In 90 days</option>
+            <option value={365}>In 1 year</option>
+          </Select>
+        </Field>
+        <Button type="submit" variant="primary" loading={create.isPending} disabled={!name.trim()}>
+          <Gi name="lock" className="size-4" />
+          Create token
+        </Button>
+      </form>
+
+      <p className="-mt-2 mb-4 text-xs leading-relaxed text-ink-500">
+        Scope: reads your library (books:read). Write scopes arrive with the features
+        that need them — until then every token is read-only.
+      </p>
+
+      {fresh?.token && <FreshToken token={fresh} onDone={() => setFresh(null)} />}
+
+      {error && (
+        <p role="alert" className="mb-3 rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          {error}
+        </p>
+      )}
+
+      {isLoading ? (
+        <Spinner className="size-5" />
+      ) : tokens.length === 0 ? (
+        <p className="text-xs text-ink-500">No tokens yet.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {tokens.map((token) => (
+            <li key={token.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
+              <TokenStatusChip status={token.status} />
+              <span className="min-w-0 flex-1 truncate text-sm text-ink-200">
+                {token.name}
+                <span className="ml-2 text-xs text-ink-500">{token.scopes.join(", ")}</span>
+              </span>
+              <span className="text-xs text-ink-500">
+                {token.last_used_at ? `used ${formatDate(token.last_used_at)}` : "never used"}
+                {token.expires_at && ` · expires ${formatDate(token.expires_at)}`}
+              </span>
+              {token.status === "active" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={revoke.isPending}
+                  onClick={() => revoke.mutate(token.id)}
+                >
+                  Revoke
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+/** The one showing of a new token's secret, with a copy button. */
+function FreshToken({ token, onDone }: { token: APIToken; onDone: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <div className="mb-4 rounded-xl bg-emerald-500/10 p-3">
+      <p className="mb-2 text-xs font-semibold text-emerald-300">
+        Copy this key now — it is not shown again.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-lg bg-ink-950/50 px-2.5 py-1.5 text-xs text-ink-300">
+          {token.token}
+        </code>
+        <Button
+          size="sm"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(token.token ?? "");
+              setCopied(true);
+            } catch {
+              // Clipboard access can be refused (an insecure origin, a
+              // locked-down browser). The key is on screen and selectable
+              // either way, so this is a convenience, not the mechanism.
+              setCopied(false);
+            }
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onDone}>
+          Done
+        </Button>
+      </div>
+      <p className="mt-2 text-xs leading-relaxed text-emerald-300/70">
+        Use it as a Bearer token: Authorization: Bearer {token.token?.slice(0, 8)}…
+      </p>
+    </div>
+  );
+}
+
+function TokenStatusChip({ status }: { status: APIToken["status"] }) {
+  const tone =
+    status === "active"
+      ? "bg-emerald-500/15 text-emerald-300"
+      : status === "revoked"
+        ? "bg-ink-700/50 text-ink-400"
+        : "bg-amber-500/10 text-amber-300";
+  return (
+    <span className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-medium capitalize", tone)}>
+      {status}
+    </span>
   );
 }
 

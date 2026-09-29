@@ -63,10 +63,16 @@ builds). `versionCode` is the workflow run number, so every archived APK
 installs over the previous one. The run summary lists each APK's size and
 SHA-256.
 
-The release APK is a universal build (~70 MB): R8 brings the code down to a
-~7 MB dex, and the bulk is ML Kit's bundled on-device OCR/barcode models and
-their native libraries, shipped for all four ABIs so one APK installs on any
-device with no Play Services dependency.
+The release APK is ~13 MB and the debug APK ~39 MB. Both are arm64-v8a only:
+the bulk is ML Kit's bundled on-device OCR/barcode models and their native
+libraries (no Play Services dependency), and every extra ABI would add another
+copy of them. Native libraries and dex are stored compressed in the APK to keep
+the download small. To run on an Intel (x86_64) emulator, widen `abiFilters` in
+`app/build.gradle.kts` locally.
+
+The debug build is signed with `app/debug.keystore`, a throwaway key checked
+into the repo (password `android`), so every CI run's debug APK installs over
+the last. It is not a secret and must never sign a release.
 
 ### Release signing
 

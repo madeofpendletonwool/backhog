@@ -10,9 +10,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -276,17 +279,23 @@ fun FullPlayer(
             }
         }
 
+        // Full width, or "centred" only centres within its own content and the
+        // whole block hugs the left edge.
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(vertical = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp, bottom = 20.dp),
         ) {
             Box(
                 Modifier
-                    .size(196.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .fillMaxWidth(0.72f)
+                    .widthIn(max = 320.dp)
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(accent.copy(alpha = 0.18f))
-                    .border(1.dp, p.edgeStrong, RoundedCornerShape(14.dp)),
+                    .border(1.dp, p.edgeStrong, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 if (state.coverUrl.isNotEmpty()) {
@@ -294,7 +303,7 @@ fun FullPlayer(
                         model = state.coverUrl,
                         contentDescription = state.title,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(196.dp),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 } else {
                     Icon(Icons.Filled.Headphones, contentDescription = null, tint = accent, modifier = Modifier.size(56.dp))
@@ -309,7 +318,7 @@ fun FullPlayer(
             )
             Text(
                 state.authors.ifEmpty { "Unknown author" },
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = p.c300,
                 textAlign = TextAlign.Center,
             )
@@ -326,6 +335,7 @@ fun FullPlayer(
 
         SeekRow(state, accent, onSeek)
         TransportRow(state, onToggle, onSkip, onNextTrack, onPreviousTrack)
+        Spacer(Modifier.height(24.dp))
         SectionLabel("Speed")
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -419,27 +429,28 @@ private fun TransportRow(
     onPreviousTrack: () -> Unit,
 ) {
     val p = Backhog.palette
+    // Spread across the width: five controls bunched mid-screen read as one
+    // blob, and the edges are where a thumb actually rests.
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Spacer(Modifier.weight(0.5f))
-        IconButton(onClick = onPreviousTrack, modifier = Modifier.size(46.dp)) {
-            Icon(Icons.Filled.SkipPrevious, "Previous track", tint = p.c200)
+        IconButton(onClick = onPreviousTrack, modifier = Modifier.size(56.dp)) {
+            Icon(Icons.Filled.SkipPrevious, "Previous track", tint = p.c200, modifier = Modifier.size(30.dp))
         }
-        IconButton(onClick = { onSkip(-30) }, modifier = Modifier.size(46.dp)) {
+        IconButton(onClick = { onSkip(-30) }, modifier = Modifier.size(56.dp)) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Filled.FastRewind, "Back 30 seconds", tint = p.c200)
+                Icon(Icons.Filled.FastRewind, "Back 30 seconds", tint = p.c200, modifier = Modifier.size(28.dp))
                 Text("30", style = MaterialTheme.typography.labelSmall, color = p.c500)
             }
         }
         Box(
             Modifier
-                .size(72.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .size(76.dp)
+                .clip(RoundedCornerShape(26.dp))
                 .background(p.hlBright)
                 .clickable(onClick = onToggle),
             contentAlignment = Alignment.Center,
@@ -455,16 +466,15 @@ private fun TransportRow(
                 )
             }
         }
-        IconButton(onClick = { onSkip(30) }, modifier = Modifier.size(46.dp)) {
+        IconButton(onClick = { onSkip(30) }, modifier = Modifier.size(56.dp)) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Filled.FastForward, "Forward 30 seconds", tint = p.c200)
+                Icon(Icons.Filled.FastForward, "Forward 30 seconds", tint = p.c200, modifier = Modifier.size(28.dp))
                 Text("30", style = MaterialTheme.typography.labelSmall, color = p.c500)
             }
         }
-        IconButton(onClick = onNextTrack, modifier = Modifier.size(46.dp)) {
-            Icon(Icons.Filled.SkipNext, "Next track", tint = p.c200)
+        IconButton(onClick = onNextTrack, modifier = Modifier.size(56.dp)) {
+            Icon(Icons.Filled.SkipNext, "Next track", tint = p.c200, modifier = Modifier.size(30.dp))
         }
-        Spacer(Modifier.weight(0.5f))
     }
 }
 
@@ -487,6 +497,7 @@ private fun Chip(label: String, active: Boolean, accent: Color, onClick: () -> U
 /** The sleep timer. "End of chapter" is the one people actually want. */
 @Composable
 private fun SleepSection(state: PlayerUiState, onSetSleep: (String, Int) -> Unit) {
+    Spacer(Modifier.height(24.dp))
     SectionLabel(
         when (state.sleepKind) {
             PlayerContract.SLEEP_MINUTES -> "Sleep · ${sleepCountdown(state)}"

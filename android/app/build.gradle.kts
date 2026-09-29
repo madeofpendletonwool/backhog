@@ -27,9 +27,25 @@ android {
         versionCode = versionCodeEnv ?: 1
         versionName = versionNameEnv ?: "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // ARM64 only. The APK's bulk is ML Kit's bundled OCR and barcode
+        // native libraries, and each extra ABI adds another ~17 MB copy of
+        // them. Every 64-bit phone and Apple-silicon emulator runs arm64-v8a;
+        // an x86_64 (Intel) emulator needs this list widened locally.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     signingConfigs {
+        // A fixed debug key checked into the repo, so every CI runner signs the
+        // debug APK the same way and a newer build installs over an older one.
+        // Without it each runner generates its own ~/.android/debug.keystore
+        // and Android refuses the update as a signature mismatch.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (hasReleaseKey) {
             create("release") {
                 storeFile = file(keystorePath!!)
@@ -57,6 +73,14 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // Compress native libraries and dex inside the APK. Modern AGP stores them
+    // uncompressed so they can be mapped in place, which doubles the download
+    // for a sideloaded app; extracting once at install is the better trade here.
+    packaging {
+        jniLibs.useLegacyPackaging = true
+        dex.useLegacyPackaging = true
     }
 
     buildFeatures {

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
@@ -65,6 +66,7 @@ import com.collinpendleton.backhog.ui.games.ProjectsScreen
 import com.collinpendleton.backhog.ui.games.QueueScreen
 import com.collinpendleton.backhog.ui.games.SeriesDetailScreen
 import com.collinpendleton.backhog.ui.games.SeriesScreen
+import com.collinpendleton.backhog.ui.home.HomeScreen
 import com.collinpendleton.backhog.ui.media.MediaFilesScreen
 import com.collinpendleton.backhog.ui.player.FullPlayer
 import com.collinpendleton.backhog.ui.player.MiniPlayer
@@ -93,6 +95,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class BookDetail(val entryId: String)
 @Serializable data object ReadingDashboard
 @Serializable data object SettingsRoute
+@Serializable data object HomeRoute
 
 /** The reader. A jump offset (−1 when absent) lands on a paragraph; with `peek` it is a look that never writes a position. */
 @Serializable data class BookReader(val entryId: String, val offset: Long = -1L, val peek: Boolean = false)
@@ -103,6 +106,7 @@ import kotlinx.serialization.Serializable
 private data class Tab(val route: Any, val label: String, val icon: ImageVector, val arena: Arena?)
 
 private val tabs = listOf(
+    Tab(HomeRoute, "Home", Icons.Filled.Home, null),
     Tab(GamesGraph, "Games", Icons.Filled.SportsEsports, Arena.Games),
     Tab(BooksGraph, "Books", Icons.AutoMirrored.Filled.MenuBook, Arena.Books),
     Tab(SettingsRoute, "Settings", Icons.Filled.Settings, null),
@@ -114,10 +118,18 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
     val scope = rememberCoroutineScope()
     val entry by nav.currentBackStackEntryAsState()
     val p = Backhog.palette
-    // Read the opening arena once: a live value here would rebuild the graph
-    // (and drop each arena's saved back stack) every time the tab changed.
-    val initialArena = remember { startArena }
+    // The app opens on Home, whatever the saved arena (startArena); a tab, or
+    // something opened from Home, is what picks the arena from there.
     val openGame = { id: String -> nav.navigate(GameDetail(id)) }
+    val setArena = { arena: Arena -> scope.launch { container.preferences.setArena(arena) } }
+    // What a tab tap does: switch to the destination and keep each tab's stack.
+    val goTab = { route: Any ->
+        nav.navigate(route) {
+            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     // The tape outlives every screen: connect to the playback service once,
     // and the bar below the content renders whatever it is holding.
@@ -152,12 +164,8 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                                 selected = selected,
                                 onClick = {
                                     // Standing in an arena picks its theme; Settings keeps the last arena's.
-                                    tab.arena?.let { scope.launch { container.preferences.setArena(it) } }
-                                    nav.navigate(tab.route) {
-                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
+                                    tab.arena?.let { setArena(it) }
+                                    goTab(tab.route)
                                 },
                                 icon = { Icon(tab.icon, contentDescription = null) },
                                 label = { Text(tab.label) },
@@ -182,8 +190,45 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
         Box(Modifier.fillMaxSize().padding(padding)) {
             NavHost(
                 navController = nav,
-                startDestination = if (initialArena == Arena.Books) BooksGraph else GamesGraph,
+                startDestination = HomeRoute,
             ) {
+                composable<HomeRoute> {
+                    HomeScreen(
+                        container = container,
+                        baseUrl = baseUrl,
+                        user = user,
+                        listeningEntryId = player.entryId.takeIf { player.isPlaying },
+                        onOpenBook = { id ->
+                            setArena(Arena.Books)
+                            nav.navigate(BookDetail(id))
+                        },
+                        onOpenGame = { id ->
+                            setArena(Arena.Games)
+                            openGame(id)
+                        },
+                        onListen = { id ->
+                            // Already on the tape: raise the player rather than reloading it.
+                            if (player.entryId == id) {
+                                if (!player.isPlaying) container.player.play()
+                                openFullPlayer()
+                            } else {
+                                container.player.open(id)
+                            }
+                        },
+                        onOpenBooks = {
+                            setArena(Arena.Books)
+                            goTab(BooksGraph)
+                        },
+                        onOpenGames = {
+                            setArena(Arena.Games)
+                            goTab(GamesGraph)
+                        },
+                        onOpenQueue = {
+                            setArena(Arena.Games)
+                            nav.navigate(GamesQueue)
+                        },
+                    )
+                }
                 navigation<GamesGraph>(startDestination = GamesHome) {
                     composable<GamesHome> {
                         LibraryScreen(

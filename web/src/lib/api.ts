@@ -59,11 +59,13 @@ import type {
   User,
   AdminUser,
   AuthConfig,
+  APIToken,
   BookShare,
   Invite,
   Role,
   ServerSettings,
   ShareCandidate,
+  TokenScope,
 } from "./types";
 
 /** An API error carrying the HTTP status, so callers can special-case 401. */
@@ -301,6 +303,17 @@ export const api = {
 
   deleteInvite: (inviteId: string) =>
     request<{ ok: boolean }>(`/admin/invites/${inviteId}`, { method: "DELETE" }),
+
+  // --- API tokens ---------------------------------------------------------
+  apiTokens: () => request<{ tokens: APIToken[] }>("/tokens"),
+
+  /** The response is the only time the secret exists — show it immediately.
+   *  An empty scope list means read-only; zero days means no expiry. */
+  createAPIToken: (input: { name: string; scopes?: TokenScope[]; expires_days?: number }) =>
+    request<APIToken>("/tokens", { method: "POST", body: body(input) }),
+
+  /** Kills the credential; the row stays as the record that it existed. */
+  revokeAPIToken: (tokenId: string) => request<void>(`/tokens/${tokenId}`, { method: "DELETE" }),
 
   // --- sharing ----------------------------------------------------------
   /** Every account this book could be shared with, flagged with whether it is. */

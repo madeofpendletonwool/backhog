@@ -302,6 +302,27 @@ export interface Invite {
   created_at: string;
 }
 
+export type TokenStatus = "active" | "revoked" | "expired";
+
+/** What a token may do. Write scopes arrive with the features that need
+ *  them; until then every token is read-only. */
+export type TokenScope = "books:read";
+
+/** A personal bearer credential for the API. `token` is the bh_… secret,
+ *  present only on the response that created it — the server stores a hash,
+ *  so a lost one is revoked and reissued, never recovered. */
+export interface APIToken {
+  id: string;
+  name: string;
+  scopes: TokenScope[];
+  status: TokenStatus;
+  token?: string;
+  last_used_at?: string;
+  expires_at?: string;
+  revoked_at?: string;
+  created_at: string;
+}
+
 /** What the sign-in pages read before anyone has an account. */
 export interface AuthConfig {
   registration_enabled: boolean;

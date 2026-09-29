@@ -213,6 +213,63 @@ type ShareCandidate struct {
 	InLibrary bool `json:"in_library"`
 }
 
+// TokenPrefix starts every personal API token's plaintext secret. It is what
+// tells a bearer credential that belongs to a person apart from the worker
+// tokens the /internal endpoints authenticate, and it makes a leaked one
+// greppable.
+const TokenPrefix = "bh_"
+
+// Token scopes, starting minimal: a token is a reader. Write scopes
+// (position:write, claims:write) are separate names added only when a later
+// feature needs them, so the default token is read-only by construction.
+const (
+	// ScopeBooksRead covers every read over the caller's own library: the
+	// canonical text and chapters, search, passage placement, and position.
+	ScopeBooksRead = "books:read"
+)
+
+// AllScopes lists every scope a token may carry.
+var AllScopes = []string{ScopeBooksRead}
+
+// ValidScope reports whether s is a real token scope.
+func ValidScope(s string) bool {
+	for _, scope := range AllScopes {
+		if scope == s {
+			return true
+		}
+	}
+	return false
+}
+
+// APIToken is a personal bearer credential for the API. The secret itself is
+// only ever in Token, only on the response that created it — the database
+// holds a hash.
+type APIToken struct {
+	ID     string   `json:"id"`
+	UserID string   `json:"-"`
+	Name   string   `json:"name"`
+	Scopes []string `json:"scopes"`
+	// Token is the plaintext secret (bh_…), present only in the create
+	// response. Every later read leaves it empty.
+	Token      string     `json:"token,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
+// Status is the token's lifecycle state, for display: active, revoked or
+// expired.
+func (t APIToken) Status(now time.Time) string {
+	switch {
+	case t.RevokedAt != nil:
+		return "revoked"
+	case t.ExpiresAt != nil && !t.ExpiresAt.After(now):
+		return "expired"
+	}
+	return "active"
+}
+
 // ServerSettings is the admin-editable server configuration held in the
 // database, as opposed to the deployment configuration held in the
 // environment.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/models"
@@ -18,11 +19,19 @@ type ctxKey int
 const (
 	userKey ctxKey = iota
 	sessionKey
+	tokenScopesKey
 )
 
 // Resolver looks up the user owning a session token.
 type Resolver interface {
 	UserForSession(ctx context.Context, sessionID string) (models.User, error)
+}
+
+// TokenResolver looks up the user a personal API token acts as, with the
+// scopes that token carries. It rejects revoked, expired and disabled
+// credentials itself; the middleware only decides what to do with the answer.
+type TokenResolver interface {
+	UserForAPIToken(ctx context.Context, token string) (models.User, []string, error)
 }
 
 // SetCookie writes the session cookie. Secure is set only in production so that
@@ -53,11 +62,50 @@ func ClearCookie(w http.ResponseWriter, production bool) {
 }
 
 // Middleware attaches the authenticated user to the request context when a
-// valid session cookie is present. It does not reject anonymous requests —
-// Require does that — so optional-auth routes can share the same chain.
-func Middleware(r Resolver) func(http.Handler) http.Handler {
+// valid credential is present. Two credentials, two halves:
+//
+//   - An `Authorization: Bearer bh_…` header is a personal API token, the
+//     external client's key. It resolves to the same user context the cookie
+//     path produces, so every handler's authorization — shares, ownership,
+//     roles — applies unchanged. Token requests never set cookies and carry
+//     no cookie, so there is nothing for a cross-site request to ride; and a
+//     bearer value without the bh_ prefix is not ours at all — the /internal
+//     worker gates authenticate their own tokens, and those pass through
+//     untouched.
+//   - The session cookie stays the browser's credential, unchanged.
+//
+// It does not reject anonymous requests — Require does that — so optional
+// auth routes can share the same chain. An *invalid* personal token is the
+// one anonymous case that answers instead of passing through: a client that
+// presented a credential it believes in deserves the 401, not whatever the
+// anonymous shape of the route happens to be.
+func Middleware(r Resolver, tokens TokenResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if bearer := bearerToken(req); bearer != "" {
+				if !strings.HasPrefix(bearer, models.TokenPrefix) {
+					next.ServeHTTP(w, req)
+					return
+				}
+				user, scopes, err := tokens.UserForAPIToken(req.Context(), bearer)
+				if err != nil {
+					writeError(w, http.StatusUnauthorized, "invalid or expired token")
+					return
+				}
+				// A token is read-only until a write scope exists to say
+				// otherwise. The check is on the method, not the route,
+				// so no write endpoint can appear beside it unguarded.
+				if isWriteMethod(req.Method) {
+					writeError(w, http.StatusForbidden,
+						"this token is read-only — manage your library from the app")
+					return
+				}
+				ctx := context.WithValue(req.Context(), userKey, user)
+				ctx = context.WithValue(ctx, tokenScopesKey, scopes)
+				next.ServeHTTP(w, req.WithContext(ctx))
+				return
+			}
+
 			cookie, err := req.Cookie(CookieName)
 			if err != nil || cookie.Value == "" {
 				next.ServeHTTP(w, req)
@@ -73,6 +121,26 @@ func Middleware(r Resolver) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	}
+}
+
+// bearerToken returns the bearer credential from the Authorization header,
+// or "" when the request carries none. The secret itself is never logged.
+func bearerToken(req *http.Request) string {
+	header := req.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(header[len(prefix):])
+}
+
+// isWriteMethod reports whether the method changes server state.
+func isWriteMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
 }
 
 // Require rejects requests that Middleware did not authenticate.
@@ -168,4 +236,20 @@ func MustUserID(ctx context.Context) (string, error) {
 func SessionFrom(ctx context.Context) string {
 	s, _ := ctx.Value(sessionKey).(string)
 	return s
+}
+
+// TokenScopesFrom returns the scopes of the API token that authenticated the
+// request. The bool is false for every cookie-authenticated request, which
+// is the distinction the token routes care about: a session may manage
+// tokens, a token may not.
+func TokenScopesFrom(ctx context.Context) ([]string, bool) {
+	scopes, ok := ctx.Value(tokenScopesKey).([]string)
+	return scopes, ok
+}
+
+// UsingAPIToken reports whether the request authenticated with a personal
+// API token rather than the session cookie.
+func UsingAPIToken(ctx context.Context) bool {
+	_, ok := TokenScopesFrom(ctx)
+	return ok
 }

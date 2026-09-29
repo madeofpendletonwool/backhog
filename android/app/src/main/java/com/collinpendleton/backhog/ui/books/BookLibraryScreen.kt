@@ -82,6 +82,13 @@ fun BookLibraryScreen(
     var showAdd by remember { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
 
+    // Status, rating and progress edits made in a book's page show the moment
+    // we come back — the first resume is the initial load, already under way.
+    var resumed by remember { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        if (resumed) vm.refresh() else resumed = true
+    }
+
     // The Shell's Scaffold already insets for the status and nav bars; a
     // nested one would double that, so — like the games shelf — this screen
     // is a plain column with its own header row.
@@ -125,6 +132,7 @@ fun BookLibraryScreen(
             }
         }
 
+        Spacer(Modifier.size(12.dp))
         StatsStrip(state.stats)
 
         OutlinedTextField(

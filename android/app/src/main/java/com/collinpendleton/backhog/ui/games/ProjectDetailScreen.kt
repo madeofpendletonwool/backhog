@@ -89,10 +89,10 @@ fun ProjectDetailScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var addOpen by rememberSaveable { mutableStateOf(false) }
 
-    if (ui.deleted) {
-        onRemoved()
-        return
-    }
+    // Navigating is a side effect: from composition it fires on every
+    // recomposition until the screen leaves, popping more than this page.
+    LaunchedEffect(ui.deleted) { if (ui.deleted) onRemoved() }
+    if (ui.deleted) return
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(

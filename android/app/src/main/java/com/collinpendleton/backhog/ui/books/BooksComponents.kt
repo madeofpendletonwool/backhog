@@ -135,8 +135,7 @@ private fun StatTile(label: String, count: Int, modifier: Modifier = Modifier) {
             .clip(RoundedCornerShape(8.dp))
             .background(p.c850)
             .border(1.dp, p.edge, RoundedCornerShape(8.dp))
-            .padding(vertical = 8.dp)
-            .then(modifier),
+            .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
@@ -208,5 +207,6 @@ fun BookCaption(entry: Entry, compact: Boolean = false) {
 fun EntryProgress(entry: Entry) {
     val percent = entry.progressPercent?.toFloat() ?: return
     if (percent <= 0f) return
-    ProgressBar(percent)
+    // The server sends 0–100; the bar takes a fraction.
+    ProgressBar(percent / 100f)
 }

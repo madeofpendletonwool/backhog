@@ -117,7 +117,7 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
         if (session == null) {
-            val base = buildPlayer()
+            val base = buildPlayer().also { player = it }
             session = MediaLibrarySession.Builder(this, TapePlayer(base), LibraryCallback())
                 .setSessionActivity(sessionActivity())
                 .build()

@@ -9,6 +9,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -24,12 +26,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
@@ -40,6 +42,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +54,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,7 +66,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -80,20 +84,23 @@ import com.collinpendleton.backhog.api.Game
 import com.collinpendleton.backhog.api.GameExtras
 import com.collinpendleton.backhog.api.RelatedGame
 import com.collinpendleton.backhog.data.ServerUrl
+import com.collinpendleton.backhog.ui.components.DetailSection
 import com.collinpendleton.backhog.ui.components.ErrorText
-import com.collinpendleton.backhog.ui.components.Panel
+import com.collinpendleton.backhog.ui.components.ExpandableText
+import com.collinpendleton.backhog.ui.components.FactLine
+import com.collinpendleton.backhog.ui.components.RatingBar
+import com.collinpendleton.backhog.ui.components.StatusPicker
 import com.collinpendleton.backhog.ui.components.ToneChip
 import com.collinpendleton.backhog.ui.theme.Backhog
-import com.collinpendleton.backhog.ui.theme.Palette
 import com.collinpendleton.backhog.ui.theme.Tones
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * The game dossier + user column, section-for-section like the web's
- * GameDetailPage: hero, about, facts, screenshots, videos, related games,
- * notes; then playtime, rating, timeline, lists, platform, links, remove.
+ * One game: the hero, then what you change most — status and platform —
+ * then your playtime, rating and notes, then the dossier (about, details,
+ * media, related), then the bookkeeping (lists, projects, timeline, links).
  */
 @Composable
 fun GameDetailScreen(
@@ -109,10 +116,10 @@ fun GameDetailScreen(
     val ui by vm.state.collectAsStateWithLifecycle()
     val p = Backhog.palette
 
-    if (ui.deleted) {
-        onRemoved()
-        return
-    }
+    // Navigating is a side effect: from composition it would fire on every
+    // recomposition until the screen left, popping more than this page.
+    LaunchedEffect(ui.deleted) { if (ui.deleted) onRemoved() }
+    if (ui.deleted) return
 
     Box(Modifier.fillMaxSize().background(p.c950)) {
         when {
@@ -141,24 +148,20 @@ private fun DetailBody(
     baseUrl: String,
     onBack: () -> Unit,
 ) {
-    val p = Backhog.palette
     val game = entry.game ?: return
     val extras = game.extras
     var confirmDelete by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Hero(entry, game, extras, baseUrl, onBack)
+        Hero(game, extras, baseUrl, onBack)
 
-        Column(
-            Modifier.padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
+        Column(Modifier.padding(horizontal = 16.dp)) {
             ErrorText(ui.actionError)
 
-            StatusSection(entry, ui.busy, vm)
+            QuickControls(entry, ui.busy, vm)
+
             SessionPanel(ui, vm)
-            RatingPanel(entry, vm)
-            NotesPanel(ui, vm)
+            RatingPanel(entry, ui, vm)
 
             AboutPanel(game)
             FactsPanel(game, extras)
@@ -168,22 +171,21 @@ private fun DetailBody(
             if (extras != null && extras.expansions.isNotEmpty()) RelatedPanel("Expansions", extras.expansions)
             if (extras != null && extras.dlcs.isNotEmpty()) RelatedPanel("DLC & add-ons", extras.dlcs)
 
-            TimelinePanel(entry)
             ListMembershipPanel(ui, vm)
             if (ui.checklists.isNotEmpty()) ProjectMembershipPanel(ui, vm)
-            if (game.platforms.isNotEmpty()) PlatformPanel(entry, game, vm)
+            TimelinePanel(entry)
             if (extras != null && extras.websites.isNotEmpty()) LinksPanel(extras)
 
             OutlinedButton(
                 onClick = { confirmDelete = true },
                 enabled = !ui.busy,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             ) {
                 Icon(Icons.Filled.DeleteOutline, contentDescription = null, tint = Tones.Dropped, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Remove from library", color = Tones.Dropped)
             }
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(32.dp))
         }
     }
 
@@ -204,13 +206,10 @@ private fun DetailBody(
 
 // --- hero ---------------------------------------------------------------------
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Hero(entry: Entry, game: Game, extras: GameExtras?, baseUrl: String, onBack: () -> Unit) {
+private fun Hero(game: Game, extras: GameExtras?, baseUrl: String, onBack: () -> Unit) {
     val p = Backhog.palette
-    val context = LocalContext.current
-    fun open(url: String) {
-        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-    }
 
     Box(Modifier.fillMaxWidth()) {
         // The cover, blown up and blurred behind its own artwork.
@@ -228,17 +227,18 @@ private fun Hero(entry: Entry, game: Game, extras: GameExtras?, baseUrl: String,
             ),
         )
 
-        Column(Modifier.padding(horizontal = 16.dp)) {
-            TextButton(onClick = onBack, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 0.dp)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Library")
+        Column {
+            IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = p.c300)
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(
+                Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
                 Box(
                     Modifier
-                        .width(108.dp)
+                        .width(112.dp)
                         .aspectRatio(3f / 4f)
                         .clip(MaterialTheme.shapes.medium)
                         .border(1.dp, p.edgeStrong, MaterialTheme.shapes.medium),
@@ -251,56 +251,62 @@ private fun Hero(entry: Entry, game: Game, extras: GameExtras?, baseUrl: String,
                     )
                 }
 
-                Column(Modifier.padding(top = 4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         game.name,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = p.cMax,
                     )
-                    val metaRows = buildList {
-                        Format.releaseDate(game.firstReleaseDate).takeIf { it.isNotEmpty() }?.let { add(it) }
-                        extras?.developer?.takeIf { it.isNotBlank() }?.let { add(it) }
-                        game.timeToBeatMain?.let { add("${Format.duration(it)} to beat") }
-                        game.timeToBeatComplete?.let { add("${Format.duration(it)} to 100%") }
-                        game.igdbRating?.let { add("${Math.round(it)} on IGDB") }
-                        extras?.aggregatedRating?.let { add("${Math.round(it)} critics") }
+                    val byline = listOfNotNull(
+                        Format.releaseYear(game.firstReleaseDate).takeIf { it.isNotEmpty() },
+                        extras?.developer?.takeIf { it.isNotBlank() },
+                    ).joinToString(" · ")
+                    if (byline.isNotEmpty()) {
+                        Text(byline, style = MaterialTheme.typography.bodyMedium, color = p.c300)
                     }
-                    if (metaRows.isNotEmpty()) {
-                        Text(
-                            metaRows.joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = p.c300,
-                        )
-                    }
-                    if (game.genres.isNotEmpty()) {
-                        Row(
-                            Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            game.genres.forEach { genre ->
-                                ToneChip(genre.name, p.hlMid)
-                            }
-                        }
-                    }
+                    // One fact per line: a single " · " run wraps mid-fact on a phone.
+                    game.timeToBeatMain?.let { HeroFact("${Format.duration(it)} to beat") }
+                    game.timeToBeatComplete?.let { HeroFact("${Format.duration(it)} to 100%") }
+                    val scores = listOfNotNull(
+                        game.igdbRating?.let { "${Math.round(it)} IGDB" },
+                        extras?.aggregatedRating?.let { "${Math.round(it)} critics" },
+                    ).joinToString(" · ")
+                    if (scores.isNotEmpty()) HeroFact(scores)
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            if (game.genres.isNotEmpty()) {
+                FlowRow(
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    game.genres.forEach { genre -> ToneChip(genre.name, p.hlMid) }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
         }
     }
 }
 
-// --- the user column -------------------------------------------------------------
-
-/** The full six-state menu; "played" on a platformless game asks which one, like the web. */
 @Composable
-private fun StatusSection(entry: Entry, busy: Boolean, vm: GameDetailViewModel) {
+private fun HeroFact(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = Backhog.palette.c400)
+}
+
+// --- the controls you touch most ------------------------------------------------
+
+/**
+ * Status and platform, side by side under the hero. "Played" on a
+ * platformless game asks which one, like the web.
+ */
+@Composable
+private fun QuickControls(entry: Entry, busy: Boolean, vm: GameDetailViewModel) {
     val game = entry.game ?: return
     var askPlatform by remember { mutableStateOf(false) }
     val p = Backhog.palette
 
     fun choose(status: EntryStatus) {
-        if (entry.status == status) return
         if (status == EntryStatus.Played && entry.platformId == null && game.platforms.isNotEmpty()) {
             askPlatform = true
             return
@@ -308,39 +314,23 @@ private fun StatusSection(entry: Entry, busy: Boolean, vm: GameDetailViewModel) 
         vm.patch { status(status) }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(MaterialTheme.shapes.small)
-                .background(p.c850)
-                .border(1.dp, p.edgeStrong, MaterialTheme.shapes.small)
-                .alpha(if (busy) 0.6f else 1f),
-        ) {
-            EntryStatus.all.forEach { status ->
-                val active = entry.status == status
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .clickable(enabled = !busy) { choose(status) }
-                        .background(if (active) Tones.forStatus(status) else Color.Transparent)
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        statusIcon(status),
-                        contentDescription = status.gameLabel,
-                        tint = if (active) Color(0xFF0B0E14) else p.c400,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
-        }
-        Text(
-            "${entry.status.gameLabel} — tap to change. Wishlist moves it to your shopping list.",
-            style = MaterialTheme.typography.labelSmall,
-            color = p.c500,
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        StatusPicker(
+            current = entry.status,
+            label = { it.gameLabel },
+            tone = Tones::forStatus,
+            onPick = ::choose,
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
         )
+        if (game.platforms.isNotEmpty()) {
+            PlatformPicker(entry, game, busy, vm, Modifier.weight(1f))
+        }
     }
 
     if (askPlatform) {
@@ -369,7 +359,7 @@ private fun StatusSection(entry: Entry, busy: Boolean, vm: GameDetailViewModel) 
                                         platform(platform.id)
                                     }
                                 }
-                                .padding(vertical = 10.dp, horizontal = 8.dp),
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
                         )
                     }
                 }
@@ -392,6 +382,56 @@ internal fun statusIcon(status: EntryStatus): androidx.compose.ui.graphics.vecto
     EntryStatus.Wishlist -> Icons.Filled.CardGiftcard
 }
 
+/** Which system you're playing it on — the same shape as the status button beside it. */
+@Composable
+private fun PlatformPicker(entry: Entry, game: Game, busy: Boolean, vm: GameDetailViewModel, modifier: Modifier) {
+    val p = Backhog.palette
+    var open by remember { mutableStateOf(false) }
+    val selected = game.platforms.firstOrNull { it.id == entry.platformId }
+    val shape = MaterialTheme.shapes.small
+    Box(modifier) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(shape)
+                .background(p.c900)
+                .border(1.dp, p.edgeStrong, shape)
+                .clickable(enabled = !busy) { open = true }
+                .padding(start = 14.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                selected?.name ?: "Platform",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected != null) p.c200 else p.c500,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Change platform", tint = p.c300)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Not set") },
+                onClick = {
+                    open = false
+                    vm.patch { platform(null) }
+                },
+            )
+            game.platforms.forEach { platform ->
+                DropdownMenuItem(
+                    text = { Text(platform.name) },
+                    onClick = {
+                        open = false
+                        vm.patch { platform(platform.id) }
+                    },
+                )
+            }
+        }
+    }
+}
+
 /** "Playtime": the running total vs the estimate, the log form, the history. */
 @Composable
 private fun SessionPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
@@ -401,24 +441,21 @@ private fun SessionPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
     var open by remember { mutableStateOf(false) }
     val p = Backhog.palette
 
-    Panel {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Playtime", style = MaterialTheme.typography.titleSmall, color = p.c200)
-                Text(
-                    if (ui.totalMinutes > 0) buildString {
-                        append(Format.minutes(ui.totalMinutes))
-                        append(" logged")
-                        estimate?.let { append(" · ~${Format.hours(it / 3600.0)} to beat") }
-                    } else "Nothing logged yet",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = p.c500,
-                )
-            }
-            if (!open) {
-                OutlinedButton(onClick = { open = true }, enabled = !ui.busy) { Text("Log") }
-            }
-        }
+    DetailSection(
+        "Playtime",
+        action = if (!open) {
+            { TextButton(onClick = { open = true }, enabled = !ui.busy) { Text("Log a session") } }
+        } else null,
+    ) {
+        Text(
+            if (ui.totalMinutes > 0) buildString {
+                append(Format.minutes(ui.totalMinutes))
+                append(" logged")
+                estimate?.let { append(" · ~${Format.hours(it / 3600.0)} to beat") }
+            } else "Nothing logged yet",
+            style = MaterialTheme.typography.bodyMedium,
+            color = p.c300,
+        )
 
         if (ui.totalMinutes > 0 && estimate != null && estimate > 0) {
             LinearProgressIndicator(
@@ -434,24 +471,29 @@ private fun SessionPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
         }
 
         if (ui.sessions.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column {
                 ui.sessions.forEach { session ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(Format.minutes(session.minutes), style = MaterialTheme.typography.labelMedium, color = p.c200)
-                        Text(Format.playedOn(session.playedOn), style = MaterialTheme.typography.labelSmall, color = p.c500)
+                        Text(
+                            Format.minutes(session.minutes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = p.c200,
+                            modifier = Modifier.width(64.dp),
+                        )
+                        Text(Format.playedOn(session.playedOn), style = MaterialTheme.typography.bodySmall, color = p.c500)
                         Text(
                             session.note,
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = p.c500,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        IconButton(onClick = { vm.deleteSession(session.id) }, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Delete session", tint = p.c600, modifier = Modifier.size(14.dp))
+                        IconButton(onClick = { vm.deleteSession(session.id) }) {
+                            Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete session", tint = p.c600, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -462,7 +504,7 @@ private fun SessionPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
 
 private val SESSION_PRESETS = listOf(15, 30, 45, 60, 90, 120, 180)
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SessionForm(ui: GameDetailUiState, vm: GameDetailViewModel, onDone: () -> Unit) {
     val p = Backhog.palette
@@ -470,59 +512,57 @@ private fun SessionForm(ui: GameDetailUiState, vm: GameDetailViewModel, onDone: 
     var playedOn by rememberSaveable { mutableStateOf(Format.today()) }
     var note by rememberSaveable { mutableStateOf("") }
     var pickDate by remember { mutableStateOf(false) }
-    val today = Format.today()
 
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .background(p.c850)
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .clip(MaterialTheme.shapes.medium)
+            .background(p.c900)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("How long?", style = MaterialTheme.typography.labelMedium, color = p.c400)
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             SESSION_PRESETS.forEach { preset ->
                 val selected = minutes == preset
                 Text(
                     Format.minutes(preset),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelLarge,
                     color = if (selected) p.hlInk else p.c300,
                     modifier = Modifier
-                        .clip(MaterialTheme.shapes.extraSmall)
+                        .clip(CircleShape)
                         .background(if (selected) p.hlMid else p.c800)
                         .clickable { minutes = preset }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                 )
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = if (minutes == 0) "" else minutes.toString(),
                 onValueChange = { text -> minutes = text.toIntOrNull()?.coerceIn(0, 1440) ?: 0 },
                 label = { Text("Minutes") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
-                modifier = Modifier.width(120.dp),
+                modifier = Modifier.width(112.dp),
+            )
+            OutlinedTextField(
+                value = playedOn,
+                onValueChange = { playedOn = it },
+                readOnly = true,
+                label = { Text("When?") },
+                trailingIcon = {
+                    IconButton(onClick = { pickDate = true }) {
+                        Icon(Icons.Filled.CalendarMonth, contentDescription = "Pick date", tint = p.c400)
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
             )
         }
-
-        OutlinedTextField(
-            value = playedOn,
-            onValueChange = { playedOn = it },
-            readOnly = true,
-            label = { Text("When?") },
-            trailingIcon = {
-                IconButton(onClick = { pickDate = true }) {
-                    Icon(Icons.Filled.CalendarMonth, contentDescription = "Pick date", tint = p.c400)
-                }
-            },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().clickable { pickDate = true },
-        )
 
         OutlinedTextField(
             value = note,
@@ -575,62 +615,22 @@ private fun rememberStateFor(isoDate: String): androidx.compose.material3.DatePi
     return androidx.compose.material3.rememberDatePickerState(initialSelectedDateMillis = initial)
 }
 
-/** 1–10, numbered buttons like the web's RatingPicker; tapping the active score clears it. */
+/** Rating and notes together: your take on the game, in one place. */
 @Composable
-private fun RatingPanel(entry: Entry, vm: GameDetailViewModel) {
-    val p = Backhog.palette
-    Panel {
-        Text("Your rating", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            (1..10).forEach { score ->
-                val active = score <= (entry.userRating ?: 0)
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .aspectRatio(1f)
-                        .clip(MaterialTheme.shapes.extraSmall)
-                        .background(if (active) Tones.Wishlist.copy(alpha = 0.9f) else p.c800)
-                        .clickable {
-                            vm.patch {
-                                rating(if (entry.userRating == score) null else score)
-                            }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "$score",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (active) Color(0xFF141019) else p.c600,
-                    )
-                }
-            }
-        }
-        Text(
-            if (entry.userRating != null) "You rated this ${entry.userRating}/10 — tap again to clear" else "Not rated yet",
-            style = MaterialTheme.typography.labelSmall,
-            color = p.c500,
-        )
-    }
-}
-
-@Composable
-private fun NotesPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
-    val p = Backhog.palette
-    Panel {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Notes", style = MaterialTheme.typography.titleSmall, color = p.c200, modifier = Modifier.weight(1f))
-            if (ui.notesDirty) {
-                Button(onClick = vm::saveNotes, enabled = !ui.busy) { Text("Save") }
-            }
-        }
+private fun RatingPanel(entry: Entry, ui: GameDetailUiState, vm: GameDetailViewModel) {
+    DetailSection("Your rating") {
+        RatingBar(entry.userRating, onPick = { score -> vm.patch { rating(score) } }, enabled = !ui.busy)
         OutlinedTextField(
             value = ui.notesDraft ?: "",
             onValueChange = vm::setNotesDraft,
+            label = { Text("Notes") },
             placeholder = { Text("Where you left off, why you bounced off it, what to do next…") },
             modifier = Modifier.fillMaxWidth(),
             minLines = 3,
         )
+        if (ui.notesDirty) {
+            Button(onClick = vm::saveNotes, enabled = !ui.busy) { Text("Save notes") }
+        }
     }
 }
 
@@ -639,24 +639,19 @@ private fun NotesPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
 @Composable
 private fun AboutPanel(game: Game) {
     val extras = game.extras
-    if (game.summary.isBlank() && extras?.storyline.isNullOrBlank()) return
-    val p = Backhog.palette
-    Panel {
-        Text("About", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        if (game.summary.isNotBlank()) {
-            Text(game.summary, style = MaterialTheme.typography.bodySmall, color = p.c400)
-        }
-        val storyline = extras?.storyline
-        if (!storyline.isNullOrBlank() && storyline != game.summary) {
-            Text(storyline, style = MaterialTheme.typography.bodySmall, color = p.c400)
-        }
+    val storyline = extras?.storyline?.takeIf { it.isNotBlank() && it != game.summary }
+    val text = listOfNotNull(game.summary.takeIf { it.isNotBlank() }, storyline).joinToString("\n\n")
+    if (text.isEmpty()) return
+    DetailSection("About") {
+        ExpandableText(text)
     }
 }
 
-/** The at-a-glance facts table; renders nothing when there's nothing to show. */
+/** The at-a-glance facts; renders nothing when there's nothing to show. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FactsPanel(game: Game, extras: GameExtras?) {
-    val p: Palette = Backhog.palette
+    val p = Backhog.palette
     val rows = buildList {
         add("Platforms" to game.platforms.map { it.name })
         add("Publisher" to listOfNotNull(extras?.publisher?.takeIf { it.isNotBlank() }))
@@ -671,27 +666,24 @@ private fun FactsPanel(game: Game, extras: GameExtras?) {
     }.filter { it.second.isNotEmpty() }
     if (rows.isEmpty()) return
 
-    Panel {
-        Text("Details", style = MaterialTheme.typography.titleSmall, color = p.c200)
+    DetailSection("Details") {
         rows.forEach { (label, items) ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = p.c500,
-                    modifier = Modifier.width(96.dp),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
-                    // A wrapping chip run per fact row.
+            // Label above its values: a side column eats a third of a phone's width.
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = p.c500)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     items.forEach { item ->
                         Text(
                             item,
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelMedium,
                             color = p.c300,
                             modifier = Modifier
                                 .clip(MaterialTheme.shapes.extraSmall)
                                 .background(p.fillActive)
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
                         )
                     }
                 }
@@ -700,34 +692,32 @@ private fun FactsPanel(game: Game, extras: GameExtras?) {
     }
 }
 
+/** A swipeable strip, the phone's gallery idiom — a grid of thumbnails is a web page. */
 @Composable
 private fun ScreenshotsPanel(extras: GameExtras) {
     val p = Backhog.palette
     val context = LocalContext.current
-    Panel {
-        Text("Screenshots", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            extras.screenshotImageIds.chunked(2).forEach { rowIds ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    rowIds.forEach { id ->
-                        AsyncImage(
-                            model = Format.screenshotThumb(id),
-                            contentDescription = "Screenshot",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .weight(1f)
-                                .aspectRatio(16f / 9f)
-                                .clip(MaterialTheme.shapes.small)
-                                .border(1.dp, p.edge, MaterialTheme.shapes.small)
-                                .clickable {
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Format.screenshotFull(id))))
-                                    }
-                                },
-                        )
-                    }
-                    if (rowIds.size == 1) Spacer(Modifier.weight(1f))
-                }
+    DetailSection("Screenshots") {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            extras.screenshotImageIds.forEach { id ->
+                AsyncImage(
+                    model = Format.screenshotThumb(id),
+                    contentDescription = "Screenshot",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .width(260.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .border(1.dp, p.edge, MaterialTheme.shapes.medium)
+                        .clickable {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Format.screenshotFull(id))))
+                            }
+                        },
+                )
             }
         }
     }
@@ -737,25 +727,26 @@ private fun ScreenshotsPanel(extras: GameExtras) {
 private fun VideosPanel(extras: GameExtras) {
     val p = Backhog.palette
     val context = LocalContext.current
-    Panel {
-        Text("Videos", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        extras.videos.forEach { video ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .clickable {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=${video.videoId}")))
+    DetailSection("Videos") {
+        Column {
+            extras.videos.forEach { video ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .clickable {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=${video.videoId}")))
+                            }
                         }
-                    }
-                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = p.c500, modifier = Modifier.size(16.dp))
-                Text(video.name, style = MaterialTheme.typography.bodySmall, color = p.c300, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Icon(Icons.Filled.OpenInNew, contentDescription = null, tint = p.c600, modifier = Modifier.size(13.dp))
+                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = p.hlBright, modifier = Modifier.size(20.dp))
+                    Text(video.name, style = MaterialTheme.typography.bodyMedium, color = p.c200, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Filled.OpenInNew, contentDescription = null, tint = p.c600, modifier = Modifier.size(16.dp))
+                }
             }
         }
     }
@@ -765,14 +756,13 @@ private fun VideosPanel(extras: GameExtras) {
 @Composable
 private fun RelatedPanel(title: String, games: List<RelatedGame>) {
     val p = Backhog.palette
-    Panel {
-        Text(title, style = MaterialTheme.typography.titleSmall, color = p.c200)
+    DetailSection(title) {
         Row(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             games.forEach { related ->
-                Column(Modifier.width(76.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.width(88.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Box(
                         Modifier
                             .fillMaxWidth()
@@ -808,23 +798,14 @@ private fun RelatedPanel(title: String, games: List<RelatedGame>) {
 
 @Composable
 private fun TimelinePanel(entry: Entry) {
-    val p = Backhog.palette
-    Panel {
-        Text("Timeline", style = MaterialTheme.typography.titleSmall, color = p.c200)
+    DetailSection("Timeline") {
         listOf(
             "Added" to entry.createdAt,
             "Started" to entry.startedAt,
             "Finished" to entry.finishedAt,
         ).forEach { (label, iso) ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(label, style = MaterialTheme.typography.bodySmall, color = p.c500)
-                val rel = Format.relativeTime(iso)
-                Text(
-                    Format.date(iso) + (if (rel.isNotEmpty() && iso != null) "  ·  $rel" else ""),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = p.c300,
-                )
-            }
+            val rel = Format.relativeTime(iso)
+            FactLine(label, Format.date(iso) + (if (rel.isNotEmpty() && iso != null) "  ·  $rel" else ""))
         }
     }
 }
@@ -834,48 +815,31 @@ private fun TimelinePanel(entry: Entry) {
  * their contents are decided by rules, so a checkbox here would be a lie —
  * they render read-only in their own chips below.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ListMembershipPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
     val p = Backhog.palette
-    Panel {
-        Text("Lists", style = MaterialTheme.typography.titleSmall, color = p.c200)
+    DetailSection("Lists") {
         val smartNames = ui.listNames.filter { name -> ui.manualLists.none { it.name == name } }
         if (smartNames.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 smartNames.forEach { name -> ToneChip(name, p.hlMid) }
             }
         }
         if (ui.manualLists.isEmpty()) {
             Text(
                 "No manual lists yet. Create one from the Lists page to group games however you like.",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = p.c500,
             )
         } else {
-            ui.manualLists.forEach { list ->
-                val member = list.id in ui.listMembership
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
-                        .clickable { vm.toggleList(list.id, member) }
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    androidx.compose.material3.Checkbox(
-                        checked = member,
-                        onCheckedChange = { vm.toggleList(list.id, member) },
-                    )
-                    Text(
-                        list.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = p.c200,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text("${list.count}", style = MaterialTheme.typography.labelSmall, color = p.c600)
+            Column {
+                ui.manualLists.forEach { list ->
+                    val member = list.id in ui.listMembership
+                    CheckRow(list.name, "${list.count}", member) { vm.toggleList(list.id, member) }
                 }
             }
         }
@@ -886,81 +850,42 @@ private fun ListMembershipPanel(ui: GameDetailUiState, vm: GameDetailViewModel) 
 @Composable
 private fun ProjectMembershipPanel(ui: GameDetailUiState, vm: GameDetailViewModel) {
     val p = Backhog.palette
-    Panel {
-        Text("Projects", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        Text("Working on something? Check it in.", style = MaterialTheme.typography.labelSmall, color = p.c500)
-        ui.checklists.forEach { project ->
-            val member = project.id in ui.projectMembership
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .clickable { vm.toggleProject(project.id, member) }
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                androidx.compose.material3.Checkbox(
-                    checked = member,
-                    onCheckedChange = { vm.toggleProject(project.id, member) },
-                )
-                Text(
+    DetailSection("Projects") {
+        Text("Working on something? Check it in.", style = MaterialTheme.typography.bodySmall, color = p.c500)
+        Column {
+            ui.checklists.forEach { project ->
+                val member = project.id in ui.projectMembership
+                CheckRow(
                     project.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = p.c200,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
                     "${project.progress.completedCount}/${project.progress.targetCount}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = p.c600,
-                )
+                    member,
+                ) { vm.toggleProject(project.id, member) }
             }
         }
     }
 }
 
 @Composable
-private fun PlatformPanel(entry: Entry, game: Game, vm: GameDetailViewModel) {
+private fun CheckRow(title: String, trailing: String, checked: Boolean, onToggle: () -> Unit) {
     val p = Backhog.palette
-    var open by remember { mutableStateOf(false) }
-    val selected = game.platforms.firstOrNull { it.id == entry.platformId }
-    Panel {
-        Text("Platform", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        Text("Which one are you playing it on?", style = MaterialTheme.typography.labelSmall, color = p.c500)
-        Box {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .border(1.dp, p.edgeStrong, MaterialTheme.shapes.small)
-                    .clickable { open = true }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(selected?.name ?: "Not set", style = MaterialTheme.typography.bodyMedium, color = p.c200, modifier = Modifier.weight(1f))
-            }
-            androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("Not set") },
-                    onClick = {
-                        open = false
-                        vm.patch { platform(null) }
-                    },
-                )
-                game.platforms.forEach { platform ->
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text(platform.name) },
-                        onClick = {
-                            open = false
-                            vm.patch { platform(platform.id) }
-                        },
-                    )
-                }
-            }
-        }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onToggle),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        androidx.compose.material3.Checkbox(checked = checked, onCheckedChange = { onToggle() })
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = p.c200,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(trailing, style = MaterialTheme.typography.labelSmall, color = p.c600, modifier = Modifier.padding(end = 4.dp))
     }
 }
 
@@ -968,22 +893,29 @@ private fun PlatformPanel(entry: Entry, game: Game, vm: GameDetailViewModel) {
 private fun LinksPanel(extras: GameExtras) {
     val p = Backhog.palette
     val context = LocalContext.current
-    Panel {
-        Text("Links", style = MaterialTheme.typography.titleSmall, color = p.c200)
-        extras.websites.forEach { site ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .clickable {
-                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(site.url))) }
-                    }
-                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(Format.websiteLabel(site.url), style = MaterialTheme.typography.bodySmall, color = p.c300, modifier = Modifier.weight(1f))
-                Icon(Icons.Filled.OpenInNew, contentDescription = null, tint = p.c600, modifier = Modifier.size(13.dp))
+    DetailSection("Links") {
+        Column {
+            extras.websites.forEach { site ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .clickable {
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(site.url))) }
+                        }
+                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // The server's own label ("Steam", "Wiki", …) when it sent one.
+                    Text(
+                        site.category?.takeIf { it.isNotBlank() } ?: Format.websiteLabel(site.url),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = p.c200,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(Icons.Filled.OpenInNew, contentDescription = null, tint = p.c600, modifier = Modifier.size(16.dp))
+                }
             }
         }
     }

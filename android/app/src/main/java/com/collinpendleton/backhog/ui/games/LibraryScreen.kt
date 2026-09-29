@@ -156,9 +156,14 @@ fun LibraryScreen(
             }
         }
 
+        Spacer(Modifier.height(12.dp))
         StatusTabs(ui.filters.status, vm::setStatus)
 
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             OutlinedTextField(
                 value = ui.search,
                 onValueChange = vm::setSearch,
@@ -183,6 +188,7 @@ fun LibraryScreen(
 
         if (filtersOpen) {
             FilterPanel(ui, vm)
+            Spacer(Modifier.height(10.dp))
         }
 
         ErrorText(ui.error?.takeIf { ui.entries.isEmpty() })
@@ -293,7 +299,7 @@ private fun StatusTabs(selected: EntryStatus?, onSelect: (EntryStatus?) -> Unit)
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         TabChip("All", selected == null, p) { onSelect(null) }
         EntryStatus.quick.forEach { status ->
@@ -306,13 +312,13 @@ private fun StatusTabs(selected: EntryStatus?, onSelect: (EntryStatus?) -> Unit)
 private fun TabChip(text: String, active: Boolean, p: com.collinpendleton.backhog.ui.theme.Palette, onClick: () -> Unit) {
     Text(
         text,
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelMedium,
         color = if (active) p.c100 else p.c400,
         modifier = Modifier
-            .clip(MaterialTheme.shapes.small)
-            .background(if (active) p.fillActive else Color.Transparent)
+            .clip(CircleShape)
+            .background(if (active) p.fillActive else p.c850)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 7.dp),
     )
 }
 
@@ -433,6 +439,7 @@ private fun EmptyLibrary(hasFilters: Boolean, onClear: () -> Unit, onAdd: () -> 
 private fun GameGrid(ui: LibraryUiState, baseUrl: String, onOpen: (String) -> Unit, onMore: () -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 150.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 4.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize(),
@@ -445,7 +452,6 @@ private fun GameGrid(ui: LibraryUiState, baseUrl: String, onOpen: (String) -> Un
                 LoadMore(ui, onMore)
             }
         }
-        item { Spacer(Modifier.height(16.dp)) }
     }
 }
 
@@ -568,7 +574,8 @@ private fun GameTable(ui: LibraryUiState, baseUrl: String, onOpen: (String) -> U
     val p = Backhog.palette
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 4.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         lazyItems(ui.entries, key = { it.id }) { entry ->
             val game = entry.game ?: return@lazyItems
@@ -609,7 +616,6 @@ private fun GameTable(ui: LibraryUiState, baseUrl: String, onOpen: (String) -> U
         if (ui.hasMore) {
             item { LoadMore(ui, onMore) }
         }
-        item { Spacer(Modifier.height(16.dp)) }
     }
 }
 

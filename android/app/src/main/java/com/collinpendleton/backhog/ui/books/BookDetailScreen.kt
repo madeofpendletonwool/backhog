@@ -1,11 +1,12 @@
 package com.collinpendleton.backhog.ui.books
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,12 +19,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,7 +47,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,20 +65,21 @@ import com.collinpendleton.backhog.books.formatTimecode
 import com.collinpendleton.backhog.books.pageCountFor
 import com.collinpendleton.backhog.books.positionHeadline
 import com.collinpendleton.backhog.books.publishYear
-import com.collinpendleton.backhog.ui.components.ErrorText
+import com.collinpendleton.backhog.ui.components.DetailSection
+import com.collinpendleton.backhog.ui.components.ExpandableText
+import com.collinpendleton.backhog.ui.components.FactLine
 import com.collinpendleton.backhog.ui.components.Field
 import com.collinpendleton.backhog.ui.components.Panel
+import com.collinpendleton.backhog.ui.components.RatingBar
+import com.collinpendleton.backhog.ui.components.StatusPicker
 import com.collinpendleton.backhog.ui.components.ToneChip
 import com.collinpendleton.backhog.ui.theme.Backhog
 import com.collinpendleton.backhog.ui.theme.Tones
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 /**
- * One book, whole: the dossier, where you are in it, the printings in hand,
- * what is attached, and who it is shared with. The reader and the player
- * arrive from here in Stages 5–6; until then the position panel and
- * search-in-book are the whole of the book's inner life.
+ * One book, whole: what it is and the buttons that open it, where you are in
+ * it, your take on it, the printings in hand, what is attached, and who it
+ * is shared with.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,75 +128,81 @@ fun BookDetailScreen(
     Box(Modifier.fillMaxSize()) {
         // Plain column + header row, like the games screens: the Shell's
         // Scaffold already insets for the status and nav bars, so a nested
-        // one here would double-count them.
+        // one here would double-count them. Back and search only — the
+        // title belongs to the hero just below.
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .padding(top = 4.dp),
+                    .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = p.c300)
                 }
-                Text(
-                    state.entry?.book?.title ?: "Book",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = p.c100,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Spacer(Modifier.weight(1f))
                 IconButton(onClick = { showSearch = true }) {
                     Icon(Icons.Filled.Search, contentDescription = "Search in this book", tint = p.c300)
                 }
             }
-        when {
-            state.loading -> Column(
-                Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) { CircularProgressIndicator() }
-            state.error != null -> Column(
-                Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(state.error!!, color = MaterialTheme.colorScheme.error)
-                OutlinedButton(onClick = vm::reload) { Text("Try again") }
-            }
-            else -> Column(
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 48.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Header(state, baseUrl)
-                FactsPanel(state)
-                ShelfPanel(state, vm)
-                PositionPanel(
-                    state,
-                    onScan = { showScan = true },
-                    onRead = { onRead(entryId) },
-                    onListen = { container.player.open(entryId) },
-                )
-                SessionsPanel(state, onAdd = { showSessions = true })
-                CopiesPanel(state, vm, onRegister = { showRegister = true })
-                FilesPanel(state, vm, canManageMedia, onOpenFiles)
-                SharePanel(state, vm)
-                DangerPanel(vm, onConfirm = { confirmDelete = true })
+            when {
+                state.loading -> Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) { CircularProgressIndicator() }
+                state.error != null -> Column(
+                    Modifier.fillMaxSize().padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(state.error!!, color = MaterialTheme.colorScheme.error)
+                    OutlinedButton(onClick = vm::reload) { Text("Try again") }
+                }
+                // The order is how often you reach for it: what the book is and
+                // the buttons that open it, then your place and your take on it,
+                // then the log, the blurb, and the bookkeeping at the bottom.
+                else -> Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 32.dp),
+                ) {
+                    Header(state, baseUrl)
+                    PrimaryActions(
+                        state,
+                        onRead = { onRead(entryId) },
+                        onListen = { container.player.open(entryId) },
+                    )
+                    state.entry?.let { entry ->
+                        StatusPicker(
+                            current = entry.status,
+                            label = { it.bookLabel },
+                            tone = ::statusTone,
+                            onPick = vm::setStatus,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+                        )
+                    }
+                    PositionSection(state, onScan = { showScan = true })
+                    YourTakeSection(state, vm)
+                    SessionsPanel(state, onAdd = { showSessions = true })
+                    AboutSection(state)
+                    CopiesPanel(state, vm, onRegister = { showRegister = true })
+                    FilesPanel(state, vm, canManageMedia, onOpenFiles)
+                    SharePanel(state, vm)
+                    TimelineSection(state)
+                    DangerPanel(vm, onConfirm = { confirmDelete = true })
+                }
             }
         }
-    }
 
-    toast?.let { message ->
-        Panel(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(16.dp),
-        ) { Text(message, color = p.c100) }
+        toast?.let { message ->
+            Panel(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp),
+            ) { Text(message, color = p.c100) }
+        }
     }
 
     if (showSessions) AddSessionDialog(vm, onDismiss = { showSessions = false })
@@ -235,8 +246,8 @@ fun BookDetailScreen(
             )
         }
     }
-    }
 }
+
 /* ------------------------------------------------------------------ header */
 
 @Composable
@@ -246,31 +257,36 @@ private fun Header(state: BookDetailState, baseUrl: String) {
     val brief = state.entry?.book
     if (book == null && brief == null) return
     val title = book?.title ?: brief!!.title
-    val line = listOf(byline(book?.authors), publishYear(book?.firstPublishYear))
-        .filter { it.isNotEmpty() }
-        .joinToString(" · ")
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+    val pageCount = pageCountFor(book?.editions.orEmpty(), state.entry?.editionId)
+    val meta = listOfNotNull(
+        publishYear(book?.firstPublishYear).takeIf { it.isNotEmpty() },
+        pageCount?.let { com.collinpendleton.backhog.books.formatPages(it) },
+    ).joinToString(" · ")
+    Row(
+        Modifier.padding(top = 4.dp, bottom = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
         BookCover(
             title,
             book?.coverUrl ?: brief!!.coverUrl,
             book?.accentHex ?: brief!!.accentHex,
             baseUrl,
             book?.id ?: brief!!.id,
-            Modifier.width(96.dp).aspectRatio(2f / 3f),
+            Modifier.width(112.dp).aspectRatio(2f / 3f),
         )
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, color = p.cMax)
-            if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodyMedium, color = p.c400)
+            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = p.cMax)
+            byline(book?.authors).takeIf { it.isNotEmpty() }?.let {
+                Text(it, style = MaterialTheme.typography.bodyLarge, color = p.c300)
+            }
+            if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.bodySmall, color = p.c500)
             LenderBadge(state.entry?.sharedBy)
-            state.entry?.let { entry ->
-                ToneChip(entry.status.bookLabel, statusTone(entry.status))
-                entry.loggedMinutes.takeIf { it > 0 }?.let { minutes ->
-                    Text(
-                        "Read for ${minutes / 60}h ${minutes % 60}m",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = p.c500,
-                    )
-                }
+            state.entry?.loggedMinutes?.takeIf { it > 0 }?.let { minutes ->
+                Text(
+                    "Read for ${minutes / 60}h ${minutes % 60}m",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = p.c500,
+                )
             }
         }
     }
@@ -284,119 +300,83 @@ internal fun statusTone(status: EntryStatus) = when (status) {
     EntryStatus.Wishlist -> Tones.Silver
 }
 
-/* ------------------------------------------------------------------- facts */
-
+/**
+ * Read and Listen, right under the cover — the two things you open a book's
+ * page to do. Side by side when both exist, full width when only one does.
+ */
 @Composable
-private fun FactsPanel(state: BookDetailState) {
-    val p = Backhog.palette
+private fun PrimaryActions(state: BookDetailState, onRead: () -> Unit, onListen: () -> Unit) {
+    val position = state.position
+    val paged = position?.positionMode == "page"
+    val hasText = state.files?.files?.any { it.kind == "epub" } == true
+    // The reader opens whenever there is something to read: an attached text,
+    // or a paged primary. The player, whenever a designated recording exists.
+    val canRead = position != null && (hasText || paged)
+    val canListen = state.files?.audioEditions?.isNotEmpty() == true
+    if (!canRead && !canListen) return
+    val both = canRead && canListen
+    val started = position?.updatedAt != null
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (canRead) {
+            Button(onClick = onRead, modifier = Modifier.weight(1f).height(48.dp)) {
+                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (both) "Read" else if (started) "Continue reading" else "Start reading")
+            }
+        }
+        if (canListen) {
+            val listened = position?.audio != null && started
+            val label = if (both) "Listen" else if (listened) "Continue listening" else "Listen"
+            val content: @Composable RowScope.() -> Unit = {
+                Icon(Icons.Filled.Headphones, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(label)
+            }
+            if (canRead) {
+                FilledTonalButton(onClick = onListen, modifier = Modifier.weight(1f).height(48.dp), content = content)
+            } else {
+                Button(onClick = onListen, modifier = Modifier.weight(1f).height(48.dp), content = content)
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------- about */
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AboutSection(state: BookDetailState) {
     val book = state.book ?: return
     val subjects = book.subjects.orEmpty()
-    val editions = book.editions.orEmpty()
-    val pageCount = pageCountFor(editions, state.entry?.editionId)
-    if (book.description.isBlank() && subjects.isEmpty() && pageCount == null) return
+    if (book.description.isBlank() && subjects.isEmpty()) return
 
-    Panel {
-        SectionLabel("The work")
-        if (book.description.isNotBlank()) {
-            var expanded by remember { mutableStateOf(false) }
-            Text(
-                book.description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = p.c300,
-                maxLines = if (expanded) Int.MAX_VALUE else 6,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (book.description.length > 400) {
-                TextButton(onClick = { expanded = !expanded }) {
-                    Text(if (expanded) "Show less" else "Read more")
-                }
-            }
-        }
-        if (pageCount != null) {
-            Text(
-                com.collinpendleton.backhog.books.formatPages(pageCount),
-                style = MaterialTheme.typography.bodySmall,
-                color = p.c500,
-            )
-        }
+    DetailSection("About") {
+        if (book.description.isNotBlank()) ExpandableText(book.description)
         if (subjects.isNotEmpty()) {
-            Row(
-                Modifier.fillMaxWidth(),
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                subjects.take(3).forEach { subject ->
-                    ToneChip(subject.take(24), Tones.Silver)
-                }
+                subjects.take(8).forEach { subject -> ToneChip(subject.take(32), Tones.Silver) }
             }
         }
     }
 }
 
-/* -------------------------------------------------------------- your shelf */
+/* -------------------------------------------------------- rating and notes */
 
 @Composable
-private fun ShelfPanel(state: BookDetailState, vm: BookDetailViewModel) {
+private fun YourTakeSection(state: BookDetailState, vm: BookDetailViewModel) {
     val entry = state.entry ?: return
-    val p = Backhog.palette
-
-    Panel {
-        SectionLabel("On your shelf")
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            EntryStatus.entries.chunked(3).forEach { row ->
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        row.forEach { status ->
-                            FilterChip(
-                                selected = entry.status == status,
-                                onClick = { if (entry.status != status) vm.setStatus(status) },
-                                label = { Text(status.bookLabel, style = MaterialTheme.typography.labelSmall) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        RatingPicker(entry.userRating, vm::setRating)
-
+    DetailSection("Your rating") {
+        RatingBar(entry.userRating, vm::setRating)
         NotesEditor(entry.notes, vm::setNotes)
-
-        entry.createdAt.take(10)?.let { FactRow("Added", it) }
-        entry.startedAt?.take(10)?.let { FactRow("Started", it) }
-        entry.finishedAt?.take(10)?.let { FactRow("Finished", it) }
-    }
-}
-
-@Composable
-private fun RatingPicker(current: Int?, set: (Int?) -> Unit) {
-    val p = Backhog.palette
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            if (current != null) "Your rating: $current / 10" else "Not rated yet",
-            style = MaterialTheme.typography.labelMedium,
-            color = p.c400,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            (1..10).forEach { score ->
-                val picked = current == score
-                Text(
-                    score.toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (picked) FontWeight.Bold else FontWeight.Normal,
-                    color = if (picked) p.hlInk else p.c400,
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(if (picked) p.hlMid else androidx.compose.ui.graphics.Color.Transparent)
-                        .clickable { set(if (picked) null else score) }
-                        .padding(6.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
-            }
-        }
     }
 }
 
@@ -424,18 +404,19 @@ private fun NotesEditor(notes: String, save: (String) -> Unit) {
 }
 
 @Composable
-private fun FactRow(label: String, value: String) {
-    val p = Backhog.palette
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = p.c500, modifier = Modifier.weight(1f))
-        Text(value, style = MaterialTheme.typography.labelMedium, color = p.c300)
+private fun TimelineSection(state: BookDetailState) {
+    val entry = state.entry ?: return
+    DetailSection("Timeline") {
+        FactLine("Added", entry.createdAt.take(10))
+        entry.startedAt?.take(10)?.let { FactLine("Started", it) }
+        entry.finishedAt?.take(10)?.let { FactLine("Finished", it) }
     }
 }
 
 /* --------------------------------------------------------------- position */
 
 @Composable
-private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: () -> Unit, onListen: () -> Unit = {}) {
+private fun PositionSection(state: BookDetailState, onScan: () -> Unit) {
     val p = Backhog.palette
     val entry = state.entry ?: return
     val position = state.position ?: return
@@ -443,35 +424,33 @@ private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: ()
     val copy = state.drivingCopy
     val pageCount = pageCountFor(editions, copy?.editionId, entry.editionId)
     val paged = position.positionMode == "page"
-    val hasText = state.files?.files?.any { it.kind == "epub" } == true
 
-    Panel {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SectionLabel("Where you are")
-            position.updatedAt?.let {
+    DetailSection(
+        "Where you are",
+        action = position.updatedAt?.let { updated ->
+            {
                 Text(
-                    "${describeSource(position.source)} · ${it.take(10)}",
+                    "${describeSource(position.source)} · ${updated.take(10)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = p.c500,
                 )
             }
-        }
-
-        Text(
-            positionHeadline(position, pageCount),
-            style = MaterialTheme.typography.titleLarge,
-            color = p.cMax,
-        )
+        },
+    ) {
         val complete = position.percent >= 100.0
-        Text(
-            if (complete) "Finished" else "${Math.round(position.percent)}%",
-            style = MaterialTheme.typography.labelMedium,
-            color = p.c300,
-        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                positionHeadline(position, pageCount),
+                style = MaterialTheme.typography.titleLarge,
+                color = p.cMax,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                if (complete) "Finished" else "${Math.round(position.percent)}%",
+                style = MaterialTheme.typography.titleSmall,
+                color = p.c300,
+            )
+        }
         ProgressBar(position.percent.toFloat() / 100f)
 
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -489,26 +468,14 @@ private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: ()
             }
         }
 
-        // The reader opens whenever there is something to read: an attached
-        // text, or a paged primary. The button says what it does.
-        if (hasText || paged) {
-            Button(onClick = onRead, modifier = Modifier.fillMaxWidth()) {
-                Text(if (position.updatedAt == null) "Start reading" else "Continue reading")
-            }
-        }
-
-        // The player opens whenever a designated recording exists; the audio
-        // view of the stored position says whether the tape has been started.
-        if (state.files?.audioEditions?.isNotEmpty() == true) {
-            OutlinedButton(onClick = onListen, modifier = Modifier.fillMaxWidth()) {
-                Text(if (position.audio != null && position.updatedAt != null) "Continue listening" else "Listen")
-            }
-        }
-
         if (!paged) {
             val scannable = copy != null && position.charCount > 0
             if (scannable) {
-                OutlinedButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Scan a page") }
+                OutlinedButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scan a page")
+                }
                 if (entry.startedAt == null) {
                     Text(
                         "Not started — a scan sets your place.",
@@ -535,10 +502,10 @@ private fun PositionPanel(state: BookDetailState, onScan: () -> Unit, onRead: ()
 private fun CoordinateRow(label: String, value: String, hint: String? = null) {
     val p = Backhog.palette
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = p.c500, modifier = Modifier.weight(1f))
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = p.c500, modifier = Modifier.weight(1f))
         Text(
             value,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyMedium,
             color = p.c300,
         )
     }
@@ -552,15 +519,10 @@ private fun CoordinateRow(label: String, value: String, hint: String? = null) {
 @Composable
 private fun SessionsPanel(state: BookDetailState, onAdd: () -> Unit) {
     val p = Backhog.palette
-    Panel {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SectionLabel("Reading log")
-            TextButton(onClick = onAdd) { Text("Log a session") }
-        }
+    DetailSection(
+        "Reading log",
+        action = { TextButton(onClick = onAdd) { Text("Log a session") } },
+    ) {
         if (state.sessions.isEmpty()) {
             Text("Nothing logged yet.", style = MaterialTheme.typography.bodySmall, color = p.c500)
         } else {
@@ -568,19 +530,19 @@ private fun SessionsPanel(state: BookDetailState, onAdd: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         session.playedOn.take(10),
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = p.c500,
-                        modifier = Modifier.width(84.dp),
+                        modifier = Modifier.width(96.dp),
                     )
                     Text(
                         "${session.minutes / 60}h ${session.minutes % 60}m",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = p.c300,
                         modifier = Modifier.width(64.dp),
                     )
                     Text(
                         session.note,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = p.c400,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -631,15 +593,10 @@ private fun CopiesPanel(state: BookDetailState, vm: BookDetailViewModel, onRegis
     val p = Backhog.palette
     val copies = state.copies?.copies ?: return
 
-    Panel {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SectionLabel("On paper")
-            TextButton(onClick = onRegister) { Text("Register a copy") }
-        }
+    DetailSection(
+        "On paper",
+        action = { TextButton(onClick = onRegister) { Text("Register a copy") } },
+    ) {
         if (copies.isEmpty()) {
             Text(
                 "No printings registered. Register the copy you hold and its page numbers turn on.",
@@ -664,7 +621,7 @@ private fun CopyRow(copy: com.collinpendleton.backhog.api.PhysicalCopy, state: B
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     edition?.let { editionLabel(it).ifEmpty { it.id } } ?: copy.editionId,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = p.c200,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -751,7 +708,11 @@ private fun RegisterCopyDialog(state: BookDetailState, vm: BookDetailViewModel, 
         onDismissRequest = onDismiss,
         title = { Text("Register a printing") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Scrolls: eight printings plus the form outgrow a short phone.
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 if (editions.isEmpty()) {
                     Text("No printings on file for this work.")
                 } else {
@@ -780,7 +741,6 @@ private fun RegisterCopyDialog(state: BookDetailState, vm: BookDetailViewModel, 
                         value = dueAt,
                         onValueChange = { dueAt = it },
                         label = "Due back (YYYY-MM-DD, optional)",
-                        keyboardType = KeyboardType.Number,
                     )
                 }
                 Field(value = notes, onValueChange = { notes = it }, label = "Notes (optional)")
@@ -819,11 +779,10 @@ private fun FilesPanel(
     if (files.files.isEmpty() && files.audioEditions.isEmpty()) return
 
     if (!canManageMedia) {
-        Panel {
-            SectionLabel("Attached")
+        DetailSection("Attached") {
             val text = files.files.filter { it.kind == "epub" }
             if (text.isNotEmpty()) {
-                Text("Ebook attached — read it from Where you are.", style = MaterialTheme.typography.bodySmall, color = p.c400)
+                Text("Ebook attached — Read opens it.", style = MaterialTheme.typography.bodySmall, color = p.c400)
             }
             files.audioEditions.forEach { edition ->
                 val badge = buildList {
@@ -833,8 +792,10 @@ private fun FilesPanel(
                     if (edition.degraded) add("durations incomplete")
                     if (edition.missingCount > 0) add("${edition.missingCount} missing")
                 }.joinToString(" · ")
-                Text(edition.label.ifEmpty { "A recording" }, style = MaterialTheme.typography.labelMedium, color = p.c300)
-                Text(badge, style = MaterialTheme.typography.labelSmall, color = p.c500)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(edition.label.ifEmpty { "A recording" }, style = MaterialTheme.typography.bodyMedium, color = p.c300)
+                    Text(badge, style = MaterialTheme.typography.labelSmall, color = p.c500)
+                }
             }
         }
         return
@@ -845,8 +806,7 @@ private fun FilesPanel(
     val current = texts.firstOrNull { it.primaryText }
     val currentEdition = editions.firstOrNull { it.primary }
 
-    Panel {
-        SectionLabel("Files")
+    DetailSection("Files") {
         Text(
             "What this book is read and listened from. Nothing under the NAS mounts is ever written — only these associations.",
             style = MaterialTheme.typography.labelSmall,
@@ -1033,8 +993,7 @@ private fun AlignmentPanel(state: BookDetailState, vm: BookDetailViewModel) {
     val p = Backhog.palette
     val align = state.align
 
-    Panel {
-        SectionLabel("Audio alignment")
+    DetailSection("Audio alignment") {
         Text("The map that lets reading and listening hand off to each other.", style = MaterialTheme.typography.labelSmall, color = p.c500)
 
         when {
@@ -1049,7 +1008,8 @@ private fun AlignmentPanel(state: BookDetailState, vm: BookDetailViewModel) {
                 }
                 Text(label, style = MaterialTheme.typography.titleSmall, color = p.hlBright)
                 if (job.state == "transcribing" || job.state == "aligning") {
-                    ProgressBar((job.progress * 100).toFloat().coerceIn(2f, 100f))
+                    // The bar takes a fraction; a sliver shows even at 0 so it reads as started.
+                    ProgressBar(job.progress.toFloat().coerceIn(0.02f, 1f))
                 }
                 Text(
                     when {
@@ -1115,8 +1075,7 @@ private fun SharePanel(state: BookDetailState, vm: BookDetailViewModel) {
     val p = Backhog.palette
     val candidates = state.shareCandidates
     val sharedCount = candidates.count { it.shared }
-    Panel {
-        SectionLabel("Sharing")
+    DetailSection("Sharing") {
         if (candidates.isEmpty()) {
             Text(
                 "No one else to share with — invites come from the web's admin panel.",
@@ -1136,7 +1095,7 @@ private fun SharePanel(state: BookDetailState, vm: BookDetailViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(candidate.username, style = MaterialTheme.typography.labelMedium, color = p.c200)
+                        Text(candidate.username, style = MaterialTheme.typography.bodyMedium, color = p.c200)
                         if (candidate.inLibrary) {
                             Text("on their shelf", style = MaterialTheme.typography.labelSmall, color = p.c600)
                         }
@@ -1154,7 +1113,7 @@ private fun SharePanel(state: BookDetailState, vm: BookDetailViewModel) {
 
 @Composable
 private fun DangerPanel(vm: BookDetailViewModel, onConfirm: () -> Unit) {
-    OutlinedButton(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) {
+    OutlinedButton(onClick = onConfirm, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Text("Remove from shelf", color = MaterialTheme.colorScheme.error)
     }
 }

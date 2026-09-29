@@ -10,11 +10,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -101,8 +103,8 @@ import kotlinx.serialization.Serializable
 private data class Tab(val route: Any, val label: String, val icon: ImageVector, val arena: Arena?)
 
 private val tabs = listOf(
-    Tab(GamesGraph, "Games", Icons.Filled.PlayArrow, Arena.Games),
-    Tab(BooksGraph, "Books", Icons.Filled.Star, Arena.Books),
+    Tab(GamesGraph, "Games", Icons.Filled.SportsEsports, Arena.Games),
+    Tab(BooksGraph, "Books", Icons.AutoMirrored.Filled.MenuBook, Arena.Books),
     Tab(SettingsRoute, "Settings", Icons.Filled.Settings, null),
 )
 
@@ -140,7 +142,10 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                         onExpand = { openFullPlayer() },
                         onClose = container.player::close,
                     )
-                    NavigationBar(containerColor = p.c900) {
+                    // The reader is full-bleed: the tabs would sit under every page
+                    // turn. The mini player stays — the reader hands off to it.
+                    val reading = entry?.destination?.hasRoute(BookReader::class) == true
+                    if (!reading) NavigationBar(containerColor = p.c900) {
                         tabs.forEach { tab ->
                             val selected = entry?.destination?.hierarchy?.any { it.hasRoute(tab.route::class) } == true
                             NavigationBarItem(
@@ -165,6 +170,11 @@ fun Shell(container: AppContainer, user: User, baseUrl: String, startArena: Aren
                                 ),
                             )
                         }
+                    } else {
+                        // What the bar would have kept clear: the system's gesture strip.
+                        androidx.compose.foundation.layout.Spacer(
+                            Modifier.windowInsetsBottomHeight(androidx.compose.foundation.layout.WindowInsets.navigationBars),
+                        )
                     }
                 }
         },

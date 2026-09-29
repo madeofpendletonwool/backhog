@@ -88,10 +88,10 @@ fun ListDetailScreen(
     val ui by vm.state.collectAsStateWithLifecycle()
     val p = Backhog.palette
 
-    if (ui.deleted) {
-        onRemoved()
-        return
-    }
+    // Navigating is a side effect: from composition it fires on every
+    // recomposition until the screen leaves, popping more than this page.
+    androidx.compose.runtime.LaunchedEffect(ui.deleted) { if (ui.deleted) onRemoved() }
+    if (ui.deleted) return
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(

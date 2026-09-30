@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/collinpendleton/backhog/api/internal/backfill"
+	"github.com/collinpendleton/backhog/api/internal/books/searchindex"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
 	apihttp "github.com/collinpendleton/backhog/api/internal/http"
@@ -130,6 +131,14 @@ func run() error {
 		slog.Info("media library scanning disabled (MEDIA_DIR not set)")
 	}
 
+	// The library text search walks primary texts into the FTS index, a
+	// bounded lap per boot — parsing what was never parsed, indexing what
+	// a crash or an upgrade left behind.
+	textIndex, err := searchindex.NewRunner(st, cfg.EpubTextDir)
+	if err != nil {
+		slog.Warn("library text index unavailable", "error", err)
+	}
+
 	server := apihttp.NewServer(cfg, st, provider, books, covers, steam, seriesBackfill, mediaScan)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
@@ -152,6 +161,15 @@ func run() error {
 			slog.Warn("startup media scan", "error", err)
 		}
 	}()
+	if textIndex != nil {
+		go func() {
+			if n, err := textIndex.Run(ctx, searchindex.StartupCap); err != nil {
+				slog.Warn("startup text index walk", "error", err)
+			} else if n > 0 {
+				slog.Info("library text index walk", "indexed", n)
+			}
+		}()
+	}
 
 	errc := make(chan error, 1)
 	go func() {

@@ -803,6 +803,59 @@ The mechanics, in `api/internal/books/search/`:
   TTL cache for the same reason; every endpoint that reads or writes a real
   position still loads them fresh.
 
+### The whole shelf at once: library-wide search
+
+`GET /api/books/search/text?q=` is the in-book search pointed at the
+library: one remembered phrase, every book the caller can read, ranked.
+The same dialog pattern serves it in the app (the shelf's "search inside
+your books" button), and the MCP `search_library` tool is this endpoint
+verbatim — it is the deterministic half of the knowledge layer (MAD-470).
+
+- **Finding is FTS5's job; placing is the in-book machinery's.** A
+  `book_text_fts` table holds one row per chapter (the canonical text
+  sliced by `epub_chapters`' exact partition), and a query runs twice
+  over it — the folded query as a phrase, then, only when no book
+  contains the phrase, the terms in any order — which is the in-book
+  search's two tiers decided one shelf-sized step earlier. Each
+  candidate book is then searched by the *same* `Searcher` the in-book
+  endpoint uses, so every hit carries the same chapter, percent, prose
+  snippet and peek deep link, plus the book it came from. The
+  tokenizer keeps diacritics (`remove_diacritics 0`) so the index's
+  notion of a match is exactly the canonical text's; CJK runs are
+  space-separated on the way in (and in the query) so a remembered
+  fragment of Japanese prose matches as a phrase.
+- **Why FTS5 here and not in-book.** The in-book search's objection was
+  writes queueing behind a keystroke path. This table is written on
+  ingest and re-parse and healed by a bounded startup walk
+  (`internal/books/searchindex`, the series-backfill pattern with a
+  rotating cursor so an unparseable file can't wedge the queue's head);
+  a search never writes a byte. At shelf scale, iterating every
+  canonical text per keystroke is the thing that doesn't scale, and the
+  index is the honest fix.
+- **Maintenance is three hooks.** `EnsureForMediaFile` indexes after the
+  companion files land (and heals a current parse with missing rows);
+  `DetachMediaFile` drops the file's rows in its own transaction; the
+  startup walk parses-or-indexes whatever an upgrade or a crash left
+  behind, a bounded lap per boot.
+- **The clamp is the default, for everyone.** Unlike the per-book read
+  paths — where cookie sessions keep today's behavior because the
+  in-app reader *moves* the position — this endpoint has no legacy to
+  preserve, so `until=position` is the default for cookie and token
+  callers alike. Hits past the caller's position in a book they're
+  reading are dropped before the answer is built (the same per-book
+  bound the read paths resolve); a book whose every hit is withheld —
+  including a book never opened — answers in `matched_beyond` as a
+  title and nothing more. `unread=hits` shows hits from never-opened
+  books without lifting the clamp on the ones in progress;
+  `until=none` is the loud opt-in that lifts everything.
+- **Scope is the file rule, nothing looser.** Candidates resolve through
+  the caller's own library entry plus `fileAccessRule` — the same
+  ownership/share decision every file-backed path makes — so another
+  account's unshared book does not answer, indistinguishably from a
+  book that never matched. The leak bar is the same fixture's: a
+  position before the mid-book reveal, and the marshalled whole body
+  proven free of it.
+
 ### The second corpus: OCR lettering search
 
 A comic or picture book has no canonical text — that is the paged model's
@@ -961,6 +1014,7 @@ handoff degrades, by asking the user to say where they were.
 | `POST/GET/DELETE /api/books/{entryID}/align` | alignment enqueue / status / delete |
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
 | `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode — or, on a paged book, page targets from the lettering corpus |
+| `GET /api/books/search/text` | library-wide text search (FTS5 over chapter text); position-clamped by default, `until=none` opts in |
 | `POST/GET/DELETE /api/books/{entryID}/ocr` | lettering enqueue / status / clear — the search-only second corpus for paged books |
 | `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages`, `POST …/copies/{copyID}/seed-from-pdf` | physical copies (owned + borrowed) + page anchors (scanned, pinned, or seeded from a text-native PDF) |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |

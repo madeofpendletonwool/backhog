@@ -1396,6 +1396,47 @@ export interface BookSearchResultsPage {
 export type BookSearchAny = BookSearchResults | BookSearchResultsPage;
 
 /**
+ * One hit of a library-wide text search: a placed passage plus the book it
+ * came from, with the peek link that jumps a reader to it without moving
+ * their saved position.
+ */
+export interface LibrarySearchHit {
+  book_id: string;
+  title: string;
+  chapter: PositionChapter | null;
+  /** The match as the book prints it, split for highlighting. */
+  snippet: { before: string; passage: string; after: string };
+  char_start: number;
+  char_end: number;
+  percent: number;
+  deep_link: string;
+}
+
+/** A book the search matched but would not show — title only, by the clamp. */
+export interface LibraryBeyondBook {
+  book_id: string;
+  title: string;
+}
+
+/**
+ * GET /api/books/search/text?q= — the passages of the whole shelf matching
+ * a query. The default clamp is the reader's own positions: hits past where
+ * they are are suppressed, and books with nothing readable to show answer
+ * in matched_beyond as titles alone.
+ */
+export interface LibrarySearchResults {
+  query: string;
+  mode: "phrase" | "loose";
+  /** Hits within what the clamp allowed — never a census of the shelf. */
+  total: number;
+  truncated: boolean;
+  results: LibrarySearchHit[];
+  /** Books that matched beyond the position; titles only, not counted in total. */
+  matched_beyond: LibraryBeyondBook[];
+  bound: { until: string; char_offset: number; chapter: PositionChapter | null; percent: number };
+}
+
+/**
  * The lettering corpus one OCR pass produced, with its honesty pair:
  * coverage (the share of pages that yielded any lettering) and the mean
  * confidence tesseract held while reading. `low_confidence` is a usable

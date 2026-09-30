@@ -5,6 +5,7 @@ import { useOutletContext, useSearchParams } from "react-router-dom";
 import { BookCard, BookCardSkeleton } from "@/components/BookCard";
 import { BookStatsStrip } from "@/components/BookStatsStrip";
 import { BookTable } from "@/components/BookTable";
+import { SearchLibraryDialog } from "@/components/SearchLibraryDialog";
 import { SelectionBar } from "@/components/SelectionBar";
 import { Gi } from "@/components/ui/Gi";
 import { Button, EmptyState, Input, Select } from "@/components/ui/primitives";
@@ -40,6 +41,7 @@ export function BookLibraryPage() {
   const [view, setView] = usePersistentState<"grid" | "table">("backhog:books:view", "grid");
   const [search, setSearch] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [insideOpen, setInsideOpen] = useState(false);
 
   /* Deep links into the shelf — the author and subject links in the
      full-screen player, above all. The filters themselves stay where they
@@ -108,6 +110,7 @@ export function BookLibraryPage() {
 
   return (
     <div className={cn("mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8", selection.active && "pb-28")}>
+      <SearchLibraryDialog open={insideOpen} onClose={() => setInsideOpen(false)} />
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-ink-100">Shelf</h1>
         <p className="mt-1 text-sm text-ink-400">
@@ -155,6 +158,19 @@ export function BookLibraryPage() {
               className="w-44 pl-9 sm:w-56"
             />
           </div>
+
+          {/* Search inside the books, not the shelf: the metadata filter
+              beside it names books, this one finds words in them — across
+              every book at once, clamped to what has actually been read. */}
+          <Button
+            size="icon"
+            variant={insideOpen ? "primary" : "secondary"}
+            onClick={() => setInsideOpen(true)}
+            aria-label="Search inside your books"
+            title="Search inside your books"
+          >
+            <Gi name="bookshelf" className="size-4" />
+          </Button>
 
           <Button
             size="icon"

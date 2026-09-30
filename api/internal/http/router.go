@@ -174,6 +174,12 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/games/{gameID}/series", s.handleGameSeries)
 
 			r.Get("/books/search", s.handleBookSearch)
+			// Search inside every book at once (MAD-470): FTS over the
+			// canonical chapter text names the books, the in-book machinery
+			// places the hits, and the reading-position clamp — the default
+			// for every caller here — keeps what has not been read out of
+			// the answer unless it is asked for out loud.
+			r.Get("/books/search/text", s.handleSearchLibraryText)
 			r.Get("/books/isbn/{isbn}", s.handleBookByISBN)
 			r.Get("/books/{bookID}", s.handleGetBook)
 

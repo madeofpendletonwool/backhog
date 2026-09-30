@@ -343,6 +343,14 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	// The library search index is keyed by media file for exactly this
+	// moment: a detached file's chapter rows must stop matching library
+	// queries the same breath the file stops resolving, or a search would
+	// keep proposing a book its own endpoints now refuse.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM book_text_fts WHERE media_file_id = ?`, fileID); err != nil {
+		return err
+	}
 	if kind.String == models.MediaFileAudio {
 		if err := promoteAudioAfterDetachTx(ctx, tx, bookID, beforeTape); err != nil {
 			return err

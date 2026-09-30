@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -103,6 +104,15 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 		if existing.ParserVersion == ParserVersion &&
 			fileExists(ing.TextPath(existing.ID)) && fileExists(ing.IndexPath(existing.ID)) &&
 			fileExists(ing.DisplayPath(existing.ID)) {
+			// The parse is current, but the library search index may not
+			// be — an upgrade to the FTS era, or a crash between the
+			// companion writes and the index write. Healing it here keeps
+			// EnsureForMediaFile the one choke point a book's text
+			// currency passes through, which is what lets the index walk
+			// be a thin loop over this same call.
+			if indexed, err := ing.store.BookTextIndexed(ctx, f.ID); err == nil && !indexed {
+				ing.indexChapters(ctx, f, existing)
+			}
 			return existing, nil
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -168,7 +178,34 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 	if err := writeJSONAtomic(ing.IndexPath(et.ID), index); err != nil {
 		return models.EpubText{}, err
 	}
+	// The library search index is a best-effort tail on the parse: the
+	// book is readable without it, so a failure logs and moves on — the
+	// index walk's next pass re-indexes from the companions that did land.
+	ing.indexChapters(ctx, f, et)
 	return et, nil
+}
+
+// indexChapters writes a book's canonical chapter text into the FTS table.
+// It never fails the caller: a book missing from library search is an
+// honest gap the walk heals, while a book that cannot be read at all is a
+// real error — and this is only ever the former.
+func (ing *Ingester) indexChapters(ctx context.Context, f models.MediaFile, et models.EpubText) {
+	if f.BookID == nil || *f.BookID == "" {
+		return
+	}
+	chapters, err := ing.store.ListEpubChapters(ctx, et.ID)
+	if err != nil {
+		slog.WarnContext(ctx, "library search index: list chapters", "file", f.ID, "error", err)
+		return
+	}
+	data, err := os.ReadFile(ing.TextPath(et.ID))
+	if err != nil {
+		slog.WarnContext(ctx, "library search index: read text", "file", f.ID, "error", err)
+		return
+	}
+	if err := ing.store.ReplaceBookTextIndex(ctx, *f.BookID, f.ID, chapters, string(data)); err != nil {
+		slog.WarnContext(ctx, "library search index: write", "file", f.ID, "error", err)
+	}
 }
 
 // ReadText returns the canonical text slice [from, to) as byte offsets.

@@ -28,6 +28,7 @@ import type {
   PDFSeedInfo,
   PDFSeedResult,
   BookSearchAny,
+  LibrarySearchResults,
   OCRJobView,
   OCRStatusView,
   PhysicalCopy,
@@ -641,6 +642,24 @@ export const api = {
     request<BookSearchAny>(
       `/books/${entryId}/search?q=${encodeURIComponent(q)}`,
       { signal },
+    ),
+
+  /**
+   * Search inside every book on the shelf. Defaults to the reading-position
+   * clamp — unread and unread-past books answer as titles in
+   * matched_beyond; `until=none` is the explicit spoilers opt-in, and
+   * `unread=hits` shows hits from never-opened books without lifting the
+   * clamp on the ones in progress.
+   */
+  searchLibrary: (
+    q: string,
+    opts?: { untilNone?: boolean; unreadHits?: boolean; signal?: AbortSignal },
+  ) =>
+    request<LibrarySearchResults>(
+      `/books/search/text?q=${encodeURIComponent(q)}` +
+        (opts?.untilNone ? "&until=none" : "") +
+        (opts?.unreadHits ? "&unread=hits" : ""),
+      { signal: opts?.signal },
     ),
 
   /** Where a paged book's lettering stands: its job, its corpus, its worker. */

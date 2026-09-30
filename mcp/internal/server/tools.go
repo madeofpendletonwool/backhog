@@ -471,7 +471,12 @@ type searchLibraryOut struct {
 	Query string          `json:"query"`
 	Total int             `json:"total"`
 	Hits  []libraryHitOut `json:"hits"`
-	Bound backhog.Bound   `json:"bound"`
+	// Books that matched with every hit withheld by the spoiler clamp —
+	// titles only. Tell the user these books contain the phrase but say
+	// nothing about where; that is the honest "the library knows, you
+	// haven't read that far yet".
+	MatchedBeyond []backhog.LibraryBeyondBook `json:"matched_beyond,omitempty"`
+	Bound         backhog.Bound               `json:"bound"`
 }
 
 func addSearchLibrary(srv *mcp.Server, c *backhog.Client, link *linker) {
@@ -504,6 +509,7 @@ func addSearchLibrary(srv *mcp.Server, c *backhog.Client, link *linker) {
 				CharStart: h.CharStart, CharEnd: h.CharEnd, DeepLink: link.relative(h.DeepLink),
 			})
 		}
+		out.MatchedBeyond = res.MatchedBeyond
 		return nil, out, nil
 	})
 }

@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"strconv"
+	"strings"
 
 	"github.com/collinpendleton/backhog/api/internal/models"
 )
@@ -92,4 +95,33 @@ func (s *Store) SaveSettings(ctx context.Context, in models.ServerSettings) (mod
 		return models.ServerSettings{}, err
 	}
 	return in, nil
+}
+
+// AppSettingInt reads one settings row as an integer. A missing or
+// unparseable row is 0 — the honest starting position for a cursor, and
+// nothing else should be reading ints from this table.
+func (s *Store) AppSettingInt(ctx context.Context, key string) (int64, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	return n, nil
+}
+
+// SetAppSetting upserts one settings row — internal bookkeeping keys the
+// admin panel never renders.
+func (s *Store) SetAppSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO app_settings (key, value, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE
+		  SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+		key, value)
+	return err
 }

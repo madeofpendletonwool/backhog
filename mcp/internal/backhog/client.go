@@ -355,11 +355,23 @@ type LibrarySearchHit struct {
 	DeepLink  string      `json:"deep_link"`
 }
 
+// LibraryBeyondBook is a book the library search matched but would not
+// show: every hit sits past the user's reading position, or the book was
+// never opened. The title is the whole answer — where in the book, and
+// what it says there, is exactly what the clamp holds back.
+type LibraryBeyondBook struct {
+	BookID string `json:"book_id"`
+	Title  string `json:"title"`
+}
+
 type librarySearchResponse struct {
 	Query   string             `json:"query"`
 	Total   int                `json:"total"`
 	Results []LibrarySearchHit `json:"results"`
-	Bound   Bound              `json:"bound"`
+	// MatchedBeyond is present on backhogs with the endpoint; absent
+	// (nil) on ones that predate it.
+	MatchedBeyond []LibraryBeyondBook `json:"matched_beyond"`
+	Bound         Bound               `json:"bound"`
 }
 
 // SearchLibrary searches every book the caller can read (MAD-470). On a

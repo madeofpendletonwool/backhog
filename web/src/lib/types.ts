@@ -1393,6 +1393,49 @@ export interface BookSearchResultsPage {
   corpus: OCRCorpusView;
 }
 
+/**
+ * One name in a book's index (MAD-670): how many times it has come up in
+ * what the reader may read, where it first did, and whether this reader
+ * has hidden it as a false positive. A name first appearing past the
+ * reading position simply does not exist yet — the index's spoiler clamp,
+ * the same rule every read path speaks.
+ */
+export interface BookNameEntry {
+  name: string;
+  mentions: number;
+  first_seen: {
+    char_start: number;
+    chapter: PositionChapter | null;
+    percent: number;
+    deep_link: string;
+  };
+  hidden: boolean;
+}
+
+/** GET /api/books/{entryId}/names — the index, alphabetical like a book's own. */
+export interface BookNames {
+  names: BookNameEntry[];
+  bound: { until: string; char_offset: number; chapter: PositionChapter | null; percent: number };
+}
+
+/** One occurrence of a name: where it is, as the book prints it, and the
+ *  peek link that lands a reader on it. */
+export interface BookNameMention {
+  char_offset: number;
+  char_end: number;
+  snippet: { before: string; passage: string; after: string };
+  chapter: PositionChapter | null;
+  deep_link: string;
+}
+
+/** GET /api/books/{entryId}/mentions?name= — every mention so far. */
+export interface BookNameMentions {
+  name: string;
+  total: number;
+  results: BookNameMention[];
+  bound: { until: string; char_offset: number; chapter: PositionChapter | null; percent: number };
+}
+
 export type BookSearchAny = BookSearchResults | BookSearchResultsPage;
 
 /**

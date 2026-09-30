@@ -856,6 +856,50 @@ verbatim — it is the deterministic half of the knowledge layer (MAD-470).
   position before the mid-book reveal, and the marshalled whole body
   proven free of it.
 
+### The name index: who have I met so far? (MAD-670)
+
+`GET /api/books/{entryID}/names` and `GET /api/books/{entryID}/mentions?name=`
+are the classic back-of-the-book index, built deterministically on ingest —
+no model, just heuristics over the display text whose answers are canonical
+offsets. The MCP `find_mentions` tool is the mentions endpoint verbatim.
+
+- **The extractor is capitalization, walked in two spaces.** The signal
+  lives in the display text (the canonical text is folded to lowercase),
+  but every offset the arena stores is canonical — so `ExtractNames`
+  (`api/internal/books/names.go`) walks block by block, field by field,
+  accumulating the canonical bytes each display field contributes, and
+  turns any display range into its canonical range exactly. Candidates
+  are capitalized runs not at a sentence start; honorifics ("Mrs.")
+  open a run but drop from its identity, so "Mrs Norris" and "Norris"
+  are one entry; lowercase particles ("of", "de") glue multi-word names;
+  possessives fold back onto their name; a stop-list and a
+  frequency floor (two sightings) keep chapter apparatus, shouting and
+  one-off noise out. A name that opens sentences still indexes: one
+  confident mid-sentence sighting promotes the key book-wide, while a
+  capitalized word that only ever opens sentences never promotes on its
+  own — that is the shape of every common word in the language.
+- **The clamp is the point.** Both endpoints default `until=position`
+  for cookie and token callers alike (the library search's rule — an
+  index consulted mid-book asks about the book *so far*): a name first
+  appearing past the reading position does not exist yet. The acceptance
+  test is exactly that: a character introduced in chapter five is
+  absent at a chapter-three position and present, first mention
+  correctly in chapter five, once the reader reaches chapter six.
+- **False positives are the reader's to hide.** `hidden_book_names`
+  stores the verdict per user per book (folded key); hiding never
+  regenerates, and hidden names come back flagged `hidden` rather than
+  vanishing, so the call is reversible in place. The hide/unhide POSTs
+  are cookie-only — the token write gate holds, because the index is
+  the reader's own surface.
+- **Maintenance rides the search-index walk.** Occurrences live in
+  `name_occurrences` keyed by media file (the FTS table's rule);
+  currency is `epub_texts.names_version`, reset by a re-parse and
+  stamped by the same write that lands the rows — a book whose
+  heuristics find no names is legitimately empty, not unindexed. The
+  candidates query's fourth arm sends stale books through the same
+  `EnsureForMediaFile` choke point; detach drops the rows beside the
+  FTS ones.
+
 ### The second corpus: OCR lettering search
 
 A comic or picture book has no canonical text — that is the paged model's
@@ -1015,6 +1059,7 @@ handoff degrades, by asking the user to say where they were.
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
 | `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode — or, on a paged book, page targets from the lettering corpus |
 | `GET /api/books/search/text` | library-wide text search (FTS5 over chapter text); position-clamped by default, `until=none` opts in |
+| `GET /api/books/{entryID}/names`, `GET …/mentions?name=` | the name index (MAD-670): names met so far + a name's mentions, position-clamped by default; `POST …/names/hide\|/unhide` curates false positives (cookie-only) |
 | `POST/GET/DELETE /api/books/{entryID}/ocr` | lettering enqueue / status / clear — the search-only second corpus for paged books |
 | `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages`, `POST …/copies/{copyID}/seed-from-pdf` | physical copies (owned + borrowed) + page anchors (scanned, pinned, or seeded from a text-native PDF) |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |

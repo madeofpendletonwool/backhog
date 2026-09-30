@@ -253,7 +253,7 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
   const [stored, setPrefs] = usePersistentState<ReaderPrefs>("backhog:reader", DEFAULT_PREFS);
   const prefs = migratePrefs(stored);
   const { theme } = useTheme();
-  const [panel, setPanel] = useState<"none" | "contents" | "type">("none");
+  const [panel, setPanel] = useState<"none" | "contents" | "type" | "index">("none");
   const [searchOpen, setSearchOpen] = useState(false);
 
   // Two kinds of arrival land here as ?offset=N: the player's handoff
@@ -860,6 +860,15 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
             icon="list-tree"
             onClick={() => setPanel(panel === "contents" ? "none" : "contents")}
           />
+          {searchable && (
+            <ToolbarButton
+              surface={surface}
+              active={panel === "index"}
+              label="Names so far"
+              icon="family-tree"
+              onClick={() => setPanel(panel === "index" ? "none" : "index")}
+            />
+          )}
           <ToolbarButton
             surface={surface}
             active={panel === "type"}
@@ -952,6 +961,17 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
             current={spine}
             surface={surface}
             onPick={goToChapter}
+          />
+        )}
+        {panel === "index" && (
+          <NameIndex
+            entry={entry}
+            surface={surface}
+            onPeek={(offset) => {
+              // The same arrival a search hit uses: a peek never becomes
+              // "where you are", which is what a mention jump must be.
+              setSearchParams({ offset: String(offset), peek: "1" }, { replace: true });
+            }}
           />
         )}
         {panel === "type" && <TypeControls prefs={prefs} onChange={setPrefs} surface={surface} />}
@@ -1620,7 +1640,7 @@ function ToolbarButton({
   surface: Surface;
   active: boolean;
   label: string;
-  icon: "list-tree" | "sliders" | "search";
+  icon: "list-tree" | "sliders" | "search" | "family-tree";
   onClick: () => void;
 }) {
   return (
@@ -1710,6 +1730,186 @@ function Contents({
         </button>
       ))}
     </nav>
+  );
+}
+
+/**
+ * The name index (MAD-670): the back-of-the-book listing, clamped to the
+ * reading position — "names seen so far", not names the book will
+ * eventually introduce. A tap opens every mention; a mention taps through
+ * as a peek, the same arrival a search hit uses, so looking a character up
+ * never moves the place reading has earned.
+ *
+ * The index is heuristics, not truth: a false positive is the reader's to
+ * hide (stored, never regenerated), and a hidden name stays here — dimmed,
+ * reversible — rather than vanishing, because a wrong call should be
+ * undoable in place.
+ */
+function NameIndex({
+  entry,
+  surface,
+  onPeek,
+}: {
+  entry: BookEntry;
+  surface: Surface;
+  onPeek: (offset: number) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState<string | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["bookNames", entry.id],
+    queryFn: () => api.bookNames(entry.id),
+    staleTime: 30_000,
+  });
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["bookNames", entry.id] });
+  const hide = useMutation({
+    mutationFn: (name: string) => api.hideBookName(entry.id, name),
+    onSuccess: refresh,
+  });
+  const unhide = useMutation({
+    mutationFn: (name: string) => api.unhideBookName(entry.id, name),
+    onSuccess: refresh,
+  });
+
+  const names = data?.names ?? [];
+  const visible = names.filter((n) => !n.hidden);
+  const hidden = names.filter((n) => n.hidden);
+
+  return (
+    <div
+      className="mx-auto max-h-[60vh] max-w-5xl overflow-y-auto border-t px-4 py-2 sm:px-6"
+      style={{ borderColor: surface.rule, color: surface.muted }}
+    >
+      {isLoading ? (
+        <p className="px-1 py-2 text-sm">Reading the index…</p>
+      ) : visible.length === 0 && hidden.length === 0 ? (
+        <p className="px-1 py-2 text-sm leading-relaxed">
+          No names yet — the index grows with what you&rsquo;ve read.
+        </p>
+      ) : (
+        <>
+          <p className="px-1 pb-2 pt-1 text-xs leading-relaxed">
+            {visible.length === 1
+              ? "One name met so far."
+              : `${visible.length} names met so far.`}
+          </p>
+          <ul>
+            {visible.map((name) => (
+              <li key={name.name}>
+                <div className="group/name flex items-baseline gap-2 rounded-lg py-1.5 pr-1 text-left text-sm transition-opacity hover:opacity-80 focus-visible:focus-ring">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(open === name.name ? null : name.name)}
+                    className="flex min-w-0 flex-1 items-baseline gap-2 text-left focus-visible:focus-ring"
+                  >
+                    <span className="min-w-0 truncate" style={{ color: surface.fg }}>
+                      {name.name}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums">
+                      {name.mentions === 1 ? "once" : `${name.mentions}×`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Hide ${name.name} from the index`}
+                    title="Not a name? Hide it"
+                    onClick={() => hide.mutate(name.name)}
+                    className="shrink-0 rounded-lg p-1 text-xs opacity-0 transition-opacity focus-visible:focus-ring group-hover/name:opacity-70 hover:!opacity-100"
+                  >
+                    <Gi name="ban" className="size-3.5" />
+                  </button>
+                </div>
+                {open === name.name && (
+                  <NameMentions entry={entry} surface={surface} name={name.name} onPeek={onPeek} />
+                )}
+              </li>
+            ))}
+          </ul>
+          {hidden.length > 0 && (
+            <div className="mt-1 border-t pt-1" style={{ borderColor: surface.rule }}>
+              <button
+                type="button"
+                onClick={() => setShowHidden(!showHidden)}
+                className="rounded-lg px-1 py-1.5 text-xs transition-opacity hover:opacity-70 focus-visible:focus-ring"
+              >
+                {showHidden ? "Hide" : "Show"} {hidden.length} hidden{" "}
+                {hidden.length === 1 ? "name" : "names"}
+              </button>
+              {showHidden && (
+                <ul>
+                  {hidden.map((name) => (
+                    <li key={name.name} className="flex items-baseline gap-2 py-1 text-sm">
+                      <span className="min-w-0 flex-1 truncate opacity-50">{name.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => unhide.mutate(name.name)}
+                        className="shrink-0 text-xs transition-opacity hover:opacity-70 focus-visible:focus-ring"
+                      >
+                        restore
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Every mention of one name so far: chapter and snippet, tap to peek. */
+function NameMentions({
+  entry,
+  surface,
+  name,
+  onPeek,
+}: {
+  entry: BookEntry;
+  surface: Surface;
+  name: string;
+  onPeek: (offset: number) => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["bookMentions", entry.id, name],
+    queryFn: () => api.bookMentions(entry.id, name),
+    staleTime: 30_000,
+  });
+
+  if (isLoading) {
+    return <p className="py-2 pl-4 text-xs">Looking up {name}…</p>;
+  }
+  const mentions = data?.results ?? [];
+  if (mentions.length === 0) {
+    return <p className="py-2 pl-4 text-xs">No mentions so far.</p>;
+  }
+  return (
+    <ul className="mb-2 space-y-1 pl-2">
+      {mentions.map((mention) => (
+        <li key={`${mention.char_offset}-${mention.char_end}`}>
+          <button
+            type="button"
+            onClick={() => onPeek(mention.char_offset)}
+            className="w-full rounded-xl p-2 text-left transition-colors hover:bg-black/5 focus-visible:focus-ring"
+          >
+            <div className="flex items-center gap-2 text-[11px]" style={{ color: surface.muted }}>
+              <span className="truncate">
+                {mention.chapter ? chapterTitle(mention.chapter) : "This book"}
+              </span>
+            </div>
+            <p className="mt-1 text-sm leading-relaxed" style={{ color: surface.muted }}>
+              {mention.snippet.before}
+              <mark style={{ color: surface.fg }}>{mention.snippet.passage}</mark>
+              {mention.snippet.after}
+            </p>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

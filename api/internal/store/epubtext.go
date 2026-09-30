@@ -15,11 +15,12 @@ func (s *Store) GetEpubText(ctx context.Context, mediaFileID int64) (models.Epub
 	var et models.EpubText
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, media_file_id, char_count, word_count, normalized_sha256,
-		       parsed_at, parser_version, toc_source, toc_entries, toc_error
+		       parsed_at, parser_version, toc_source, toc_entries, toc_error,
+		       names_version
 		FROM epub_texts WHERE media_file_id = ?`, mediaFileID).
 		Scan(&et.ID, &et.MediaFileID, &et.CharCount, &et.WordCount,
 			&et.NormalizedSHA256, &et.ParsedAt, &et.ParserVersion,
-			&et.TOCSource, &et.TOCEntries, &et.TOCError)
+			&et.TOCSource, &et.TOCEntries, &et.TOCError, &et.NamesVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return et, ErrNotFound
 	}
@@ -67,7 +68,8 @@ func (s *Store) ReplaceEpubText(ctx context.Context, et models.EpubText, chapter
 			parser_version    = excluded.parser_version,
 			toc_source        = excluded.toc_source,
 			toc_entries       = excluded.toc_entries,
-			toc_error         = excluded.toc_error`,
+			toc_error         = excluded.toc_error,
+			names_version     = ''`,
 		et.ID, et.MediaFileID, et.CharCount, et.WordCount,
 		et.NormalizedSHA256, et.ParsedAt, et.ParserVersion,
 		et.TOCSource, et.TOCEntries, et.TOCError); err != nil {

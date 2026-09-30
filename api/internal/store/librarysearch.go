@@ -215,8 +215,12 @@ func (s *Store) LibrarySearchScope(ctx context.Context, userID string, bookIDs [
 
 // BookTextIndexCandidates lists primary text files whose book is not fully
 // indexed: never parsed, parsed under a parser version that has since moved
-// (the re-parse itself still to run), or parsed and current but missing FTS
-// rows. Files the PDF gate already ruled image-native are excluded — they
+// (the re-parse itself still to run), parsed and current but missing FTS
+// rows, or current on both while the name index (MAD-670) never ran — a
+// fresh install of the extractor era, or a crash between the companion
+// writes and the index write. One walk heals all of it, because
+// EnsureForMediaFile is the single choke point that decides currency.
+// Files the PDF gate already ruled image-native are excluded — they
 // will never produce a canonical text, and their lettering is the OCR
 // corpus's domain, not this one. Ordered by id past the cursor so a bounded
 // walk rotates through the backlog instead of retrying its head forever.
@@ -234,6 +238,8 @@ func (s *Store) BookTextIndexCandidates(ctx context.Context, parserVersion strin
 		  	OR EXISTS (SELECT 1 FROM epub_texts et
 			             WHERE et.media_file_id = mf.id AND et.parser_version <> ?)
 		  	OR NOT EXISTS (SELECT 1 FROM book_text_fts f WHERE f.media_file_id = mf.id)
+		  	OR NOT EXISTS (SELECT 1 FROM epub_texts et
+			               WHERE et.media_file_id = mf.id AND et.names_version <> '')
 		  )
 		ORDER BY mf.id
 		LIMIT ?`, cursor, parserVersion, limit)

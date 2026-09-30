@@ -1151,6 +1151,25 @@ type EpubText struct {
 	TOCSource  string `json:"toc_source"`
 	TOCEntries int    `json:"toc_entries"`
 	TOCError   string `json:"toc_error"`
+	// NamesVersion is the name-index extractor that has run over this
+	// parse: empty until one has, so a book whose heuristics find no names
+	// at all is not forever mistaken for an unindexed one. A re-parse
+	// resets it — the old pass's offsets died with the text they addressed.
+	NamesVersion string `json:"names_version"`
+}
+
+// NameOccurrence is one appearance of a candidate proper name in a book's
+// canonical text: where it starts, where it ends, and the two forms of the
+// name itself. Name is the folded identity key (Normalize of Display), so
+// "Elizabeth" and "ELIZABETH" are one name with one row set; Display keeps
+// the book's own capitals for the index list. The offsets are canonical
+// bytes — the same address space every deep link, snippet and clamp speaks.
+type NameOccurrence struct {
+	MediaFileID int64  `json:"media_file_id"`
+	Name        string `json:"name"`
+	Display     string `json:"display"`
+	CharStart   int    `json:"char_start"`
+	CharEnd     int    `json:"char_end"`
 }
 
 // EpubChapter is one chapter of a canonical text, in reading order: a run
@@ -1556,7 +1575,7 @@ type TranscriptSegment struct {
 	AlignmentID string  `json:"-"`
 	AudioStart  float64 `json:"audio_start"`
 	AudioEnd    float64 `json:"audio_end"`
-	Text        string `json:"text"`
+	Text        string  `json:"text"`
 }
 
 // OCR lettering search states. The pipeline positions mirror the alignment
@@ -1598,23 +1617,23 @@ func OCRJobTerminal(state string) bool {
 // honesty pair, computed by the API from the corpus at completion: how much
 // of the book's lettering was read, and how much the reader believed itself.
 type OCRJob struct {
-	ID             string `json:"id"`
-	EntryID        string `json:"entry_id"`
-	MediaFileID    int64  `json:"media_file_id"`
-	ParserVersion  string `json:"-"`
-	State          string `json:"state"`
-	Progress       float64 `json:"progress"`
-	StageDetail    string `json:"stage_detail"`
-	Error          *string `json:"error,omitempty"`
-	Coverage       float64 `json:"coverage"`
-	MeanConfidence float64 `json:"mean_confidence"`
-	Model          string `json:"model"`
-	Attempts       int     `json:"attempts"`
-	ClaimedBy      *string `json:"claimed_by,omitempty"`
+	ID             string     `json:"id"`
+	EntryID        string     `json:"entry_id"`
+	MediaFileID    int64      `json:"media_file_id"`
+	ParserVersion  string     `json:"-"`
+	State          string     `json:"state"`
+	Progress       float64    `json:"progress"`
+	StageDetail    string     `json:"stage_detail"`
+	Error          *string    `json:"error,omitempty"`
+	Coverage       float64    `json:"coverage"`
+	MeanConfidence float64    `json:"mean_confidence"`
+	Model          string     `json:"model"`
+	Attempts       int        `json:"attempts"`
+	ClaimedBy      *string    `json:"claimed_by,omitempty"`
 	ClaimedAt      *time.Time `json:"claimed_at,omitempty"`
 	HeartbeatAt    *time.Time `json:"heartbeat_at,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // OCRPage is one page of the search-only lettering corpus: the worker's raw
@@ -1623,11 +1642,11 @@ type OCRJob struct {
 // the companion filenames; the API converts to the 0-based page axis where
 // positions live.
 type OCRPage struct {
-	PageNumber     int     `json:"page_number"`
-	ImageSHA256    string  `json:"image_sha256"`
-	OCRVersion     string  `json:"-"`
-	Text           string  `json:"text"`
-	MeanConfidence float64 `json:"mean_confidence"`
+	PageNumber     int       `json:"page_number"`
+	ImageSHA256    string    `json:"image_sha256"`
+	OCRVersion     string    `json:"-"`
+	Text           string    `json:"text"`
+	MeanConfidence float64   `json:"mean_confidence"`
 	UpdatedAt      time.Time `json:"-"`
 }
 

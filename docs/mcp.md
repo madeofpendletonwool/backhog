@@ -23,15 +23,16 @@ you explicitly ask it to (`include_spoilers` on a tool call).
 | `search_book(book, query)` | Phrase search with exact quotes and citation links. |
 | `search_library(query)` | Library-wide search: every book you can read, ranked. |
 | `get_passage(book, char_start, char_end)` | The exact text at a character range — quote verification. |
-| `find_mentions(book, name)` | Every place a name has come up so far (needs MAD-670). |
+| `find_mentions(book, name)` | Every place a name has come up so far (the name index, MAD-670). |
 
 Every result carries the effective `bound` (where your reading stood) and
 peek deep links (`…/read?offset=N&peek=1`) that jump your reader to a
 passage without moving your saved position. `search_library` reports books
 that matched only past your position as titles in `matched_beyond` — say
 "the library knows, but you haven't read that far" rather than guessing
-where. `find_mentions` returns a clear "not available on this backhog yet"
-error until the name index lands.
+where. `find_mentions` reads the name index: a name first appearing past
+your reading position does not exist yet, and `include_spoilers` lifts the
+clamp.
 
 ## Prerequisites
 

@@ -37,10 +37,10 @@ const (
 // when the bound is the whole book (nothing was cut) or the book's spine is
 // not loaded on the path that answered.
 type boundView struct {
-	Until      string        `json:"until"`
-	CharOffset int           `json:"char_offset"`
-	Chapter    *chapterView  `json:"chapter"`
-	Percent    float64       `json:"percent"`
+	Until      string       `json:"until"`
+	CharOffset int          `json:"char_offset"`
+	Chapter    *chapterView `json:"chapter"`
+	Percent    float64      `json:"percent"`
 }
 
 // readBound is one request's resolved clamp. Offset is the last readable
@@ -57,7 +57,19 @@ type readBound struct {
 // the whole book. The default is the whole spoiler-safety feature in one
 // line — everything else here is just honoring what was asked for.
 func parseUntil(r *http.Request) (mode string, offset int, ok bool) {
-	switch v := r.URL.Query().Get("until"); v {
+	return parseUntilDefault(r, "")
+}
+
+// parseUntilDefault is parseUntil with a forced default for the surfaces
+// that never move a position and so clamp every caller — the library
+// search, the name index. An explicit `until` always wins; only the
+// omitted-parameter default changes.
+func parseUntilDefault(r *http.Request, def string) (mode string, offset int, ok bool) {
+	v := r.URL.Query().Get("until")
+	if v == "" {
+		v = def
+	}
+	switch v {
 	case "":
 		if auth.UsingAPIToken(r.Context()) {
 			return untilPosition, 0, true
@@ -88,8 +100,17 @@ func parseUntil(r *http.Request) (mode string, offset int, ok bool) {
 // position to offer, and the honest bound for its text is nothing.
 func (s *Server) resolveReadBound(w http.ResponseWriter, r *http.Request,
 	userID, entryID, bookID string, charCount int) (readBound, bool) {
+	return s.resolveReadBoundDefault(w, r, userID, entryID, bookID, charCount, "")
+}
 
-	mode, offset, ok := parseUntil(r)
+// resolveReadBoundDefault is resolveReadBound for the surfaces whose
+// omitted-`until` default is the position for every caller (see
+// parseUntilDefault). The named modes, the explicit offset and every error
+// shape are identical.
+func (s *Server) resolveReadBoundDefault(w http.ResponseWriter, r *http.Request,
+	userID, entryID, bookID string, charCount int, def string) (readBound, bool) {
+
+	mode, offset, ok := parseUntilDefault(r, def)
 	if !ok {
 		fail(w, errorf(http.StatusBadRequest,
 			"until must be \"position\", \"none\" or a non-negative character offset"))
@@ -150,11 +171,11 @@ func deepLink(entryID string, offset int) string {
 // chapter, which characters, and the link that jumps a reader straight there.
 // Anything an answer is grounded in, the reader can check.
 type provenanceView struct {
-	BookID    string        `json:"book_id"`
-	Chapter   *chapterView  `json:"chapter"`
-	CharStart int           `json:"char_start"`
-	CharEnd   int           `json:"char_end"`
-	DeepLink  string        `json:"deep_link"`
+	BookID    string       `json:"book_id"`
+	Chapter   *chapterView `json:"chapter"`
+	CharStart int          `json:"char_start"`
+	CharEnd   int          `json:"char_end"`
+	DeepLink  string       `json:"deep_link"`
 }
 
 // spanProvenance cites a canonical range: the chapter its start sits in (a

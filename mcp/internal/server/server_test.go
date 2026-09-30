@@ -137,6 +137,10 @@ type stubBackhog struct {
 	*fixture
 	ts *httptest.Server
 
+	// mentionsMissing emulates a backhog that predates the name index,
+	// for the degrade path's test.
+	mentionsMissing bool
+
 	mu       sync.Mutex
 	recorded []request
 }
@@ -339,8 +343,51 @@ func (s *stubBackhog) serve(w http.ResponseWriter, r *http.Request) {
 			"truncated": false, "results": hits, "bound": s.bound(until),
 		})
 
-	case r.URL.Path == "/api/books/search/text", r.URL.Path == "/api/books/"+fxEntry+"/mentions":
-		// MAD-470 / MAD-670 have not landed on this backhog.
+	case r.URL.Path == "/api/books/"+fxEntry+"/mentions":
+		// The name index (MAD-670). A stub that wants to emulate a backhog
+		// predating it flips mentionsMissing and answers 404.
+		if s.mentionsMissing {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		name := fold(r.URL.Query().Get("name"))
+		limit := s.clamp(until)
+		var hits []map[string]any
+		for off := 0; ; {
+			i := strings.Index(s.canonical[off:], name)
+			if i < 0 {
+				break
+			}
+			at := off + i
+			if at >= limit {
+				break
+			}
+			block, blockIdx, chIdx := s.displayBlockAt(at)
+			folded := s.chapters[chIdx].folded[blockIdx]
+			rel := at - s.blockStarts(chIdx)[blockIdx]
+			bi := displayIndexOf(block, folded, rel, len(name))
+			end := min(bi+len(name), len(block))
+			hits = append(hits, map[string]any{
+				"char_offset": at, "char_end": at + len(name),
+				"snippet": map[string]any{"before": block[:bi], "passage": block[bi:end],
+					"after": block[end:]},
+				"chapter": map[string]any{"spine_index": chIdx, "title": s.chapters[chIdx].title,
+					"title_source": "toc", "number": chIdx + 1,
+					"char_start": s.chapters[chIdx].start, "char_end": s.charCount},
+				"deep_link": fmt.Sprintf("/books/%s/read?offset=%d&peek=1", fxEntry, at),
+			})
+			off = at + len(name)
+		}
+		display := r.URL.Query().Get("name")
+		if display == "" {
+			display = name
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name": display, "total": len(hits), "results": hits, "bound": s.bound(until),
+		})
+
+	case r.URL.Path == "/api/books/search/text":
+		// MAD-470 has not landed on this backhog.
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 
 	default:
@@ -819,11 +866,64 @@ func TestSearchLibraryDegradesCleanly(t *testing.T) {
 
 func TestFindMentionsDegradesCleanly(t *testing.T) {
 	h := newHarness(t)
+	h.stub.mentionsMissing = true
 	msg := h.callErr(t, "find_mentions", map[string]any{"book": fxEntry, "name": "the butler"})
 	if !strings.Contains(msg, "search_book") {
 		t.Fatalf("error should point at search_book: %q", msg)
 	}
 	assertNoLeak(t, "find_mentions error", msg)
+}
+
+// TestFindMentionsListsSoFar is the happy path: a name's mentions within
+// the caller's position, each placed and linked; spoilers lift the clamp
+// and the second, future mention appears.
+func TestFindMentionsListsSoFar(t *testing.T) {
+	h := newHarness(t)
+	var out struct {
+		Name  string `json:"name"`
+		Total int    `json:"total"`
+		Hits  []struct {
+			CharOffset int                      `json:"char_offset"`
+			Chapter    struct{ Title string }   `json:"chapter"`
+			Snippet    struct{ Passage string } `json:"snippet"`
+			DeepLink   string                   `json:"deep_link"`
+		} `json:"hits"`
+		Bound struct {
+			Until string `json:"until"`
+		} `json:"bound"`
+	}
+	h.call(t, "find_mentions", map[string]any{"book": fxEntry, "name": "village"}, &out)
+
+	// "village" is in Alpha (read) and Gamma (past the position): one
+	// mention so far, no leak of the later one.
+	if out.Total != 1 || len(out.Hits) != 1 {
+		t.Fatalf("mentions so far = %d hits, want 1: %+v", len(out.Hits), out)
+	}
+	if out.Name != "village" {
+		t.Errorf("name echo = %q", out.Name)
+	}
+	hit := out.Hits[0]
+	if hit.Chapter.Title != "Alpha" || !strings.Contains(hit.Snippet.Passage, "village") {
+		t.Errorf("hit = %+v, want Alpha's village", hit)
+	}
+	// The linker absolutizes deep links against the backhog origin; the
+	// path is the contract.
+	if !strings.HasSuffix(hit.DeepLink, fmt.Sprintf("/books/%s/read?offset=%d&peek=1", fxEntry, hit.CharOffset)) {
+		t.Errorf("deep link = %q", hit.DeepLink)
+	}
+	if out.Bound.Until != "position" {
+		t.Errorf("bound = %+v, want the position clamp", out.Bound)
+	}
+
+	// The explicit spoiler opt-in lifts the clamp: Gamma's village joins.
+	h.call(t, "find_mentions",
+		map[string]any{"book": fxEntry, "name": "village", "include_spoilers": true}, &out)
+	if out.Total != 2 || len(out.Hits) != 2 {
+		t.Fatalf("spoiler mentions = %d hits, want 2: %+v", len(out.Hits), out)
+	}
+	if out.Hits[1].Chapter.Title != "Gamma" {
+		t.Errorf("second hit = %+v, want Gamma's", out.Hits[1])
+	}
 }
 
 // TestReadOnlyTokenCannotMutate is the acceptance line "a read-only token

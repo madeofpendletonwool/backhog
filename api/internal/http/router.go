@@ -276,6 +276,16 @@ func (s *Server) Routes() http.Handler {
 			// offsets.
 			r.Get("/books/{entryID}/search", s.handleSearchInBook)
 
+			// The name index (MAD-670): "which names have I met?" and
+			// "where has this one come up?". Both clamp to the reading
+			// position by default — for cookie callers too, because an
+			// index consulted mid-book is asking about the book so far —
+			// and hiding a false positive is the reader's own write.
+			r.Get("/books/{entryID}/names", s.handleBookNames)
+			r.Get("/books/{entryID}/mentions", s.handleBookMentions)
+			r.Post("/books/{entryID}/names/hide", s.handleHideBookName)
+			r.Post("/books/{entryID}/names/unhide", s.handleUnhideBookName)
+
 			// The OCR lettering queue: make a comic or picture book
 			// searchable without ever pretending it has a text. Watching
 			// is open to any reader of the book; starting and clearing a

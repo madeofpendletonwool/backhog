@@ -149,6 +149,7 @@ export function BookDetailPage() {
                 <ReadButton entry={entry} />
                 <ListenButton entry={entry} />
                 <SearchButton entry={entry} />
+                <CopyReadButton entry={entry} />
               </div>
             </div>
           </div>
@@ -415,6 +416,52 @@ function SearchButton({ entry }: { entry: BookEntry }) {
         axis={paged ? "page" : "text"}
       />
     </>
+  );
+}
+
+/**
+ * "Copy what I've read" — the book so far as Markdown, on the clipboard.
+ *
+ * The zero-setup way to ask any chatbot about a book: paste it in and ask,
+ * knowing the server already cut the text at the reading position, so no
+ * prompt engineering is needed to keep the model from spoiling the ending.
+ * Only appears for a text book with something read.
+ */
+function CopyReadButton({ entry }: { entry: BookEntry }) {
+  const { data: position } = useQuery({
+    queryKey: ["bookPosition", entry.id],
+    queryFn: () => api.bookPosition(entry.id),
+  });
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const readable = Boolean(position && position.char_count > 0 && position.char_offset > 0);
+  if (!readable) return null;
+
+  const copy = async () => {
+    setError(null);
+    try {
+      const markdown = await api.bookTextExport(entry.id, "position");
+      await navigator.clipboard.writeText(markdown);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "could not copy");
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-start">
+      <Button variant="secondary" onClick={copy}>
+        <Gi name={copied ? "check" : "scroll-unfurled"} className="size-3.5" />
+        {copied ? "Copied" : "Copy what I've read"}
+      </Button>
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-red-300">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

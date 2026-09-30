@@ -45,9 +45,14 @@ func passageMatchViews(matches []passage.Match) []passageMatchView {
 // is parsed on demand like every text endpoint, and the answer carries
 // the surrounding canonical text so a client can confirm the match
 // before pinning an anchor to it. A passage that recurs comes back with
-// alternatives — the client asks which one, the server does not guess.
+// alternatives — the client asks which one, the client does not guess.
+//
+// Under a clamp the match must lie wholly inside what the caller has
+// read: a passage from ahead of the position is refused without saying
+// where it landed, because the location itself would be the spoiler.
 func (s *Server) handleBookPassage(w http.ResponseWriter, r *http.Request) {
-	if _, _, _, ok := s.bookEntry(w, r); !ok {
+	userID, entryID, bookID, ok := s.bookEntry(w, r)
+	if !ok {
 		return
 	}
 	if s.epubs == nil || s.passage == nil {
@@ -57,6 +62,21 @@ func (s *Server) handleBookPassage(w http.ResponseWriter, r *http.Request) {
 	et, ok := s.ensureBookText(w, r)
 	if !ok {
 		return
+	}
+
+	bound := readBound{until: untilNone, offset: et.CharCount, view: boundView{
+		Until: untilNone, CharOffset: et.CharCount, Percent: 100,
+	}}
+	censoring := false
+	if requested, valid := needsBound(r); !valid {
+		fail(w, errorf(http.StatusBadRequest,
+			"until must be \"position\", \"none\" or a non-negative character offset"))
+		return
+	} else if requested {
+		if bound, ok = s.resolveReadBound(w, r, userID, entryID, bookID, et.CharCount); !ok {
+			return
+		}
+		censoring = bound.offset < et.CharCount
 	}
 
 	var body struct {
@@ -82,11 +102,40 @@ func (s *Server) handleBookPassage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The refusal that makes the endpoint spoiler-safe: a match at or past
+	// the bound — including one that merely runs past it — answers with the
+	// same shape as a match nowhere, give or take the wording. Alternatives
+	// past the bound drop out the same way.
+	if censoring {
+		if res.Match.CharEnd > bound.offset {
+			fail(w, errorf(http.StatusUnprocessableEntity,
+				"no place in what you've read so far matches that passage"))
+			return
+		}
+		kept := res.Alternatives[:0]
+		for _, alt := range res.Alternatives {
+			if alt.CharEnd <= bound.offset {
+				kept = append(kept, alt)
+			}
+		}
+		res.Alternatives = kept
+	}
+
+	// The spine rides along for the citation; passage placement is a scan
+	// flow, not a keystroke path, so one chapters query costs nothing.
+	chapters, err := s.store.ListEpubChapters(r.Context(), et.ID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+
 	// Context comes from the canonical text itself: it is the address
 	// space the offset lives in, so before and after splice onto the
-	// matched span without translation.
+	// matched span without translation. The window never crosses the
+	// bound — the skirt of a matched passage is still text.
 	from := max(0, res.Match.CharOffset-passageContextBytes)
 	to := min(et.CharCount, res.Match.CharEnd+passageContextBytes)
+	to = min(to, bound.offset)
 	span, err := s.epubs.ReadText(r.Context(), et, from, to)
 	if err != nil {
 		fail(w, err)
@@ -94,9 +143,11 @@ func (s *Server) handleBookPassage(w http.ResponseWriter, r *http.Request) {
 	}
 	start, end := res.Match.CharOffset-from, res.Match.CharEnd-from
 	writeJSON(w, http.StatusOK, map[string]any{
-		"match":        passageMatchView(res.Match),
+		"match": passageMatchView(res.Match),
 		"alternatives": passageMatchViews(res.Alternatives),
 		"ambiguous":    len(res.Alternatives) > 0,
+		"bound":        bound.view,
+		"provenance":   spanProvenance(entryID, chapters, res.Match.CharOffset, res.Match.CharEnd),
 		"context": map[string]any{
 			"before":  span[:start],
 			"passage": span[start:end],

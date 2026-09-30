@@ -99,6 +99,65 @@ func (s *Snippets) At(charStart, charEnd int) (Snippet, bool) {
 	}, true
 }
 
+// AtUntil is At under a spoiler clamp: the span renders as usual, but
+// nothing at or after the canonical offset `until` is shown. A hit inside
+// the last paragraph the reader has reached still comes back — the words
+// before the clamp are read text — but the tail of that paragraph and
+// everything after it is withheld rather than elided, because an elision of
+// unread prose is still unread prose. ok carries At's own meaning.
+func (s *Snippets) AtUntil(charStart, charEnd, until int) (Snippet, bool) {
+	loc, ok := s.index.Resolve(charStart)
+	if !ok {
+		return Snippet{}, false
+	}
+	doc, ok := s.docBySpine(loc.SpineIndex)
+	if !ok {
+		return Snippet{}, false
+	}
+	if doc.DisplayStart < 0 || doc.DisplayEnd < doc.DisplayStart || doc.DisplayEnd > len(s.display) {
+		return Snippet{}, false
+	}
+	blocks := strings.Split(string(s.display[doc.DisplayStart:doc.DisplayEnd]), "\n")
+	if loc.BlockIndex < 0 || loc.BlockIndex >= len(blocks) || loc.BlockIndex >= len(doc.Blocks) {
+		return Snippet{}, false
+	}
+	block := blocks[loc.BlockIndex]
+
+	blockStart := doc.Blocks[loc.BlockIndex]
+	canonLen := len(booktext.Normalize(block))
+	from := charStart - blockStart
+	to := min(charEnd-blockStart, canonLen)
+
+	start, end, ok := booktext.SpanInDisplay(block, from, to)
+	if !ok {
+		return Snippet{}, false
+	}
+
+	// Where the block's prose stops being read text. A block wholly inside
+	// the clamp keeps At's full shape; a block straddling it is cut at the
+	// clamp and loses its tail entirely.
+	blockEnd := doc.CharEnd
+	if loc.BlockIndex+1 < len(doc.Blocks) {
+		blockEnd = doc.Blocks[loc.BlockIndex+1]
+	}
+	if blockEnd <= until {
+		return Snippet{
+			Before:  elideHead(block[:start]),
+			Passage: block[start:end],
+			After:   elideTail(block[end:]),
+		}, true
+	}
+
+	_, cut, ok := booktext.SpanInDisplay(block, 0, until-blockStart)
+	if !ok || cut < start {
+		cut = start
+	}
+	return Snippet{
+		Before:  elideHead(block[:start]),
+		Passage: block[start:min(end, cut)],
+	}, true
+}
+
 // docBySpine finds a spine document in the index. Documents are tens, not
 // thousands, so the scan is cheaper than an index over them.
 func (s *Snippets) docBySpine(spine int) (IndexedDoc, bool) {

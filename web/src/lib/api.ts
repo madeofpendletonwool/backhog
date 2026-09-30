@@ -98,6 +98,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+/** The same auth and error contract as request, for endpoints that answer
+ *  with text rather than JSON — the Markdown export. */
+async function requestText(path: string): Promise<string> {
+  const response = await fetch(`/api${path}`, { credentials: "include" });
+  if (!response.ok) {
+    let message = response.statusText;
+    try {
+      const data = await response.json();
+      message = data?.error ?? message;
+    } catch {
+      // not a JSON error body; keep the status text
+    }
+    throw new ApiError(response.status, message);
+  }
+  return response.text();
+}
+
 const body = (value: unknown) => JSON.stringify(value);
 
 export const api = {
@@ -561,6 +578,14 @@ export const api = {
   /** One spine document as prose, block for block with its offsets. */
   bookTextDisplay: (entryId: string, spineIndex: number) =>
     request<BookTextDisplay>(`/books/${entryId}/text/display?spine=${spineIndex}`),
+
+  /**
+   * "Copy what I've read": the display text up to the reading position as
+   * Markdown, chapter headings and source anchors included. The zero-setup
+   * bridge to any chatbot a user brings — nothing past the position is in it.
+   */
+  bookTextExport: (entryId: string, until: "position" | "none" = "position") =>
+    requestText(`/books/${entryId}/text/export?until=${until}`),
 
   /** The paged reader's manifest: an image-native PDF's page axis. */
   bookPages: (entryId: string) => request<BookPages>(`/books/${entryId}/pages`),

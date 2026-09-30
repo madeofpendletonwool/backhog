@@ -193,3 +193,55 @@ func TestSnippetRejectsOutOfRange(t *testing.T) {
 		}
 	}
 }
+
+// AtUntil is At under the spoiler clamp, and the test that matters is the
+// hidden-information one: a hit inside the read half of a straddling
+// paragraph renders, and nothing at or past the clamp ever does — not in
+// the passage, not in the after-skirt.
+func TestSnippetUntilClampsTheStraddlingBlock(t *testing.T) {
+	doc := &epub.Document{Docs: []epub.Doc{{Href: "a.xhtml", Blocks: []string{
+		"The detective found the silver candlestick in the pantry.",
+		"The butler did it, and confessed by morning.",
+	}}}}
+	canonical, snips := snippetsOver(t, doc)
+
+	silverFrom, silverTo := findSpan(t, canonical, "silver")
+	butlerAt := strings.Index(canonical, "the butler did it")
+	if butlerAt < 0 {
+		t.Fatal("fixture lacks the reveal")
+	}
+	// The clamp lands inside the first paragraph, after "silver".
+	clamp := strings.Index(canonical, "candlestick")
+
+	got, ok := snips.AtUntil(silverFrom, silverTo, clamp)
+	if !ok {
+		t.Fatal("AtUntil not ok for an in-bound hit")
+	}
+	if !strings.Contains(got.Passage, "silver") {
+		t.Errorf("passage = %q, want the read words", got.Passage)
+	}
+	if low := strings.ToLower(got.Passage + got.Before + got.After); strings.Contains(low, "candlestick") || strings.Contains(low, "butler") {
+		t.Errorf("clamped context leaked past the bound: %q / %q / %q", got.Before, got.Passage, got.After)
+	}
+
+	// A clamp past the whole block keeps At's full shape — the clamp only
+	// ever removes, never reshapes, what was already readable.
+	whole, _ := snips.AtUntil(silverFrom, silverTo, len(canonical))
+	plain, _ := snips.At(silverFrom, silverTo)
+	if whole != plain {
+		t.Errorf("end-of-book clamp changed the snippet: %v vs %v", whole, plain)
+	}
+
+	// The reveal itself, under a clamp before it, is not rendered at all:
+	// AtUntil answers only for spans that begin inside the reading.
+	revealFrom, revealTo := findSpan(t, canonical, "the butler did it")
+	if _, ok := snips.AtUntil(revealFrom, revealTo, butlerAt); ok {
+		// The span starts exactly at the clamp, so nothing of it is read;
+		// whatever comes back must carry no reveal text.
+		if got, ok := snips.AtUntil(revealFrom, revealTo, butlerAt); ok {
+			if low := strings.ToLower(got.Passage + got.After); strings.Contains(low, "butler") {
+				t.Errorf("reveal span rendered under its own clamp: %q", got.Passage)
+			}
+		}
+	}
+}

@@ -1,0 +1,627 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/collinpendleton/backhog/mcp/internal/backhog"
+)
+
+// linker absolutizes the API's relative peek links against the origin the
+// human opens, so a citation is clickable wherever the model's answer ends
+// up. API calls may go to an internal address while links stay public.
+type linker struct{ base string }
+
+func newLinker(opts Options) *linker {
+	base := strings.TrimRight(opts.PublicURL, "/")
+	if base == "" && opts.Client != nil {
+		base = opts.Client.BaseURL()
+	}
+	return &linker{base: base}
+}
+
+// peek builds the absolute peek deep link for an offset: a jump into the
+// reader that never moves the saved position.
+func (l *linker) peek(entryID string, offset int) string {
+	return l.base + "/books/" + url.PathEscape(entryID) + "/read?offset=" + strconv.Itoa(offset) + "&peek=1"
+}
+
+// relative keeps whatever the API already returned when it is absolute, and
+// absolutizes the relative form the read paths use.
+func (l *linker) relative(link string) string {
+	if link == "" || strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://") {
+		return link
+	}
+	return l.base + link
+}
+
+// addTools registers the backhog tool surface. Every description carries
+// the two rules the whole bridge exists to enforce: cite with the deep
+// links, and let "the book doesn't say (so far)" be an answer.
+func addTools(srv *mcp.Server, c *backhog.Client, link *linker) {
+	addListBooks(srv, c, link)
+	addReadingPosition(srv, c, link)
+	addListChapters(srv, c, link)
+	addReadText(srv, c, link)
+	addSearchBook(srv, c, link)
+	addSearchLibrary(srv, c, link)
+	addGetPassage(srv, c, link)
+	addFindMentions(srv, c, link)
+}
+
+// The spoiler opt-in every read tool shares: the parameter's jsonschema
+// description carries the loud warning (struct tags are literals, so it is
+// spelled out per field).
+
+// --- list_books ---------------------------------------------------------
+
+type listBooksIn struct {
+	Status string `json:"status,omitempty" jsonschema:"optional filter: one of backlog, playing (reading), played (finished), dropped, ignored, wishlist"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"optional page size, default 50, max 200"`
+	Offset int    `json:"offset,omitempty" jsonschema:"optional page offset for paging past the limit"`
+}
+
+type bookSummary struct {
+	EntryID    string   `json:"entry_id"`
+	Title      string   `json:"title"`
+	Authors    []string `json:"authors,omitempty"`
+	Status     string   `json:"status"`
+	Percent    *float64 `json:"progress_percent,omitempty"`
+	LastReadAt string   `json:"last_read_at,omitempty"`
+}
+
+type listBooksOut struct {
+	Books []bookSummary `json:"books"`
+	Total int           `json:"total"`
+	Note  string        `json:"note,omitempty"`
+}
+
+func addListBooks(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_books",
+		Annotations: readOnly,
+		Description: "List the books in the user's backhog library with reading status and how far " +
+			"they have gotten (progress percent). Use this first to discover book entry IDs for the " +
+			"other tools. 'playing' means currently reading; 'played' means finished.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in listBooksIn) (*mcp.CallToolResult, listBooksOut, error) {
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 50
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		entries, total, err := c.ListBooks(ctx, in.Status, limit, in.Offset)
+		if err != nil {
+			return nil, listBooksOut{}, fmt.Errorf("listing library: %w", err)
+		}
+		out := listBooksOut{Total: total, Books: make([]bookSummary, 0, len(entries))}
+		for _, e := range entries {
+			b := bookSummary{
+				EntryID: e.ID, Title: e.Book.Title, Authors: e.Book.Authors,
+				Status: e.Status, Percent: e.ProgressPercent,
+			}
+			if e.LastReadAt != nil {
+				b.LastReadAt = e.LastReadAt.Format("2006-01-02")
+			}
+			out.Books = append(out.Books, b)
+		}
+		return nil, out, nil
+	})
+}
+
+// --- get_reading_position ----------------------------------------------
+
+type positionIn struct {
+	Book string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+}
+
+type readingPositionOut struct {
+	backhog.Position
+	DeepLink string `json:"deep_link"`
+}
+
+func addReadingPosition(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_reading_position",
+		Annotations: readOnly,
+		Description: "Where the user currently is in a book: chapter, percent, and character offset. " +
+			"Every other tool serves text only up to this point, so this is the 'as of' any answer " +
+			"about the book stands on. Cite it when saying where the user is.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in positionIn) (*mcp.CallToolResult, readingPositionOut, error) {
+		pos, err := c.ReadingPosition(ctx, in.Book)
+		if err != nil {
+			return nil, readingPositionOut{}, fmt.Errorf("reading position: %w", err)
+		}
+		return nil, readingPositionOut{Position: *pos, DeepLink: link.peek(in.Book, pos.CharOffset)}, nil
+	})
+}
+
+// --- list_chapters -------------------------------------------------------
+
+type listChaptersIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads past the user's saved reading position (the whole book). Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type chapterOut struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	Locked    bool   `json:"locked"`
+	CharStart int    `json:"char_start"`
+	CharEnd   int    `json:"char_end"`
+}
+
+type listChaptersOut struct {
+	Chapters  []chapterOut  `json:"chapters"`
+	CharCount int           `json:"char_count"`
+	Bound     backhog.Bound `json:"bound"`
+	Note      string        `json:"note,omitempty"`
+}
+
+func addListChapters(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_chapters",
+		Annotations: readOnly,
+		Description: "List a book's chapters. Chapters at or past the user's reading position are " +
+			"locked: only their number and title survive (a title can itself spoil, so treat locked " +
+			"titles cautiously when quoting them back). Bound says where the reading has reached.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in listChaptersIn) (*mcp.CallToolResult, listChaptersOut, error) {
+		chapters, charCount, bound, err := c.Chapters(ctx, in.Book, in.IncludeSpoilers)
+		if err != nil {
+			return nil, listChaptersOut{}, fmt.Errorf("listing chapters: %w", err)
+		}
+		out := listChaptersOut{CharCount: charCount, Bound: bound, Chapters: make([]chapterOut, 0, len(chapters))}
+		for _, ch := range chapters {
+			out.Chapters = append(out.Chapters, chapterOut{
+				Number: ch.Number, Title: ch.Title, Locked: ch.Locked,
+				CharStart: ch.CharStart, CharEnd: ch.CharEnd,
+			})
+		}
+		if !in.IncludeSpoilers {
+			out.Note = "Chapters marked locked are past the reading position; their content is withheld."
+		}
+		return nil, out, nil
+	})
+}
+
+// --- read_text -----------------------------------------------------------
+
+// Pagination caps: enough prose for a real answer, never enough to blow a
+// context window. The model pages forward with next_from.
+const (
+	readDefaultChars = 12000
+	readMinChars     = 1000
+	readMaxChars     = 24000
+)
+
+type readTextIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	From            int    `json:"from,omitempty" jsonschema:"optional character offset to start at (from a previous result's next_from); default the beginning"`
+	To              int    `json:"to,omitempty" jsonschema:"optional character offset to stop before; default the end of the readable window"`
+	Chapter         int    `json:"chapter,omitempty" jsonschema:"optional 1-based chapter number (from list_chapters) to read instead of a from/to range"`
+	MaxChars        int    `json:"max_chars,omitempty" jsonschema:"optional cap on characters returned this call, 1000-24000, default 12000; page with next_from"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads past the user's saved reading position (the whole book). Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type readTextOut struct {
+	// Text is the book's prose (the display text, capitals and punctuation
+	// intact), not the folded canonical form offsets address.
+	Text     string              `json:"text"`
+	From     int                 `json:"from"`
+	To       int                 `json:"to"`
+	NextFrom *int                `json:"next_from,omitempty"`
+	Chapter  *backhog.ChapterRef `json:"chapter,omitempty"`
+	Bound    backhog.Bound       `json:"bound"`
+	DeepLink string              `json:"deep_link"`
+	Note     string              `json:"note,omitempty"`
+}
+
+func addReadText(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "read_text",
+		Annotations: readOnly,
+		Description: "Read a book's text as prose, bounded to what the user has actually read: one " +
+			"call returns up to about one chapter (capped by max_chars); page forward with next_from. " +
+			"Reads are always cut at the user's reading position unless include_spoilers is set. " +
+			"Cite passages using the deep_link and character offsets in the result. If the text stops " +
+			"short (next_from absent before the book's end), the rest is past the reading position: " +
+			"say the book doesn't say yet rather than filling in from outside knowledge.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in readTextIn) (*mcp.CallToolResult, readTextOut, error) {
+		return readText(ctx, c, link, in)
+	})
+}
+
+func readText(ctx context.Context, c *backhog.Client, link *linker, in readTextIn) (*mcp.CallToolResult, readTextOut, error) {
+	chapters, charCount, bound, err := c.Chapters(ctx, in.Book, in.IncludeSpoilers)
+	if err != nil {
+		return nil, readTextOut{}, fmt.Errorf("reading chapter index: %w", err)
+	}
+	if len(chapters) == 0 {
+		return nil, readTextOut{}, fmt.Errorf("this book has no parsed text to read")
+	}
+
+	maxChars := in.MaxChars
+	if maxChars <= 0 {
+		maxChars = readDefaultChars
+	}
+	if maxChars < readMinChars {
+		maxChars = readMinChars
+	}
+	if maxChars > readMaxChars {
+		maxChars = readMaxChars
+	}
+
+	// Resolve the window: a chapter number names its own range; otherwise
+	// from/to, defaulting to the whole (readable) book.
+	start := in.From
+	end := 0
+	if in.Chapter > 0 {
+		var ch *backhog.Chapter
+		for i := range chapters {
+			if chapters[i].Number == in.Chapter {
+				ch = &chapters[i]
+				break
+			}
+		}
+		if ch == nil {
+			return nil, readTextOut{}, fmt.Errorf("no chapter number %d — use list_chapters to see this book's chapters", in.Chapter)
+		}
+		start, end = ch.CharStart, ch.CharEnd
+		if in.From > start {
+			start = in.From
+		}
+		if in.To > 0 && in.To < end {
+			end = in.To
+		}
+	} else if in.To > 0 {
+		end = in.To
+	}
+	if end <= 0 || end > charCount {
+		end = charCount
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	// The readable window never passes the echoed bound (which equals
+	// charCount on an unclamped read).
+	readableEnd := bound.CharOffset
+	if readableEnd <= 0 || readableEnd > charCount {
+		readableEnd = charCount
+	}
+
+	out := readTextOut{Bound: bound, From: start, DeepLink: link.peek(in.Book, start)}
+	if start >= end {
+		return nil, out, fmt.Errorf("the requested range [%d,%d) is empty or inverted — character offsets run 0 to %d", start, end, charCount)
+	}
+	if start >= readableEnd {
+		out.Note = "Nothing to read: this range starts at or past the user's reading position " +
+			"(bound.char_offset). The book does not say anything here yet."
+		return nil, out, nil
+	}
+	if end > readableEnd {
+		end = readableEnd
+	}
+
+	// Walk the chapters the window overlaps, emitting the display blocks
+	// whose canonical starts fall inside it, until the cap or the window
+	// runs out. A multi-document chapter exposes canonical starts only for
+	// its first document: its unanchored tail is skipped (and said so)
+	// rather than cited to offsets nobody can verify.
+	var text []string
+	emitted, stopAt, note := 0, -1, ""
+	for i := range chapters {
+		ch := &chapters[i]
+		if ch.Locked || ch.CharEnd <= start {
+			continue
+		}
+		if ch.CharStart >= end {
+			break
+		}
+		doc, err := c.Display(ctx, in.Book, ch.SpineIndex, in.IncludeSpoilers)
+		if err != nil {
+			return nil, readTextOut{}, fmt.Errorf("reading chapter %d: %w", ch.Number, err)
+		}
+		if out.Chapter == nil && ch.Number > 0 {
+			ref := backhog.ChapterRef{SpineIndex: ch.SpineIndex, Title: ch.Title,
+				Number: ch.Number, CharStart: ch.CharStart, CharEnd: ch.CharEnd}
+			out.Chapter = &ref
+		}
+		starts := ch.Blocks
+		for b, block := range doc.Blocks {
+			if b >= len(starts) {
+				note = "A chapter spanning multiple documents had its unanchored tail skipped to keep citations exact."
+				if i+1 < len(chapters) && !chapters[i+1].Locked {
+					stopAt = chapters[i+1].CharStart
+				}
+				break
+			}
+			s := starts[b]
+			if s < start {
+				continue
+			}
+			if s >= end {
+				break
+			}
+			if emitted > 0 && emitted+len(block) > maxChars {
+				stopAt = s
+				break
+			}
+			text = append(text, block)
+			emitted += len(block)
+		}
+		if stopAt >= 0 {
+			break
+		}
+	}
+
+	out.Text = strings.Join(text, "\n\n")
+	if stopAt >= 0 && stopAt < readableEnd {
+		out.NextFrom = &stopAt
+	}
+	// To is where this result stops on the canonical axis: the next
+	// chapter/block boundary, or the window's end. Prose runs a little
+	// longer than its canonical form, so To is a boundary, not a byte
+	// count of Text.
+	if out.NextFrom != nil {
+		out.To = *out.NextFrom
+	} else {
+		out.To = min(end, readableEnd)
+	}
+	out.Note = note
+	if out.NextFrom == nil && note == "" && end < charCount && end == readableEnd {
+		out.Note = "End of the readable window: the rest of the book is past the user's reading position."
+	}
+	return nil, out, nil
+}
+
+// --- search_book ---------------------------------------------------------
+
+type searchBookIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	Query           string `json:"query" jsonschema:"the phrase or words to find, as the book prints them"`
+	Limit           int    `json:"limit,omitempty" jsonschema:"optional max hits, default 10, max 50"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads past the user's saved reading position (the whole book). Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type searchHitOut struct {
+	CharOffset int                 `json:"char_offset"`
+	CharEnd    int                 `json:"char_end"`
+	Chapter    *backhog.ChapterRef `json:"chapter,omitempty"`
+	Context    backhog.Snippet     `json:"context"`
+	Percent    float64             `json:"percent"`
+	DeepLink   string              `json:"deep_link"`
+}
+
+type searchBookOut struct {
+	Query     string         `json:"query"`
+	Mode      string         `json:"mode"`
+	Total     int            `json:"total"`
+	Truncated bool           `json:"truncated"`
+	Hits      []searchHitOut `json:"hits"`
+	Bound     backhog.Bound  `json:"bound"`
+	Note      string         `json:"note,omitempty"`
+}
+
+func addSearchBook(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "search_book",
+		Annotations: readOnly,
+		Description: "Find a phrase inside one book, getting back where it appears with an exact " +
+			"quote (context) and a deep link for citation. Mode 'phrase' means the book contains the " +
+			"exact words; 'loose' means these are the closest passages. Hits past the user's reading " +
+			"position are dropped unless include_spoilers is set — an empty result means the book " +
+			"does not say it (so far), not that it never does.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in searchBookIn) (*mcp.CallToolResult, searchBookOut, error) {
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 10
+		}
+		if limit > 50 {
+			limit = 50
+		}
+		res, err := c.SearchBook(ctx, in.Book, in.Query, limit, in.IncludeSpoilers)
+		if err != nil {
+			return nil, searchBookOut{}, fmt.Errorf("searching book: %w", err)
+		}
+		out := searchBookOut{
+			Query: res.Query, Mode: res.Mode, Total: res.Total,
+			Truncated: res.Truncated, Bound: res.Bound,
+			Hits: make([]searchHitOut, 0, len(res.Results)),
+		}
+		for _, h := range res.Results {
+			out.Hits = append(out.Hits, searchHitOut{
+				CharOffset: h.CharOffset, CharEnd: h.CharEnd, Chapter: h.Chapter,
+				Context: h.Context, Percent: h.Percent,
+				DeepLink: link.relative(h.DeepLink),
+			})
+		}
+		if !in.IncludeSpoilers {
+			out.Note = "Hits are bounded to the user's reading position (see bound)."
+		}
+		return nil, out, nil
+	})
+}
+
+// --- search_library ------------------------------------------------------
+
+type searchLibraryIn struct {
+	Query           string `json:"query" jsonschema:"the phrase to find across every book the user can read"`
+	Limit           int    `json:"limit,omitempty" jsonschema:"optional max hits, default 20"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads past the user's saved reading position (the whole book). Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type libraryHitOut struct {
+	BookID    string              `json:"book_id"`
+	Title     string              `json:"title,omitempty"`
+	Chapter   *backhog.ChapterRef `json:"chapter,omitempty"`
+	Snippet   backhog.Snippet     `json:"snippet"`
+	CharStart int                 `json:"char_start"`
+	CharEnd   int                 `json:"char_end"`
+	DeepLink  string              `json:"deep_link"`
+}
+
+type searchLibraryOut struct {
+	Query string          `json:"query"`
+	Total int             `json:"total"`
+	Hits  []libraryHitOut `json:"hits"`
+	Bound backhog.Bound   `json:"bound"`
+}
+
+func addSearchLibrary(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "search_library",
+		Annotations: readOnly,
+		Description: "Search every book in the user's library at once and get ranked hits with exact " +
+			"quotes and deep links. Hits are suppressed past the user's reading position in each book " +
+			"unless include_spoilers is set. Needs a backhog with library-wide search; if this backhog " +
+			"predates it, use search_book per book instead.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in searchLibraryIn) (*mcp.CallToolResult, searchLibraryOut, error) {
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 20
+		}
+		res, err := c.SearchLibrary(ctx, in.Query, limit, in.IncludeSpoilers)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == 404 {
+				return nil, searchLibraryOut{}, fmt.Errorf("this backhog does not have library-wide search yet " +
+					"(it lands with backhog's library-search update); search one book at a time with search_book instead")
+			}
+			return nil, searchLibraryOut{}, fmt.Errorf("searching library: %w", err)
+		}
+		out := searchLibraryOut{Query: res.Query, Total: res.Total, Bound: res.Bound,
+			Hits: make([]libraryHitOut, 0, len(res.Results))}
+		for _, h := range res.Results {
+			out.Hits = append(out.Hits, libraryHitOut{
+				BookID: h.BookID, Title: h.Title, Chapter: h.Chapter, Snippet: h.Snippet,
+				CharStart: h.CharStart, CharEnd: h.CharEnd, DeepLink: link.relative(h.DeepLink),
+			})
+		}
+		return nil, out, nil
+	})
+}
+
+// --- get_passage ---------------------------------------------------------
+
+type getPassageIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)" jsonschema:"the book's backhog entry ID (from list_books)"`
+	CharStart       int    `json:"char_start" jsonschema:"character offset the passage starts at (inclusive)"`
+	CharEnd         int    `json:"char_end" jsonschema:"character offset the passage ends at (exclusive)"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads past the user's saved reading position (the whole book). Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type getPassageOut struct {
+	// Text is the canonical form at exactly [char_start, char_end): the
+	// normalized text (lowercased, punctuation folded) every offset in
+	// backhog addresses. It is exact and verifiable, not the book's prose;
+	// a search hit's context carries the prose rendering.
+	Text      string              `json:"text"`
+	CharStart int                 `json:"char_start"`
+	CharEnd   int                 `json:"char_end"`
+	CharCount int                 `json:"char_count"`
+	Chapter   *backhog.ChapterRef `json:"chapter,omitempty"`
+	Bound     backhog.Bound       `json:"bound"`
+	DeepLink  string              `json:"deep_link"`
+	Note      string              `json:"note,omitempty"`
+}
+
+func addGetPassage(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_passage",
+		Annotations: readOnly,
+		Description: "Fetch the exact text at a character range — the verifiable quote behind a " +
+			"citation. Use it to check a quote before attributing it to the book. Note the text is " +
+			"backhog's canonical form (lowercased, punctuation folded); the search tools' context " +
+			"snippets show the same words as printed. A range past the reading position comes back " +
+			"empty unless include_spoilers is set: that is the spoiler clamp, not a missing passage.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in getPassageIn) (*mcp.CallToolResult, getPassageOut, error) {
+		if in.CharStart < 0 || in.CharEnd <= in.CharStart {
+			return nil, getPassageOut{}, fmt.Errorf("char_start must be >= 0 and char_end must be greater than char_start")
+		}
+		slice, err := c.Text(ctx, in.Book, in.CharStart, in.CharEnd, in.IncludeSpoilers)
+		if err != nil {
+			return nil, getPassageOut{}, fmt.Errorf("reading passage: %w", err)
+		}
+		out := getPassageOut{
+			Text: slice.Text, CharStart: slice.From, CharEnd: slice.To,
+			CharCount: slice.CharCount, Chapter: slice.Provenance.Chapter,
+			Bound: slice.Bound, DeepLink: link.peek(in.Book, slice.From),
+		}
+		if slice.Text == "" && slice.To <= slice.From {
+			out.Note = "The range starts at or past the user's reading position, so nothing was served. " +
+				"The book does not say anything here yet."
+		}
+		return nil, out, nil
+	})
+}
+
+// --- find_mentions -------------------------------------------------------
+
+type findMentionsIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	Name            string `json:"name" jsonschema:"the character or place name to find occurrences of"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads past the user's saved reading position (the whole book). Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type mentionOut struct {
+	CharOffset int                 `json:"char_offset"`
+	CharEnd    int                 `json:"char_end"`
+	Chapter    *backhog.ChapterRef `json:"chapter,omitempty"`
+	Snippet    backhog.Snippet     `json:"snippet"`
+	DeepLink   string              `json:"deep_link"`
+}
+
+type findMentionsOut struct {
+	Name  string        `json:"name"`
+	Total int           `json:"total"`
+	Hits  []mentionOut  `json:"hits"`
+	Bound backhog.Bound `json:"bound"`
+	Note  string        `json:"note,omitempty"`
+}
+
+func addFindMentions(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "find_mentions",
+		Annotations: readOnly,
+		Description: "Find every place a name (a character, a place) has come up in a book so far — " +
+			"the back-of-the-book index, bounded to the user's reading position. Each occurrence " +
+			"carries a snippet and a deep link. A name that first appears after the reading position " +
+			"simply does not exist yet. Needs a backhog with the name index; if this backhog " +
+			"predates it, use search_book with the name as the query instead.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in findMentionsIn) (*mcp.CallToolResult, findMentionsOut, error) {
+		res, err := c.FindMentions(ctx, in.Book, in.Name, in.IncludeSpoilers)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == 404 {
+				return nil, findMentionsOut{}, fmt.Errorf("this backhog does not have the name index yet " +
+					"(it lands with backhog's name-index update); use search_book with the name as the query instead")
+			}
+			return nil, findMentionsOut{}, fmt.Errorf("finding mentions: %w", err)
+		}
+		out := findMentionsOut{Name: res.Name, Total: res.Total, Bound: res.Bound,
+			Hits: make([]mentionOut, 0, len(res.Results))}
+		for _, h := range res.Results {
+			out.Hits = append(out.Hits, mentionOut{
+				CharOffset: h.CharOffset, CharEnd: h.CharEnd, Chapter: h.Chapter,
+				Snippet: h.Snippet, DeepLink: link.relative(h.DeepLink),
+			})
+		}
+		return nil, out, nil
+	})
+}
+
+// asAPIErr reports whether err is (or wraps) an APIError.
+func asAPIErr(err error, target **backhog.APIError) bool {
+	apiErr, ok := err.(*backhog.APIError)
+	if ok {
+		*target = apiErr
+	}
+	return ok
+}

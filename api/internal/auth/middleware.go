@@ -95,7 +95,11 @@ func Middleware(r Resolver, tokens TokenResolver) func(http.Handler) http.Handle
 				// A token is read-only until a write scope exists to say
 				// otherwise. The check is on the method, not the route,
 				// so no write endpoint can appear beside it unguarded.
-				if isWriteMethod(req.Method) {
+				// The one exception is a read wearing POST's clothes:
+				// passage placement carries its query in a body and
+				// writes nothing, so a books:read token may ask it like
+				// the app does.
+				if isWriteMethod(req.Method) && !isReadShapedPost(req) {
 					writeError(w, http.StatusForbidden,
 						"this token is read-only — manage your library from the app")
 					return
@@ -141,6 +145,26 @@ func isWriteMethod(method string) bool {
 		return true
 	}
 	return false
+}
+
+// isReadShapedPost reports whether the request is a read wearing POST's
+// clothes: passage placement carries its query — a scanned page of text —
+// in a body because it is far too long for a query string, and it writes
+// nothing. A books:read token may ask it like the app does, and the
+// spoiler clamp (MAD-467) applies to its answer the same as every read.
+//
+// The check runs in the root router's middleware, before chi has resolved
+// the route, so it matches the URL path's shape rather than a route
+// pattern: exactly /api/books/{entryID}/passage. That shape is bound to the
+// passage handler by the route table — anything else wearing it 404s after
+// passing the gate, having read nothing and written nothing — and a future
+// write route must not take this shape.
+func isReadShapedPost(req *http.Request) bool {
+	if req.Method != http.MethodPost {
+		return false
+	}
+	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	return len(parts) == 4 && parts[0] == "api" && parts[1] == "books" && parts[3] == "passage"
 }
 
 // Require rejects requests that Middleware did not authenticate.

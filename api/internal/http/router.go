@@ -179,12 +179,19 @@ func (s *Server) Routes() http.Handler {
 
 			// Canonical text for a library entry: the spine index and ranged
 			// slices of the normalized text (byte offsets). Parsing is on
-			// demand — never part of the NAS scan.
+			// demand — never part of the NAS scan. Every one of these
+			// clamps to the caller's reading position under `until=`
+			// (the default for token-authenticated requests), so no client
+			// reads ahead of the reader without saying so out loud.
 			r.Get("/books/{entryID}/text/chapters", s.handleBookTextChapters)
 			r.Get("/books/{entryID}/text", s.handleBookText)
 			// The same blocks as prose, which is what the reader renders;
 			// the canonical text above is folded for matching, not reading.
 			r.Get("/books/{entryID}/text/display", s.handleBookTextDisplay)
+			// "Copy what I've read": the display text up to the bound as
+			// Markdown, headings and peek anchors included — the pasteable
+			// bridge to any chatbot a user brings.
+			r.Get("/books/{entryID}/text/export", s.handleBookTextExport)
 			// The reader's illustrations, read straight out of the EPUB.
 			// Same containment rules as the audio stream, and the only way
 			// a book's images reach the page — nothing loads off-origin.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/collinpendleton/backhog/api/booktext"
 	"github.com/collinpendleton/backhog/api/internal/auth"
 	"github.com/collinpendleton/backhog/api/internal/books"
 	"github.com/collinpendleton/backhog/api/internal/books/epub"
@@ -49,6 +50,12 @@ type bookTextChapter struct {
 	// dropped the remote ones — and is only fetchable through the asset
 	// endpoint below, which re-checks who is asking.
 	Images []books.IndexedImage `json:"images"`
+	// Locked marks a chapter that starts at or past the request's bound: it
+	// exists and can be counted, but its href, offsets, blocks and images
+	// are withheld and only its title remains (itself suppressible with
+	// locked_titles=hide, because a title can spoil all by itself). False
+	// on every chapter of an unclamped request.
+	Locked bool `json:"locked"`
 }
 
 // ensureBookText runs the parse-on-demand path shared by both text
@@ -96,12 +103,38 @@ func (s *Server) ensureBookText(w http.ResponseWriter, r *http.Request) (models.
 }
 
 // handleBookTextChapters serves the spine index of a book's canonical text,
-// parsing the attached EPUB on demand.
+// parsing the attached EPUB on demand. A clamped request (until=position or
+// an explicit offset) locks the chapters past its bound down to title-only
+// rows; locked_titles=hide blanks the titles too, for the books whose
+// chapter names are themselves the spoiler.
 func (s *Server) handleBookTextChapters(w http.ResponseWriter, r *http.Request) {
 	et, ok := s.ensureBookText(w, r)
 	if !ok {
 		return
 	}
+
+	// The bound needs the file-backed door's ids; only a clamped request
+	// pays for the extra lookups, so an in-app reader's call stays exactly
+	// as cheap as it was.
+	bound := readBound{until: untilNone, offset: et.CharCount, view: boundView{
+		Until: untilNone, CharOffset: et.CharCount, Percent: 100,
+	}}
+	clamped, valid := needsBound(r)
+	if !valid {
+		fail(w, errorf(http.StatusBadRequest,
+			"until must be \"position\", \"none\" or a non-negative character offset"))
+		return
+	}
+	if clamped {
+		userID, entryID, bookID, ok := s.bookEntry(w, r)
+		if !ok {
+			return
+		}
+		if bound, ok = s.resolveReadBound(w, r, userID, entryID, bookID, et.CharCount); !ok {
+			return
+		}
+	}
+	hideTitles := r.URL.Query().Get("locked_titles") == "hide" && clamped
 
 	chapters, err := s.store.ListEpubChapters(r.Context(), et.ID)
 	if err != nil {
@@ -127,6 +160,21 @@ func (s *Server) handleBookTextChapters(w http.ResponseWriter, r *http.Request) 
 			TitleSource: ch.TitleSource, Number: number,
 			CharStart: ch.CharStart, CharEnd: ch.CharEnd, Depth: ch.Depth,
 		}
+		// A chapter starting at or past the bound is locked: its title is
+		// all that survives, and only unless the caller asked for silence.
+		// The chapter's presence and number stay — a reader asking "how
+		// much is left" deserves the shape of the answer, not its content.
+		if clamped && ch.CharStart >= bound.offset {
+			c.Locked = true
+			c.Href, c.CharStart, c.CharEnd = "", 0, 0
+			c.Blocks, c.Images = nil, []books.IndexedImage{}
+			c.TitleSource = ""
+			if hideTitles {
+				c.Title = ""
+			}
+			out = append(out, c)
+			continue
+		}
 		if index != nil {
 			for i := range index.Documents {
 				if index.Documents[i].SpineIndex == ch.SpineIndex {
@@ -146,6 +194,7 @@ func (s *Server) handleBookTextChapters(w http.ResponseWriter, r *http.Request) 
 		"char_count":     et.CharCount,
 		"parser_version": et.ParserVersion,
 		"chapters":       out,
+		"bound":          bound.view,
 		// How good the book's own table of contents was. The reader uses it
 		// to explain inferred chapter names rather than presenting them as
 		// the book's word.
@@ -157,9 +206,24 @@ func (s *Server) handleBookTextChapters(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// needsBound reports whether the request asked for a clamp — anything other
+// than an inherited `none`. An unparseable `until` is invalid rather than
+// ignorable: a client that tried to ask for a bound and mistyped it must be
+// told, not silently served the whole book.
+func needsBound(r *http.Request) (requested, valid bool) {
+	mode, _, ok := parseUntil(r)
+	if !ok {
+		return false, false
+	}
+	return mode != untilNone, true
+}
+
 // handleBookText serves a ranged slice of the canonical text, in byte
-// offsets: GET /api/books/{entryID}/text?from=&to=. Omitted bounds read the
-// whole text; out-of-range or inverted ranges are rejected.
+// offsets: GET /api/books/{entryID}/text?from=&to=&until=. Omitted bounds
+// read the whole text; out-of-range or inverted ranges are rejected. A
+// clamped request truncates the slice at its bound: `to` past the bound
+// comes back shortened, and a range starting past it comes back empty —
+// there is nothing left to read, which is not an error, it is the point.
 func (s *Server) handleBookText(w http.ResponseWriter, r *http.Request) {
 	et, ok := s.ensureBookText(w, r)
 	if !ok {
@@ -187,21 +251,50 @@ func (s *Server) handleBookText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, err := s.epubs.ReadText(r.Context(), et, from, to)
-	if err != nil {
-		fail(w, err)
+	bound := readBound{until: untilNone, offset: et.CharCount, view: boundView{
+		Until: untilNone, CharOffset: et.CharCount, Percent: 100,
+	}}
+	var chapters []models.EpubChapter
+	if requested, valid := needsBound(r); !valid {
+		fail(w, errorf(http.StatusBadRequest,
+			"until must be \"position\", \"none\" or a non-negative character offset"))
 		return
+	} else if requested {
+		userID, entryID, bookID, ok := s.bookEntry(w, r)
+		if !ok {
+			return
+		}
+		if bound, ok = s.resolveReadBound(w, r, userID, entryID, bookID, et.CharCount); !ok {
+			return
+		}
+		if chapters, err = s.store.ListEpubChapters(r.Context(), et.ID); err != nil {
+			fail(w, err)
+			return
+		}
 	}
+	effTo := min(to, bound.offset)
+
+	var text string
+	if from < effTo {
+		text, err = s.epubs.ReadText(r.Context(), et, from, effTo)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"from":       from,
-		"to":         to,
-		"char_count": et.CharCount,
-		"text":       text,
+		"from":        from,
+		"to":          effTo,
+		"char_count":  et.CharCount,
+		"text":        text,
+		"bound":       bound.view,
+		"provenance":  spanProvenance(chi.URLParam(r, "entryID"), chapters, from, effTo),
 	})
 }
 
 // handleBookTextDisplay serves one spine document as prose:
-// GET /api/books/{entryID}/text/display?spine=N.
+// GET /api/books/{entryID}/text/display?spine=N&until=.
 //
 // The canonical text is folded for matching — lowercased, punctuation
 // dropped — which makes it an address space, not something anyone would want
@@ -209,6 +302,10 @@ func (s *Server) handleBookText(w http.ResponseWriter, r *http.Request) {
 // characters, so blocks[i] here is the text that starts at the chapters
 // payload's blocks[i] offset. That correspondence is the whole contract: it
 // is what lets the reader render prose and still report a canonical offset.
+//
+// A clamped request stops the prose at its bound: blocks starting at or past
+// it are dropped, and a block straddling it is cut where the reading stops.
+// The in-app reader never sends a bound and sees every block.
 func (s *Server) handleBookTextDisplay(w http.ResponseWriter, r *http.Request) {
 	et, ok := s.ensureBookText(w, r)
 	if !ok {
@@ -219,6 +316,23 @@ func (s *Server) handleBookTextDisplay(w http.ResponseWriter, r *http.Request) {
 	if err != nil || spine < 0 {
 		fail(w, errorf(http.StatusBadRequest, "spine must be a non-negative spine index"))
 		return
+	}
+
+	bound := readBound{until: untilNone, offset: et.CharCount, view: boundView{
+		Until: untilNone, CharOffset: et.CharCount, Percent: 100,
+	}}
+	if requested, valid := needsBound(r); !valid {
+		fail(w, errorf(http.StatusBadRequest,
+			"until must be \"position\", \"none\" or a non-negative character offset"))
+		return
+	} else if requested {
+		userID, entryID, bookID, ok := s.bookEntry(w, r)
+		if !ok {
+			return
+		}
+		if bound, ok = s.resolveReadBound(w, r, userID, entryID, bookID, et.CharCount); !ok {
+			return
+		}
 	}
 
 	index, err := s.epubs.LoadIndex(r.Context(), et)
@@ -245,6 +359,7 @@ func (s *Server) handleBookTextDisplay(w http.ResponseWriter, r *http.Request) {
 		fail(w, errorf(http.StatusInternalServerError, "could not read this ebook's text"))
 		return
 	}
+	blocks = clampDisplayBlocks(blocks, doc.Blocks, doc.CharEnd, bound.offset)
 	if blocks == nil {
 		blocks = []string{}
 	}
@@ -252,7 +367,42 @@ func (s *Server) handleBookTextDisplay(w http.ResponseWriter, r *http.Request) {
 		"spine_index": spine,
 		"href":        doc.Href,
 		"blocks":      blocks,
+		"bound":       bound.view,
 	})
+}
+
+// clampDisplayBlocks cuts a document's display blocks at a canonical offset.
+// Blocks never contain a newline and doc.Blocks holds each one's canonical
+// start, so the cut is a walk: keep the blocks that start before the bound,
+// and where a block straddles it, keep only the display prefix the reading
+// reached — the same fold-back SpanInDisplay performs for snippets.
+func clampDisplayBlocks(blocks []string, starts []int, docEnd int, bound int) []string {
+	if bound >= docEnd {
+		return blocks
+	}
+	out := make([]string, 0, len(blocks))
+	for i, block := range blocks {
+		start := docEnd
+		if i < len(starts) {
+			start = starts[i]
+		}
+		if start >= bound {
+			break
+		}
+		end := docEnd
+		if i+1 < len(starts) {
+			end = starts[i+1]
+		}
+		if end <= bound {
+			out = append(out, block)
+			continue
+		}
+		if _, cut, ok := booktext.SpanInDisplay(block, 0, bound-start); ok {
+			out = append(out, block[:cut])
+		}
+		break
+	}
+	return out
 }
 
 // handleBookTextAsset serves one image out of the EPUB behind a book entry:

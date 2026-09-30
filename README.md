@@ -218,6 +218,7 @@ picked back up.
 
 Everything else works without the worker — reading, listening (as its
 own timeline), tracking, page scanning, achievements, the Reading
+Season. Alignment only unlocks the audio↔text handoff.
 
 ### Lettering search for comics (optional)
 
@@ -236,7 +237,19 @@ Stylized lettering is best-effort: every book's corpus carries its
 coverage and confidence, a marginal read is labelled `low_confidence`
 and stays searchable, and OCR text never feeds positions, alignment or
 passage matching — those stay text-native only.
-Season. Alignment only unlocks the audio↔text handoff.
+
+### Ask your books with your own AI (optional)
+
+Backhog embeds no AI. Instead an optional MCP server turns your library
+into tools your own assistant can use — Claude Code, Claude Desktop, any
+MCP client, or a local model so the text never leaves your network. Every
+answer is clamped to your reading position by the server, so an assistant
+cannot spoil you; citations deep-link back into the reader.
+
+1. Mint a read-only token in **Settings → API tokens**
+2. Put it in `.env` as `BACKHOG_TOKEN=…`
+3. `docker compose --profile mcp up --build` (or run the binary over
+   stdio — see `docs/mcp.md` for Claude Code and Claude Desktop setup)
 
 ### Serving over HTTPS
 
@@ -408,6 +421,7 @@ api/
     http/               router and handlers
 align/                   optional alignment worker (whisper.cpp + ffmpeg)
 ocr/                     optional OCR lettering worker (tesseract)
+mcp/                     optional MCP server for AI assistants (docs/mcp.md)
 web/
   src/
     lib/                typed API client, formatters, OCR runtime

@@ -151,6 +151,38 @@ services:
     # every page it already read pinned in the ledger.
     restart: unless-stopped
 
+  # The optional MCP server (MAD-468): the bridge that lets a user's own
+  # AI assistant (Claude Code, Claude Desktop, any MCP client) ask about
+  # the books in their library. Behind a compose profile like the workers —
+  # backhog works fine without it. It holds no model and no secret beyond
+  # one read-only personal token, and every read is clamped to the token
+  # holder's reading position by the API itself.
+  mcp:
+    profiles: ["mcp"]
+    build: ./mcp
+    environment:
+      # The API over the compose network.
+      BACKHOG_URL: http://api:8080
+      # The origin deep links point at — the URL the human opens in a
+      # browser. Override it when it differs from the API's internal
+      # address (a reverse-proxied deployment, typically the web service's
+      # public host).
+      BACKHOG_PUBLIC_URL: ${BACKHOG_PUBLIC_URL:-http://api:8080}
+      # A read-only personal token minted in Settings → API tokens. Never
+      # logged.
+      BACKHOG_TOKEN: ${BACKHOG_TOKEN:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # No shell in the way; the binary probes its own status endpoint.
+      test: ["CMD", "/app/backhog-mcp", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   backhog-data:
   align-scratch:

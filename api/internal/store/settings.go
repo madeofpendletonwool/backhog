@@ -97,6 +97,17 @@ func (s *Store) SaveSettings(ctx context.Context, in models.ServerSettings) (mod
 	return in, nil
 }
 
+// AppSetting reads one settings row as text. A missing row is "".
+func (s *Store) AppSetting(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return value, err
+}
+
 // AppSettingInt reads one settings row as an integer. A missing or
 // unparseable row is 0 — the honest starting position for a cursor, and
 // nothing else should be reading ints from this table.

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -142,6 +143,13 @@ func (s *Server) resolveReadBoundDefault(w http.ResponseWriter, r *http.Request,
 			// to zero is the answer that cannot spoil.
 			offset = 0
 		}
+		// A finished book is fully read: nothing left in it can spoil its
+		// own reader, whatever spot the last session happened to stop on.
+		// The series memory (MAD-469) counts on this — a "story so far"
+		// spans every finished book whole, with no per-call opt-in.
+		if s.entryFinished(ctx, userID, entryID) {
+			offset = charCount
+		}
 	}
 	if offset > charCount {
 		if mode == untilOffset {
@@ -158,6 +166,16 @@ func (s *Server) resolveReadBoundDefault(w http.ResponseWriter, r *http.Request,
 		Chapter:    chapterAt(views.chapters, offset),
 		Percent:    percentAtOffset(offset, views),
 	}}, true
+}
+
+// entryFinished reports whether the caller's entry is marked played: the
+// reader has been through the whole book, so the position clamp resolves
+// to everything. A lookup that fails leaves the stored position standing —
+// the safe direction is always less text, and ownership was already proven
+// by the progress read that precedes every caller of this.
+func (s *Server) entryFinished(ctx context.Context, userID, entryID string) bool {
+	entry, err := s.store.GetEntry(ctx, userID, entryID)
+	return err == nil && entry.Status == models.StatusPlayed
 }
 
 // deepLink is the provenance anchor every hit and span carries: a jump into
@@ -230,6 +248,11 @@ func (s *Server) resolvePageBound(w http.ResponseWriter, r *http.Request,
 		page = 0
 		if progress.PageIndex != nil {
 			page = *progress.PageIndex
+		}
+		// The finished-book rule, on the page axis: a reader who has been
+		// through the whole book has nothing left to be shown early.
+		if s.entryFinished(ctx, userID, entryID) {
+			page = pageCount
 		}
 	}
 	if page >= pageCount {

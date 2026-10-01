@@ -52,6 +52,9 @@ func addTools(srv *mcp.Server, c *backhog.Client, link *linker) {
 	addSearchLibrary(srv, c, link)
 	addGetPassage(srv, c, link)
 	addFindMentions(srv, c, link)
+	addListNames(srv, c, link)
+	addListSeries(srv, c, link)
+	addGetSeries(srv, c, link)
 }
 
 // The spoiler opt-in every read tool shares: the parameter's jsonschema
@@ -630,4 +633,147 @@ func asAPIErr(err error, target **backhog.APIError) bool {
 		*target = apiErr
 	}
 	return ok
+}
+
+// --- list_names ----------------------------------------------------------
+
+type listNamesIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads past the user's saved reading position (the whole book). Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type nameOut struct {
+	Name      string                `json:"name"`
+	Mentions  int                   `json:"mentions"`
+	FirstSeen backhog.NameFirstSeen `json:"first_seen"`
+}
+
+type listNamesOut struct {
+	Names []nameOut     `json:"names"`
+	Bound backhog.Bound `json:"bound"`
+	Note  string        `json:"note,omitempty"`
+}
+
+func addListNames(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_names",
+		Annotations: readOnly,
+		Description: "The book's own index of names — every character and place that has come up " +
+			"so far, with mention counts and a cited first appearance — bounded to the user's " +
+			"reading position. A name that first appears past the position does not exist yet. " +
+			"This is the cast list of who the user has actually met. Needs a backhog with the " +
+			"name index; if this backhog predates it, read_text and search_book with the name " +
+			"as the query answer instead.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in listNamesIn) (*mcp.CallToolResult, listNamesOut, error) {
+		res, err := c.Names(ctx, in.Book, in.IncludeSpoilers)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == 404 {
+				return nil, listNamesOut{}, fmt.Errorf("this backhog does not have the name index yet " +
+					"(it lands with backhog's name-index update); read_text and search_book with a " +
+					"name as the query answer instead")
+			}
+			return nil, listNamesOut{}, fmt.Errorf("listing names: %w", err)
+		}
+		out := listNamesOut{Bound: res.Bound, Names: make([]nameOut, 0, len(res.Names))}
+		for _, n := range res.Names {
+			if n.Hidden {
+				continue
+			}
+			n.FirstSeen.DeepLink = link.relative(n.FirstSeen.DeepLink)
+			out.Names = append(out.Names, nameOut{Name: n.Name, Mentions: n.Mentions, FirstSeen: n.FirstSeen})
+		}
+		if !in.IncludeSpoilers {
+			out.Note = "Names are bounded to the user's reading position (see bound); a name absent here may appear later."
+		}
+		return nil, out, nil
+	})
+}
+
+// --- list_series ---------------------------------------------------------
+
+type listSeriesOut struct {
+	Series []backhog.SeriesSummary `json:"series"`
+	Note   string                  `json:"note,omitempty"`
+}
+
+func addListSeries(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_series",
+		Annotations: readOnly,
+		Description: "Every series the user's shelf holds books of, with how many they own, " +
+			"have finished, and are reading. Series membership comes from the library's own " +
+			"Calibre metadata. Use this to resolve a series name the user gives before " +
+			"get_series.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, listSeriesOut, error) {
+		series, err := c.SeriesList(ctx)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == 404 {
+				return nil, listSeriesOut{}, fmt.Errorf("this backhog does not have book series yet " +
+					"(they land with backhog's series update); the tools cannot answer about series on it")
+			}
+			return nil, listSeriesOut{}, fmt.Errorf("listing series: %w", err)
+		}
+		if series == nil {
+			series = []backhog.SeriesSummary{}
+		}
+		return nil, listSeriesOut{Series: series}, nil
+	})
+}
+
+// --- get_series ----------------------------------------------------------
+
+type getSeriesIn struct {
+	Series string `json:"series" jsonschema:"the series name, exactly as list_series reports it"`
+}
+
+type seriesBookOut struct {
+	EntryID          string                 `json:"entry_id"`
+	Title            string                 `json:"title"`
+	Authors          []string               `json:"authors,omitempty"`
+	Status           string                 `json:"status"`
+	Finished         bool                   `json:"finished"`
+	SeriesNumber     *float64               `json:"series_number,omitempty"`
+	FirstPublishYear *int                   `json:"first_publish_year,omitempty"`
+	Position         backhog.SeriesPosition `json:"position"`
+	DeepLink         string                 `json:"deep_link"`
+}
+
+type getSeriesOut struct {
+	Name  string          `json:"name"`
+	Books []seriesBookOut `json:"books"`
+	Note  string          `json:"note,omitempty"`
+}
+
+func addGetSeries(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_series",
+		Annotations: readOnly,
+		Description: "The user's books of one series, in reading order, with each book's reading " +
+			"status and position. The scope of a 'story so far': a book with finished=true has " +
+			"been read whole (its text tools serve all of it), a book mid-read is served exactly " +
+			"to its position, and an unread book contributes nothing yet — read_text enforces " +
+			"all of this, so never set include_spoilers for series work.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in getSeriesIn) (*mcp.CallToolResult, getSeriesOut, error) {
+		res, err := c.Series(ctx, in.Series)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == 404 {
+				return nil, getSeriesOut{}, fmt.Errorf("no series of that name on this shelf — " +
+					"list_series shows the exact names, or this backhog predates book series entirely")
+			}
+			return nil, getSeriesOut{}, fmt.Errorf("reading series: %w", err)
+		}
+		out := getSeriesOut{Name: res.Name, Books: make([]seriesBookOut, 0, len(res.Books))}
+		for _, b := range res.Books {
+			b.DeepLink = link.relative(b.DeepLink)
+			out.Books = append(out.Books, seriesBookOut{
+				EntryID: b.EntryID, Title: b.Title, Authors: b.Authors, Status: b.Status,
+				Finished: b.Finished, SeriesNumber: b.SeriesNumber,
+				FirstPublishYear: b.FirstPublishYear, Position: b.Position, DeepLink: b.DeepLink,
+			})
+		}
+		return nil, out, nil
+	})
 }

@@ -147,6 +147,7 @@ export function BookDetailPage() {
               <div className="mt-5 flex max-w-md flex-wrap items-center gap-3">
                 <StatusMenu entry={entry} size="md" statuses={STATUSES} />
                 <ReadButton entry={entry} />
+                <JumpBackInButton entry={entry} />
                 <ListenButton entry={entry} />
                 <SearchButton entry={entry} />
                 <CopyReadButton entry={entry} />
@@ -352,6 +353,45 @@ function ReadButton({ entry }: { entry: BookEntry }) {
       <Button variant="primary">
         <Gi name="scroll-unfurled" className="size-3.5" />
         {into > 0 ? "Continue reading" : "Read"}
+      </Button>
+    </Link>
+  );
+}
+
+/**
+ * "Jump back in" — the returning reader's peek (MAD-469/MAD-441).
+ *
+ * It has been six months; the reader wants to look at where they are and
+ * page back through what came before, without any of that catching-up
+ * counting as reading. The link lands on the stored position flagged as a
+ * peek: the reader opens there, but none of its position writers run —
+ * not the checkpoint, not the leaving flush — so scrolling back through
+ * earlier chapters to remember who these people are never overwrites the
+ * place reading has earned. The banner inside the reader is the way out,
+ * and only then does the position start moving again.
+ *
+ * Offered for a text book with a stored position — the same query the
+ * Read button shares, so the pair costs one round trip.
+ */
+function JumpBackInButton({ entry }: { entry: BookEntry }) {
+  const { data: position } = useQuery({
+    queryKey: ["bookPosition", entry.id],
+    queryFn: () => api.bookPosition(entry.id),
+  });
+
+  const underway =
+    position && position.char_count > 0 && position.char_offset > 0 &&
+    position.position_mode === "text";
+  if (!underway) return null;
+
+  return (
+    <Link
+      to={`/books/${entry.id}/read?offset=${position.char_offset}&peek=1`}
+      title="Open at your spot and look around — a peek never moves your saved position"
+    >
+      <Button variant="secondary">
+        <Gi name="history" className="size-3.5" />
+        Jump back in
       </Button>
     </Link>
   );

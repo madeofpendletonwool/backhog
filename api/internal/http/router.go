@@ -180,6 +180,12 @@ func (s *Server) Routes() http.Handler {
 			// for every caller here — keeps what has not been read out of
 			// the answer unless it is asked for out loud.
 			r.Get("/books/search/text", s.handleSearchLibraryText)
+			// Book series (MAD-469): the shelf's series read surface.
+			// Static path before the {bookID} param routes, as ever —
+			// chi ranks it, and the neighbors document the habit.
+			r.Get("/books/series", s.handleBookSeriesIndex)
+			r.Get("/books/series/{seriesName}", s.handleBookSeriesDetail)
+
 			r.Get("/books/isbn/{isbn}", s.handleBookByISBN)
 			r.Get("/books/{bookID}", s.handleGetBook)
 

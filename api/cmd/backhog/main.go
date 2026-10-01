@@ -15,6 +15,7 @@ import (
 
 	"github.com/collinpendleton/backhog/api/internal/backfill"
 	"github.com/collinpendleton/backhog/api/internal/books/searchindex"
+	"github.com/collinpendleton/backhog/api/internal/books/seriesindex"
 	"github.com/collinpendleton/backhog/api/internal/config"
 	"github.com/collinpendleton/backhog/api/internal/db"
 	apihttp "github.com/collinpendleton/backhog/api/internal/http"
@@ -139,6 +140,11 @@ func run() error {
 		slog.Warn("library text index unavailable", "error", err)
 	}
 
+	// The book series walk names series membership from the Calibre
+	// sidecars the media scan parsed — the read surface the series memory
+	// stands on, healed a lap per boot for libraries attached before it.
+	bookSeries := seriesindex.NewRunner(st)
+
 	server := apihttp.NewServer(cfg, st, provider, books, covers, steam, seriesBackfill, mediaScan)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
@@ -170,6 +176,13 @@ func run() error {
 			}
 		}()
 	}
+	go func() {
+		if n, err := bookSeries.Run(ctx, seriesindex.StartupCap); err != nil {
+			slog.Warn("startup book series walk", "error", err)
+		} else if n > 0 {
+			slog.Info("book series walk", "named", n)
+		}
+	}()
 
 	errc := make(chan error, 1)
 	go func() {

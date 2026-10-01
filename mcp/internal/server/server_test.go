@@ -30,6 +30,8 @@ const (
 	fxReveal = "the butler did it"
 	fxPast   = "candlestick"
 	fxAfter  = "after the trial"
+	// fxSeries is the series the fixture's two books belong to.
+	fxSeries = "Village Mystery"
 )
 
 // fxChapter is one chapter of the fixture: its display blocks (prose) and,
@@ -140,6 +142,8 @@ type stubBackhog struct {
 	// mentionsMissing emulates a backhog that predates the name index,
 	// for the degrade path's test.
 	mentionsMissing bool
+	// seriesMissing emulates a backhog that predates book series.
+	seriesMissing bool
 
 	mu       sync.Mutex
 	recorded []request
@@ -386,6 +390,91 @@ func (s *stubBackhog) serve(w http.ResponseWriter, r *http.Request) {
 			"name": display, "total": len(hits), "results": hits, "bound": s.bound(until),
 		})
 
+	case r.URL.Path == "/api/books/"+fxEntry+"/names":
+		// The name index (MAD-670), same clamp as everywhere: a name
+		// whose only occurrences sit past the bound does not exist yet.
+		limit := s.clamp(until)
+		var names []map[string]any
+		for _, display := range []string{"village", "hill", "detective", "butler"} {
+			key := display
+			count, first := 0, -1
+			for off := 0; ; {
+				i := strings.Index(s.canonical[off:], key)
+				if i < 0 {
+					break
+				}
+				at := off + i
+				if at >= limit {
+					break
+				}
+				if first < 0 {
+					first = at
+				}
+				count++
+				off = at + len(key)
+			}
+			if count == 0 {
+				continue
+			}
+			ch := s.chapterAt(first)
+			chIdx := indexOfChapter(s.chapters, ch) - 1
+			names = append(names, map[string]any{
+				"name": display, "mentions": count, "hidden": false,
+				"first_seen": map[string]any{
+					"char_start": first, "percent": float64(first) / float64(s.charCount) * 100,
+					"chapter": map[string]any{"spine_index": chIdx, "title": ch.title,
+						"title_source": "toc", "number": chIdx + 1,
+						"char_start": ch.start, "char_end": s.charCount},
+					"deep_link": fmt.Sprintf("/books/%s/read?offset=%d&peek=1", fxEntry, first),
+				},
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"names": names, "bound": s.bound(until),
+		})
+
+	case r.URL.Path == "/api/books/series":
+		// Book series (MAD-469). A stub that wants to emulate a backhog
+		// predating them flips seriesMissing and answers 404.
+		if s.seriesMissing {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"series": []map[string]any{{
+				"name": fxSeries, "books": 2, "finished": 1, "reading": 1,
+			}},
+		})
+
+	case r.URL.Path == "/api/books/series/"+fxSeries:
+		if s.seriesMissing {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name": fxSeries,
+			// Ordered the way the real API orders them: by rank in the
+			// series, so the finished book one leads.
+			"books": []map[string]any{{
+				"entry_id": "entry-2", "book_id": "OL0W", "title": "The Earlier Mystery",
+				"authors":         []string{"A. Author"},
+				"status":          "played", "finished": true, "series_number": 1.0,
+				"first_publish_year": 1996,
+				"position": map[string]any{"position_mode": "text",
+					"char_offset": 0, "percent": 100.0},
+				"deep_link": "/books/entry-2/read",
+			}, {
+				"entry_id": fxEntry, "book_id": "OL1W", "title": "The Village Mystery",
+				"authors":         []string{"A. Author"},
+				"status":          "playing", "finished": false, "series_number": 2.0,
+				"first_publish_year": 1998,
+				"position": map[string]any{"position_mode": "text",
+					"char_offset": s.position,
+					"percent":     float64(s.position) / float64(s.charCount) * 100},
+				"deep_link": fmt.Sprintf("/books/%s/read?offset=%d&peek=1", fxEntry, s.position),
+			}},
+		})
+
 	case r.URL.Path == "/api/books/search/text":
 		// MAD-470 has not landed on this backhog.
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
@@ -520,7 +609,8 @@ func TestToolSurface(t *testing.T) {
 	want := map[string]bool{
 		"list_books": false, "get_reading_position": false, "list_chapters": false,
 		"read_text": false, "search_book": false, "search_library": false,
-		"get_passage": false, "find_mentions": false,
+		"get_passage": false, "find_mentions": false, "list_names": false,
+		"list_series": false, "get_series": false,
 	}
 	for _, tool := range res.Tools {
 		if _, ok := want[tool.Name]; !ok {
@@ -979,4 +1069,260 @@ func TestStreamableHTTPRoundTrip(t *testing.T) {
 	if res.IsError || !strings.Contains(textOf(res), fmt.Sprintf(`"char_offset":%d`, stub.position)) {
 		t.Fatalf("unexpected result: %v", textOf(res))
 	}
+}
+
+// --- the series and names surfaces (MAD-469) -------------------------------
+
+func TestListNamesBounded(t *testing.T) {
+	h := newHarness(t)
+	var out struct {
+		Names []struct {
+			Name      string `json:"name"`
+			Mentions  int    `json:"mentions"`
+			FirstSeen struct {
+				CharStart int    `json:"char_start"`
+				DeepLink  string `json:"deep_link"`
+			} `json:"first_seen"`
+		} `json:"names"`
+		Bound struct {
+			CharOffset int `json:"char_offset"`
+		} `json:"bound"`
+		Note string `json:"note"`
+	}
+	h.call(t, "list_names", map[string]any{"book": fxEntry}, &out)
+
+	// Only the names the reader has met: hill and village from Alpha.
+	// The detective and the butler are in Beta, past the position, so
+	// they do not exist yet.
+	got := map[string]int{}
+	for _, n := range out.Names {
+		got[n.Name] = n.Mentions
+	}
+	if got["village"] != 1 || got["hill"] != 1 {
+		t.Fatalf("names = %v, want village and hill", got)
+	}
+	if _, ok := got["detective"]; ok {
+		t.Fatalf("detective exists before being met: %v", got)
+	}
+	if _, ok := got["butler"]; ok {
+		t.Fatalf("butler exists before the reveal: %v", got)
+	}
+	if out.Bound.CharOffset != h.stub.position {
+		t.Fatalf("bound = %d, want the position", out.Bound.CharOffset)
+	}
+	for _, n := range out.Names {
+		if !strings.HasPrefix(n.FirstSeen.DeepLink, h.stub.ts.URL+"/books/") {
+			t.Fatalf("first_seen link not absolutized: %q", n.FirstSeen.DeepLink)
+		}
+	}
+
+	// The spoiler opt-in lifts the clamp, as everywhere.
+	h.call(t, "list_names", map[string]any{"book": fxEntry, "include_spoilers": true}, &out)
+	if len(out.Names) != 4 {
+		t.Fatalf("spoiled names = %d, want the full cast of 4", len(out.Names))
+	}
+}
+
+func TestSeriesTools(t *testing.T) {
+	h := newHarness(t)
+	var index struct {
+		Series []struct {
+			Name     string `json:"name"`
+			Books    int    `json:"books"`
+			Finished int    `json:"finished"`
+			Reading  int    `json:"reading"`
+		} `json:"series"`
+	}
+	h.call(t, "list_series", map[string]any{}, &index)
+	if len(index.Series) != 1 || index.Series[0].Name != fxSeries ||
+		index.Series[0].Books != 2 || index.Series[0].Finished != 1 || index.Series[0].Reading != 1 {
+		t.Fatalf("series index = %+v", index.Series)
+	}
+
+	var detail struct {
+		Name  string `json:"name"`
+		Books []struct {
+			EntryID  string `json:"entry_id"`
+			Title    string `json:"title"`
+			Status   string `json:"status"`
+			Finished bool   `json:"finished"`
+			Position struct {
+				CharOffset int     `json:"char_offset"`
+				Percent    float64 `json:"percent"`
+			} `json:"position"`
+			DeepLink string `json:"deep_link"`
+		} `json:"books"`
+	}
+	h.call(t, "get_series", map[string]any{"series": fxSeries}, &detail)
+	if detail.Name != fxSeries || len(detail.Books) != 2 {
+		t.Fatalf("series detail = %+v", detail)
+	}
+	// Reading order: the finished book one, the underway book two.
+	if detail.Books[0].EntryID != "entry-2" || !detail.Books[0].Finished {
+		t.Fatalf("member one = %+v", detail.Books[0])
+	}
+	if detail.Books[1].EntryID != fxEntry || detail.Books[1].Finished ||
+		detail.Books[1].Position.CharOffset != h.stub.position {
+		t.Fatalf("member two = %+v", detail.Books[1])
+	}
+	if !strings.Contains(detail.Books[1].DeepLink, "/books/"+fxEntry+"/read?offset=") {
+		t.Fatalf("underway deep link = %q", detail.Books[1].DeepLink)
+	}
+}
+
+func TestSeriesToolsDegradeCleanly(t *testing.T) {
+	h := newHarness(t)
+	h.stub.seriesMissing = true
+	msg := h.callErr(t, "list_series", map[string]any{})
+	if !strings.Contains(msg, "does not have book series") {
+		t.Fatalf("degrade message = %q", msg)
+	}
+	msg = h.callErr(t, "get_series", map[string]any{"series": fxSeries})
+	if !strings.Contains(msg, "list_series") {
+		t.Fatalf("get_series degrade should point at list_series: %q", msg)
+	}
+}
+
+// --- the prompts (MAD-469) --------------------------------------------------
+
+func TestPromptSurface(t *testing.T) {
+	h := newHarness(t)
+	res, err := h.session.ListPrompts(h.ctx, nil)
+	if err != nil {
+		t.Fatalf("list prompts: %v", err)
+	}
+	want := map[string]string{
+		"previously_on": "book",
+		"cast_list":     "book",
+		"series_so_far": "series",
+	}
+	seen := map[string]bool{}
+	for _, p := range res.Prompts {
+		arg, ok := want[p.Name]
+		if !ok {
+			t.Fatalf("unexpected prompt %q", p.Name)
+		}
+		seen[p.Name] = true
+		if p.Description == "" {
+			t.Fatalf("prompt %q has no description", p.Name)
+		}
+		if len(p.Arguments) != 1 || p.Arguments[0].Name != arg || !p.Arguments[0].Required {
+			t.Fatalf("prompt %q arguments = %+v", p.Name, p.Arguments)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Fatalf("prompt %q missing from the surface", name)
+		}
+	}
+}
+
+func TestPromptsRenderTheirPlaybooks(t *testing.T) {
+	h := newHarness(t)
+	cases := []struct {
+		prompt string
+		argKey string
+		argVal string
+	}{
+		{"previously_on", "book", "The Village Mystery"},
+		{"cast_list", "book", "The Village Mystery"},
+		{"series_so_far", "series", fxSeries},
+	}
+	for _, tc := range cases {
+		res, err := h.session.GetPrompt(h.ctx, &mcp.GetPromptParams{
+			Name:      tc.prompt,
+			Arguments: map[string]string{tc.argKey: tc.argVal},
+		})
+		if err != nil {
+			t.Fatalf("get %s: %v", tc.prompt, err)
+		}
+		if len(res.Messages) != 1 || res.Messages[0].Role != "user" {
+			t.Fatalf("%s messages = %+v", tc.prompt, res.Messages)
+		}
+		text, ok := res.Messages[0].Content.(*mcp.TextContent)
+		if !ok {
+			t.Fatalf("%s content = %T", tc.prompt, res.Messages[0].Content)
+		}
+		// The playbook carries its subject, its rules, and the tools it
+		// steers the client through.
+		for _, needle := range []string{tc.argVal, "include_spoilers", "deep_link", "read_text"} {
+			if !strings.Contains(text.Text, needle) {
+				t.Fatalf("%s playbook lacks %q", tc.prompt, needle)
+			}
+		}
+	}
+}
+
+func TestPromptRequiresItsArgument(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.session.GetPrompt(h.ctx, &mcp.GetPromptParams{Name: "previously_on"}); err == nil {
+		t.Fatal("a prompt without its required argument must fail")
+	}
+}
+
+// TestPreviouslyOnPlaybookIsLeakFree is the acceptance bar end-to-end: the
+// exact tool walk previously_on prescribes, driven through a real MCP
+// session against the fixture backhog, and every byte any tool answered
+// with is asserted clean of the reveal. The clamp did the withholding; the
+// prompt just has to keep the client inside it.
+func TestPreviouslyOnPlaybookIsLeakFree(t *testing.T) {
+	h := newHarness(t)
+
+	// Step 1: resolve the book.
+	var library struct {
+		Books []struct {
+			EntryID string `json:"entry_id"`
+			Status  string `json:"status"`
+		} `json:"books"`
+	}
+	h.call(t, "list_books", map[string]any{}, &library)
+	if len(library.Books) != 1 || library.Books[0].EntryID != fxEntry {
+		t.Fatalf("library = %+v", library.Books)
+	}
+
+	// Step 2: the position the recap stands "as of".
+	var pos struct {
+		CharOffset int     `json:"char_offset"`
+		Percent    float64 `json:"percent"`
+	}
+	h.call(t, "get_reading_position", map[string]any{"book": fxEntry}, &pos)
+
+	// Step 3: the chapters, locked markers and all.
+	var chapters map[string]any
+	h.call(t, "list_chapters", map[string]any{"book": fxEntry}, &chapters)
+
+	// Step 4: read what the reader has read, paging with next_from.
+	var accumulated strings.Builder
+	from := 0
+	for {
+		var page struct {
+			Text     string `json:"text"`
+			NextFrom *int   `json:"next_from"`
+			Note     string `json:"note"`
+		}
+		h.call(t, "read_text", map[string]any{"book": fxEntry, "from": from}, &page)
+		accumulated.WriteString(page.Text)
+		accumulated.WriteString(page.Note)
+		if page.NextFrom == nil {
+			break
+		}
+		from = *page.NextFrom
+	}
+
+	// Step 5: the cast so far, and one grounding mention each.
+	var names struct {
+		Names []struct {
+			Name string `json:"name"`
+		} `json:"names"`
+	}
+	h.call(t, "list_names", map[string]any{"book": fxEntry}, &names)
+	for _, n := range names.Names {
+		var mentions map[string]any
+		h.call(t, "find_mentions", map[string]any{"book": fxEntry, "name": n.Name}, &mentions)
+	}
+
+	// Everything any tool said, in one bag: nothing in it may carry the
+	// reveal, the withheld word, or the unread final chapter.
+	assertNoLeak(t, "the previously_on walk",
+		accumulated.String(), fmt.Sprintf("%v", chapters), fmt.Sprintf("%v", names))
 }

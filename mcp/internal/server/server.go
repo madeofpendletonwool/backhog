@@ -22,11 +22,13 @@ type Options struct {
 	PublicURL string
 }
 
-// New builds the MCP server with every backhog tool registered. The same
-// *mcp.Server serves any transport; the caller decides stdio or HTTP.
+// New builds the MCP server with every backhog tool and prompt registered.
+// The same *mcp.Server serves any transport; the caller decides stdio or
+// HTTP.
 func New(opts Options) *mcp.Server {
 	srv := mcpServer()
 	addTools(srv, opts.Client, newLinker(opts))
+	addPrompts(srv)
 	return srv
 }
 

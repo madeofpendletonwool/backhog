@@ -856,6 +856,99 @@ verbatim — it is the deterministic half of the knowledge layer (MAD-470).
   position before the mid-book reveal, and the marshalled whole body
   proven free of it.
 
+### The name index: who have I met so far? (MAD-670)
+
+`GET /api/books/{entryID}/names` and `GET /api/books/{entryID}/mentions?name=`
+are the classic back-of-the-book index, built deterministically on ingest —
+no model, just heuristics over the display text whose answers are canonical
+offsets. The MCP `find_mentions` tool is the mentions endpoint verbatim.
+
+- **The extractor is capitalization, walked in two spaces.** The signal
+  lives in the display text (the canonical text is folded to lowercase),
+  but every offset the arena stores is canonical — so `ExtractNames`
+  (`api/internal/books/names.go`) walks block by block, field by field,
+  accumulating the canonical bytes each display field contributes, and
+  turns any display range into its canonical range exactly. Candidates
+  are capitalized runs not at a sentence start; honorifics ("Mrs.")
+  open a run but drop from its identity, so "Mrs Norris" and "Norris"
+  are one entry; lowercase particles ("of", "de") glue multi-word names;
+  possessives fold back onto their name; a stop-list and a
+  frequency floor (two sightings) keep chapter apparatus, shouting and
+  one-off noise out. A name that opens sentences still indexes: one
+  confident mid-sentence sighting promotes the key book-wide, while a
+  capitalized word that only ever opens sentences never promotes on its
+  own — that is the shape of every common word in the language.
+- **The clamp is the point.** Both endpoints default `until=position`
+  for cookie and token callers alike (the library search's rule — an
+  index consulted mid-book asks about the book *so far*): a name first
+  appearing past the reading position does not exist yet. The acceptance
+  test is exactly that: a character introduced in chapter five is
+  absent at a chapter-three position and present, first mention
+  correctly in chapter five, once the reader reaches chapter six.
+- **False positives are the reader's to hide.** `hidden_book_names`
+  stores the verdict per user per book (folded key); hiding never
+  regenerates, and hidden names come back flagged `hidden` rather than
+  vanishing, so the call is reversible in place. The hide/unhide POSTs
+  are cookie-only — the token write gate holds, because the index is
+  the reader's own surface.
+- **Maintenance rides the search-index walk.** Occurrences live in
+  `name_occurrences` keyed by media file (the FTS table's rule);
+  currency is `epub_texts.names_version`, reset by a re-parse and
+  stamped by the same write that lands the rows — a book whose
+  heuristics find no names is legitimately empty, not unindexed. The
+  candidates query's fourth arm sends stale books through the same
+  `EnsureForMediaFile` choke point; detach drops the rows beside the
+  FTS ones.
+
+### Book series: the shelf's own journeys (MAD-469)
+
+`GET /api/books/series` and `GET /api/books/series/{seriesName}` are the
+deterministic half of the returning-reader feature — the ordered shelf a
+"story so far" stands on. There is no external series authority in
+backhog's world (Open Library's work records carry no series field), so
+membership is declared by the one deterministic source the library already
+trusts: **the Calibre sidecars the media scan parses** (`series` /
+`series_index`), stored as columns on the shared work row
+(`books.series_name`, `books.series_number` — rank, frequently fractional,
+NULL for "in the series, rank unknown").
+
+- **Identity is the name; scope is the shelf.** A series is its normalized
+  name; the read paths scope through `library_entries` exactly the way the
+  shelf does, so a series is only ever the caller's own books, and a series
+  the caller holds nothing from is a 404 like any other row that isn't
+  theirs.
+- **Evidence is named at attach and healed by a walk.** Attaching files
+  resolves their sidecar evidence immediately (`NameAttachedBook`): a
+  sidecar sharing a file's stem describes that file; a directory-level
+  `metadata.opf` describes the book only when every attached file in the
+  directory is that one book — the matcher's own `sidecarFor` rules, so
+  the walker and the attach UI can never disagree. Sidecars carrying an
+  exact identity (an OL work key, an ISBN through the editions cache)
+  resolve straight to the book. The boot walk
+  (`internal/books/seriesindex`, the search-index pattern with a rotating
+  cursor) heals libraries attached before the feature; first evidence
+  wins, because two libraries organized differently is a metadata conflict
+  to report, not silently re-resolve.
+- **Order is rank, then year, then title** — Calibre's series_index first,
+  publish year and title for the ranks nobody recorded.
+- **A finished book is fully read.** This is the one refinement the clamp
+  gained: `until=position` resolves to the whole book for a `played`
+  entry, whatever spot the last session stopped on — the reader has been
+  through it, so nothing in it can spoil them, and the series memory
+  spans finished books whole with no per-call opt-in. A dropped book
+  keeps its position standing; the leak bar is unchanged for everything
+  mid-read (`TestFinishedBookReadsWholeUnderPositionDefault`).
+- **Per-book position, not per-book text.** The detail endpoint answers
+  status, the stored position, and a peek deep link per member — facts,
+  not prose. The text itself keeps flowing through the clamped read
+  paths, which is where the withholding lives.
+
+The reader-side affordance of the same feature is the **"Jump back in"**
+button on the book detail page: a peek link to the stored position
+(`?offset=N&peek=1`), so a returning reader can page back through what
+they've read to re-orient without a single position write — the banner
+inside the reader remains the only way back into writing mode.
+
 ### The second corpus: OCR lettering search
 
 A comic or picture book has no canonical text — that is the paged model's
@@ -1015,6 +1108,8 @@ handoff degrades, by asking the user to say where they were.
 | `POST /api/books/{entryID}/passage` | OCR / typed passage → offset (+ alternatives) |
 | `GET /api/books/{entryID}/search` | search the text; hits carry chapter, page and timecode — or, on a paged book, page targets from the lettering corpus |
 | `GET /api/books/search/text` | library-wide text search (FTS5 over chapter text); position-clamped by default, `until=none` opts in |
+| `GET /api/books/{entryID}/names`, `GET …/mentions?name=` | the name index (MAD-670): names met so far + a name's mentions, position-clamped by default; `POST …/names/hide\|/unhide` curates false positives (cookie-only) |
+| `GET /api/books/series`, `GET /api/books/series/{seriesName}` | the caller's book series in reading order, per-book status + position (MAD-469; membership from Calibre sidecars) |
 | `POST/GET/DELETE /api/books/{entryID}/ocr` | lettering enqueue / status / clear — the search-only second corpus for paged books |
 | `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages`, `POST …/copies/{copyID}/seed-from-pdf` | physical copies (owned + borrowed) + page anchors (scanned, pinned, or seeded from a text-native PDF) |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |

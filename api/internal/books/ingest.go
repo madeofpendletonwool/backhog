@@ -104,14 +104,17 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 		if existing.ParserVersion == ParserVersion &&
 			fileExists(ing.TextPath(existing.ID)) && fileExists(ing.IndexPath(existing.ID)) &&
 			fileExists(ing.DisplayPath(existing.ID)) {
-			// The parse is current, but the library search index may not
-			// be — an upgrade to the FTS era, or a crash between the
-			// companion writes and the index write. Healing it here keeps
-			// EnsureForMediaFile the one choke point a book's text
-			// currency passes through, which is what lets the index walk
-			// be a thin loop over this same call.
+			// The parse is current, but the derived indexes may not be —
+			// an upgrade to the FTS or the name-extractor era, or a crash
+			// between the companion writes and an index write. Healing
+			// them here keeps EnsureForMediaFile the one choke point a
+			// book's text currency passes through, which is what lets the
+			// index walk be a thin loop over this same call.
 			if indexed, err := ing.store.BookTextIndexed(ctx, f.ID); err == nil && !indexed {
 				ing.indexChapters(ctx, f, existing)
+			}
+			if existing.NamesVersion != NamesVersion {
+				ing.indexNames(ctx, f, existing)
 			}
 			return existing, nil
 		}
@@ -178,10 +181,11 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 	if err := writeJSONAtomic(ing.IndexPath(et.ID), index); err != nil {
 		return models.EpubText{}, err
 	}
-	// The library search index is a best-effort tail on the parse: the
-	// book is readable without it, so a failure logs and moves on — the
-	// index walk's next pass re-indexes from the companions that did land.
+	// The derived indexes are a best-effort tail on the parse: the book is
+	// readable without them, so a failure logs and moves on — the index
+	// walk's next pass re-indexes from the companions that did land.
 	ing.indexChapters(ctx, f, et)
+	ing.indexNames(ctx, f, et)
 	return et, nil
 }
 
@@ -205,6 +209,27 @@ func (ing *Ingester) indexChapters(ctx context.Context, f models.MediaFile, et m
 	}
 	if err := ing.store.ReplaceBookTextIndex(ctx, *f.BookID, f.ID, chapters, string(data)); err != nil {
 		slog.WarnContext(ctx, "library search index: write", "file", f.ID, "error", err)
+	}
+}
+
+// indexNames runs the name extractor over a parse's companions and stores
+// the occurrences, stamping the extractor version in the same write. Like
+// indexChapters it never fails the caller: a book missing from the name
+// index is an honest gap the walk heals, and the currency check on
+// epub_texts.names_version is what makes the gap visible.
+func (ing *Ingester) indexNames(ctx context.Context, f models.MediaFile, et models.EpubText) {
+	index, err := ing.LoadIndex(ctx, et)
+	if err != nil {
+		slog.WarnContext(ctx, "name index: load block index", "file", f.ID, "error", err)
+		return
+	}
+	display, err := os.ReadFile(ing.DisplayPath(et.ID))
+	if err != nil {
+		slog.WarnContext(ctx, "name index: read display text", "file", f.ID, "error", err)
+		return
+	}
+	if err := ing.store.ReplaceNameIndex(ctx, f.ID, NamesVersion, ExtractNames(index, display)); err != nil {
+		slog.WarnContext(ctx, "name index: write", "file", f.ID, "error", err)
 	}
 }
 

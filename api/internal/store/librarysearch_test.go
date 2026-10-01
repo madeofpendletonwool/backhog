@@ -227,11 +227,24 @@ func TestBookTextIndexCandidatesSkipsCurrentBooks(t *testing.T) {
 		t.Fatalf("candidates = %+v, want the unindexed file first", files)
 	}
 
-	// Indexed: no longer a candidate. The never-parsed second book stays
-	// one, and the cursor skips past what a lap already walked.
+	// Indexed on both legs — FTS and names: no longer a candidate. The
+	// never-parsed second book stays one, and the cursor skips past what a
+	// lap already walked.
 	if err := s.ReplaceBookTextIndex(ctx, "OL1W", file,
 		libraryChapters([2]int{0, len(text)}), text); err != nil {
 		t.Fatalf("index: %v", err)
+	}
+	// Names alone lagging keeps the book a candidate — the walk heals
+	// both indexes, and a fresh extractor era must not read as current.
+	files, err = s.BookTextIndexCandidates(ctx, "v1", 0, 10)
+	if err != nil {
+		t.Fatalf("candidates names-stale: %v", err)
+	}
+	if len(files) != 2 || files[0].ID != file {
+		t.Fatalf("candidates = %+v, want the name-stale file still first", files)
+	}
+	if err := s.ReplaceNameIndex(ctx, file, "n1", nil); err != nil {
+		t.Fatalf("names index: %v", err)
 	}
 	files, err = s.BookTextIndexCandidates(ctx, "v1", 0, 10)
 	if err != nil {

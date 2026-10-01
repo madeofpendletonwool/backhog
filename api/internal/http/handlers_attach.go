@@ -14,6 +14,7 @@ import (
 
 	"github.com/collinpendleton/backhog/api/internal/auth"
 	"github.com/collinpendleton/backhog/api/internal/books/pdf"
+	"github.com/collinpendleton/backhog/api/internal/books/seriesindex"
 	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
@@ -117,7 +118,26 @@ func (s *Server) handleAttachFiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Name the book's series from the sidecar evidence these files carry,
+	// now, so the series surfaces never wait on the next boot's walk. Best
+	// effort by design: a shelf with no sidecars is simply unnamed.
+	if bookID := attachedBookID(files); bookID != "" {
+		if err := seriesindex.NameAttachedBook(r.Context(), s.store, bookID, files); err != nil {
+			slog.WarnContext(r.Context(), "series evidence on attach", "book", bookID, "error", err)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{"attached": len(files), "files": files})
+}
+
+// attachedBookID reads the one book a successful attach batch landed on.
+func attachedBookID(files []models.MediaFile) string {
+	for _, f := range files {
+		if f.BookID != nil && *f.BookID != "" {
+			return *f.BookID
+		}
+	}
+	return ""
 }
 
 // handleDetachFile clears one file's attachment. The file on disk is never

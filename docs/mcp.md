@@ -23,15 +23,44 @@ you explicitly ask it to (`include_spoilers` on a tool call).
 | `search_book(book, query)` | Phrase search with exact quotes and citation links. |
 | `search_library(query)` | Library-wide search: every book you can read, ranked. |
 | `get_passage(book, char_start, char_end)` | The exact text at a character range — quote verification. |
-| `find_mentions(book, name)` | Every place a name has come up so far (needs MAD-670). |
+| `find_mentions(book, name)` | Every place a name has come up so far (the name index, MAD-670). |
+| `list_names(book)` | The book's own index of names so far — the cast you've actually met (MAD-670). |
+| `list_series()` | Every series your shelf holds books of, with counts (MAD-469). |
+| `get_series(series)` | Your books of one series in reading order, each with status and position (MAD-469). |
 
 Every result carries the effective `bound` (where your reading stood) and
 peek deep links (`…/read?offset=N&peek=1`) that jump your reader to a
 passage without moving your saved position. `search_library` reports books
 that matched only past your position as titles in `matched_beyond` — say
 "the library knows, but you haven't read that far" rather than guessing
-where. `find_mentions` returns a clear "not available on this backhog yet"
-error until the name index lands.
+where. `find_mentions` and `list_names` read the name index: a name first
+appearing past your reading position does not exist yet, and
+`include_spoilers` lifts the clamp.
+
+Series come from your library's own Calibre metadata: if your NAS shelf is
+organized with sidecars, the books of a series are grouped and ordered by
+their series index automatically (membership is named when files attach,
+and a background walk heals libraries that predate it). A book you have
+**finished** is served whole under the default clamp — nothing in it can
+spoil you — while the book you're on stops exactly at your position.
+
+## Prompts — the returning reader
+
+The same server ships prompts (MCP `prompts/list`): instruction playbooks
+your assistant runs with the tools above. Three ship today:
+
+| Prompt | What it does |
+| --- | --- |
+| `previously_on(book)` | "Previously on…" — where you are, what has happened, who's who, and the open threads, every line cited with a peek link. |
+| `cast_list(book)` | A dramatis personae of exactly the people introduced so far, each with a cited first appearance. |
+| `series_so_far(series)` | The story so far across a series: the finished books in order, plus where you stand in the current one. |
+
+Each playbook carries the same rules: use the bounded tools only, never
+set `include_spoilers`, cite every line with its deep link, cut any line
+that cannot be cited, and answer "the book doesn't say (so far)" rather
+than drawing on outside knowledge of the work. The recap's spoiler safety
+is the server's clamp, not the model's judgment — a recap requested before
+a mid-book reveal cannot contain it because the tools cannot serve it.
 
 ## Prerequisites
 

@@ -28,6 +28,8 @@ import type {
   PDFSeedInfo,
   PDFSeedResult,
   BookSearchAny,
+  BookNameMentions,
+  BookNames,
   LibrarySearchResults,
   OCRJobView,
   OCRStatusView,
@@ -661,6 +663,42 @@ export const api = {
         (opts?.unreadHits ? "&unread=hits" : ""),
       { signal: opts?.signal },
     ),
+
+  /**
+   * The name index (MAD-670): which names the reader has met, clamped to
+   * their position by default — a character introduced past where they are
+   * simply does not exist yet. `untilNone` is the loud opt-in that lifts
+   * it, exactly like every other read path.
+   */
+  bookNames: (entryId: string, opts?: { untilNone?: boolean }) =>
+    request<BookNames>(
+      `/books/${entryId}/names` + (opts?.untilNone ? "?until=none" : ""),
+    ),
+
+  /**
+   * Where one name has come up so far: every mention inside the clamp,
+   * each with its snippet and peek link.
+   */
+  bookMentions: (entryId: string, name: string, signal?: AbortSignal) =>
+    request<BookNameMentions>(
+      `/books/${entryId}/mentions?name=${encodeURIComponent(name)}`,
+      { signal },
+    ),
+
+  /** Hides a false-positive name from the index — the reader's call,
+   *  stored, never regenerated. */
+  hideBookName: (entryId: string, name: string) =>
+    request<{ ok: boolean }>(`/books/${entryId}/names/hide`, {
+      method: "POST",
+      body: body({ name }),
+    }),
+
+  /** Takes a hidden name back into the index. */
+  unhideBookName: (entryId: string, name: string) =>
+    request<{ ok: boolean }>(`/books/${entryId}/names/unhide`, {
+      method: "POST",
+      body: body({ name }),
+    }),
 
   /** Where a paged book's lettering stands: its job, its corpus, its worker. */
   bookOCRStatus: (entryId: string) =>

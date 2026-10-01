@@ -180,6 +180,12 @@ func (s *Server) Routes() http.Handler {
 			// for every caller here — keeps what has not been read out of
 			// the answer unless it is asked for out loud.
 			r.Get("/books/search/text", s.handleSearchLibraryText)
+			// Book series (MAD-469): the shelf's series read surface.
+			// Static path before the {bookID} param routes, as ever —
+			// chi ranks it, and the neighbors document the habit.
+			r.Get("/books/series", s.handleBookSeriesIndex)
+			r.Get("/books/series/{seriesName}", s.handleBookSeriesDetail)
+
 			r.Get("/books/isbn/{isbn}", s.handleBookByISBN)
 			r.Get("/books/{bookID}", s.handleGetBook)
 
@@ -275,6 +281,16 @@ func (s *Server) Routes() http.Handler {
 			// lettering corpus instead: hits carry page targets, never
 			// offsets.
 			r.Get("/books/{entryID}/search", s.handleSearchInBook)
+
+			// The name index (MAD-670): "which names have I met?" and
+			// "where has this one come up?". Both clamp to the reading
+			// position by default — for cookie callers too, because an
+			// index consulted mid-book is asking about the book so far —
+			// and hiding a false positive is the reader's own write.
+			r.Get("/books/{entryID}/names", s.handleBookNames)
+			r.Get("/books/{entryID}/mentions", s.handleBookMentions)
+			r.Post("/books/{entryID}/names/hide", s.handleHideBookName)
+			r.Post("/books/{entryID}/names/unhide", s.handleUnhideBookName)
 
 			// The OCR lettering queue: make a comic or picture book
 			// searchable without ever pretending it has a text. Watching

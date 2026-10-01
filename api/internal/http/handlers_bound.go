@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -37,10 +38,10 @@ const (
 // when the bound is the whole book (nothing was cut) or the book's spine is
 // not loaded on the path that answered.
 type boundView struct {
-	Until      string        `json:"until"`
-	CharOffset int           `json:"char_offset"`
-	Chapter    *chapterView  `json:"chapter"`
-	Percent    float64       `json:"percent"`
+	Until      string       `json:"until"`
+	CharOffset int          `json:"char_offset"`
+	Chapter    *chapterView `json:"chapter"`
+	Percent    float64      `json:"percent"`
 }
 
 // readBound is one request's resolved clamp. Offset is the last readable
@@ -57,7 +58,19 @@ type readBound struct {
 // the whole book. The default is the whole spoiler-safety feature in one
 // line — everything else here is just honoring what was asked for.
 func parseUntil(r *http.Request) (mode string, offset int, ok bool) {
-	switch v := r.URL.Query().Get("until"); v {
+	return parseUntilDefault(r, "")
+}
+
+// parseUntilDefault is parseUntil with a forced default for the surfaces
+// that never move a position and so clamp every caller — the library
+// search, the name index. An explicit `until` always wins; only the
+// omitted-parameter default changes.
+func parseUntilDefault(r *http.Request, def string) (mode string, offset int, ok bool) {
+	v := r.URL.Query().Get("until")
+	if v == "" {
+		v = def
+	}
+	switch v {
 	case "":
 		if auth.UsingAPIToken(r.Context()) {
 			return untilPosition, 0, true
@@ -88,8 +101,17 @@ func parseUntil(r *http.Request) (mode string, offset int, ok bool) {
 // position to offer, and the honest bound for its text is nothing.
 func (s *Server) resolveReadBound(w http.ResponseWriter, r *http.Request,
 	userID, entryID, bookID string, charCount int) (readBound, bool) {
+	return s.resolveReadBoundDefault(w, r, userID, entryID, bookID, charCount, "")
+}
 
-	mode, offset, ok := parseUntil(r)
+// resolveReadBoundDefault is resolveReadBound for the surfaces whose
+// omitted-`until` default is the position for every caller (see
+// parseUntilDefault). The named modes, the explicit offset and every error
+// shape are identical.
+func (s *Server) resolveReadBoundDefault(w http.ResponseWriter, r *http.Request,
+	userID, entryID, bookID string, charCount int, def string) (readBound, bool) {
+
+	mode, offset, ok := parseUntilDefault(r, def)
 	if !ok {
 		fail(w, errorf(http.StatusBadRequest,
 			"until must be \"position\", \"none\" or a non-negative character offset"))
@@ -121,6 +143,13 @@ func (s *Server) resolveReadBound(w http.ResponseWriter, r *http.Request,
 			// to zero is the answer that cannot spoil.
 			offset = 0
 		}
+		// A finished book is fully read: nothing left in it can spoil its
+		// own reader, whatever spot the last session happened to stop on.
+		// The series memory (MAD-469) counts on this — a "story so far"
+		// spans every finished book whole, with no per-call opt-in.
+		if s.entryFinished(ctx, userID, entryID) {
+			offset = charCount
+		}
 	}
 	if offset > charCount {
 		if mode == untilOffset {
@@ -139,6 +168,16 @@ func (s *Server) resolveReadBound(w http.ResponseWriter, r *http.Request,
 	}}, true
 }
 
+// entryFinished reports whether the caller's entry is marked played: the
+// reader has been through the whole book, so the position clamp resolves
+// to everything. A lookup that fails leaves the stored position standing —
+// the safe direction is always less text, and ownership was already proven
+// by the progress read that precedes every caller of this.
+func (s *Server) entryFinished(ctx context.Context, userID, entryID string) bool {
+	entry, err := s.store.GetEntry(ctx, userID, entryID)
+	return err == nil && entry.Status == models.StatusPlayed
+}
+
 // deepLink is the provenance anchor every hit and span carries: a jump into
 // the reader that lands on the offset without ever moving the saved
 // position, because it arrives flagged as a peek (MAD-441).
@@ -150,11 +189,11 @@ func deepLink(entryID string, offset int) string {
 // chapter, which characters, and the link that jumps a reader straight there.
 // Anything an answer is grounded in, the reader can check.
 type provenanceView struct {
-	BookID    string        `json:"book_id"`
-	Chapter   *chapterView  `json:"chapter"`
-	CharStart int           `json:"char_start"`
-	CharEnd   int           `json:"char_end"`
-	DeepLink  string        `json:"deep_link"`
+	BookID    string       `json:"book_id"`
+	Chapter   *chapterView `json:"chapter"`
+	CharStart int          `json:"char_start"`
+	CharEnd   int          `json:"char_end"`
+	DeepLink  string       `json:"deep_link"`
 }
 
 // spanProvenance cites a canonical range: the chapter its start sits in (a
@@ -209,6 +248,11 @@ func (s *Server) resolvePageBound(w http.ResponseWriter, r *http.Request,
 		page = 0
 		if progress.PageIndex != nil {
 			page = *progress.PageIndex
+		}
+		// The finished-book rule, on the page axis: a reader who has been
+		// through the whole book has nothing left to be shown early.
+		if s.entryFinished(ctx, userID, entryID) {
+			page = pageCount
 		}
 	}
 	if page >= pageCount {

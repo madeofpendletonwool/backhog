@@ -419,3 +419,108 @@ func (c *Client) FindMentions(ctx context.Context, entryID, name string, spoiler
 	}
 	return &out, nil
 }
+
+// NameIndexEntry is one name of a book's index (MAD-670): how often it has
+// come up in what the caller may read, and the citation for where it first
+// did. A name first appearing past the reading position is absent.
+type NameIndexEntry struct {
+	Name      string        `json:"name"`
+	Mentions  int           `json:"mentions"`
+	FirstSeen NameFirstSeen `json:"first_seen"`
+	Hidden    bool          `json:"hidden"`
+}
+
+// NameFirstSeen cites a name's introduction: the offset, the chapter it
+// sits in, and the peek link that lands a reader on it.
+type NameFirstSeen struct {
+	CharStart int         `json:"char_start"`
+	Chapter   *ChapterRef `json:"chapter"`
+	Percent   float64     `json:"percent"`
+	DeepLink  string      `json:"deep_link"`
+}
+
+type namesResponse struct {
+	Names []NameIndexEntry `json:"names"`
+	Bound Bound            `json:"bound"`
+}
+
+// Names lists a book's name index, bounded to the caller's reading
+// position by default. On a backhog that predates the endpoint it returns
+// an APIError with status 404.
+func (c *Client) Names(ctx context.Context, entryID string, spoilers bool) (*namesResponse, error) {
+	var out namesResponse
+	if err := c.get(ctx, "/api/books/"+url.PathEscape(entryID)+"/names", untilQuery(spoilers), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SeriesSummary is one row of the series index (MAD-469): a series the
+// caller's shelf holds members of, and how those members stand.
+type SeriesSummary struct {
+	Name     string `json:"name"`
+	Books    int    `json:"books"`
+	Finished int    `json:"finished"`
+	Reading  int    `json:"reading"`
+}
+
+type seriesIndexResponse struct {
+	Series []SeriesSummary `json:"series"`
+}
+
+// SeriesList names every series the caller's shelf holds a member of.
+// On a backhog that predates the endpoint it returns an APIError with
+// status 404.
+func (c *Client) SeriesList(ctx context.Context) ([]SeriesSummary, error) {
+	var out seriesIndexResponse
+	if err := c.get(ctx, "/api/books/series", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Series, nil
+}
+
+// SeriesPosition is the stored reading position of one series member: the
+// facts a "story so far" scopes against.
+type SeriesPosition struct {
+	Mode       string  `json:"position_mode"`
+	CharOffset int     `json:"char_offset"`
+	Percent    float64 `json:"percent"`
+}
+
+// SeriesBook is one member of a series, in reading order. Finished says
+// the whole book is fair game — a finished book's bound is its own end —
+// while a mid-read member's position is exactly where every tool stops.
+type SeriesBook struct {
+	EntryID          string         `json:"entry_id"`
+	BookID           string         `json:"book_id"`
+	Title            string         `json:"title"`
+	Authors          []string       `json:"authors"`
+	Status           string         `json:"status"`
+	Finished         bool           `json:"finished"`
+	SeriesNumber     *float64       `json:"series_number,omitempty"`
+	FirstPublishYear *int           `json:"first_publish_year,omitempty"`
+	Position         SeriesPosition `json:"position"`
+	DeepLink         string         `json:"deep_link"`
+}
+
+type seriesDetailResponse struct {
+	Name  string       `json:"name"`
+	Books []SeriesBook `json:"books"`
+}
+
+// Series lists the caller's books of one series in reading order with
+// per-book status and position. On a backhog without series it returns an
+// APIError with status 404.
+//
+// The name goes in raw: get() assigns the path to url.URL.Path, which
+// renders it escaped exactly once — pre-escaping here would double the
+// escape and name a series that does not exist. A series whose name
+// contains a slash cannot be addressed through a path at all, which is
+// the API's own limit, not this client's.
+func (c *Client) Series(ctx context.Context, name string) (*seriesDetailResponse, error) {
+	var out seriesDetailResponse
+	if err := c.get(ctx, "/api/books/series/"+name, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

@@ -150,10 +150,15 @@ type stubBackhog struct {
 	mentionsMissing bool
 	// seriesMissing emulates a backhog that predates book series.
 	seriesMissing bool
+	// claimsMissing emulates a backhog that predates the claims store.
+	claimsMissing bool
 	// quizWrite emulates a token carrying the quiz:write scope: the
 	// quiz-results POST is accepted when set, and answered with the same
 	// 403 every write gets when not.
 	quizWrite bool
+	// claimsWrite emulates a token carrying the claims:write scope, the
+	// same arrangement for the claims import POST.
+	claimsWrite bool
 
 	mu       sync.Mutex
 	recorded []request
@@ -161,6 +166,9 @@ type stubBackhog struct {
 	// comprehension ladder reads, so achievements cross like the real one.
 	quizResults int
 	quizCorrect int
+	// importedClaims holds the claims the import POST accepted, so the
+	// reads can serve what the write wrote.
+	importedClaims []map[string]any
 }
 
 func newStubBackhog(t *testing.T) *stubBackhog {
@@ -279,12 +287,17 @@ func (s *stubBackhog) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
 		return
 	}
-	// The one write the bridge carries: the quiz report. Gated behind
-	// quizWrite like the real one is gated behind the quiz:write scope;
-	// every other POST, PUT, PATCH and DELETE stays behind the 403.
+	// The two writes the bridge carries: the quiz report and the claims
+	// import. Gated behind quizWrite and claimsWrite like the real ones
+	// are gated behind their scopes; every other POST, PUT, PATCH and
+	// DELETE stays behind the 403.
 	if r.Method != http.MethodGet {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/books/"+fxEntry+"/quiz-results" && s.quizWrite {
 			s.serveQuizResult(w, body)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/books/"+fxEntry+"/claims" && s.claimsWrite {
+			s.serveClaimsImport(w, body)
 			return
 		}
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this token is read-only"})
@@ -557,9 +570,211 @@ func (s *stubBackhog) serve(w http.ResponseWriter, r *http.Request) {
 		// MAD-470 has not landed on this backhog.
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 
+	case r.URL.Path == "/api/books/"+fxEntry+"/claims":
+		s.serveClaims(w, until, r.URL.Query().Get("entity"))
+
+	case r.URL.Path == "/api/books/"+fxEntry+"/entities":
+		s.serveEntities(w, until, r.URL.Query().Get("name"))
+
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
+}
+
+// fxClaims is the fixture's stored claims: one wholly read, one whose base
+// is read but whose version (the reveal) is not, one past the bound. The
+// same clamp rules the real API applies: evidence fully read, versions by
+// reveal.
+func (s *stubBackhog) fxClaims() []map[string]any {
+	alphaEnd := len(s.chapters[0].folded[0]) // end of Alpha's first block
+	return []map[string]any{{
+		"id": "fx-claim-1", "statement": "the village sits under the hill",
+		"subject": "the village", "predicate": "sits under", "object": "the hill",
+		"quote": s.canonical[:alphaEnd], "char_start": 0, "char_end": alphaEnd,
+		"reveal_offset": 0, "superseded": false, "source": "stub-extractor", "versions": 0,
+	}, {
+		"id": "fx-claim-2", "statement": "the village kept its peace",
+		"quote":           s.canonical[alphaEnd-20 : alphaEnd],
+		"char_start":      alphaEnd - 20, "char_end": alphaEnd,
+		"reveal_offset":   alphaEnd - 20, "superseded": false, "source": "stub-extractor", "versions": 1,
+	}, {
+		"id": "fx-claim-3", "statement": "the detective found the silver candlestick",
+		"quote":      s.canonical[s.chapters[1].start : s.chapters[1].start+20],
+		"char_start": s.chapters[1].start, "char_end": s.chapters[1].start + 20,
+		"reveal_offset": s.chapters[1].start, "superseded": false, "source": "stub-extractor", "versions": 0,
+	}}
+}
+
+// serveClaims emulates GET /claims: the fixture's claims plus whatever
+// the import POST stored, each with the reveal of the fixture's one
+// version applied past the bound.
+func (s *stubBackhog) serveClaims(w http.ResponseWriter, until, entity string) {
+	if s.claimsMissing {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	limit := s.clamp(until)
+	revealAt := strings.Index(s.canonical, fxReveal)
+
+	s.mu.Lock()
+	rows := append(s.fxClaims(), s.importedClaims...)
+	s.mu.Unlock()
+
+	out := []map[string]any{}
+	for _, c := range rows {
+		start, end := c["char_start"].(int), c["char_end"].(int)
+		if end > limit {
+			continue
+		}
+		view := map[string]any{}
+		for k, v := range c {
+			view[k] = v
+		}
+		view["provenance"] = map[string]any{
+			"book_id": fxEntry, "chapter": nil,
+			"char_start": start, "char_end": end,
+			"deep_link": fmt.Sprintf("/books/%s/read?offset=%d&peek=1", fxEntry, start),
+		}
+		// The one version the fixture carries: revealed at the butler's
+		// confession, so it exists only past the bound.
+		if c["id"] == "fx-claim-2" {
+			view["versions"] = 1
+			if revealAt <= limit {
+				view["statement"] = fxReveal
+				view["quote"] = s.canonical[revealAt : revealAt+len(fxReveal)]
+				view["char_start"] = revealAt
+				view["char_end"] = revealAt + len(fxReveal)
+				view["reveal_offset"] = revealAt
+				view["superseded"] = true
+				view["provenance"] = map[string]any{
+					"book_id": fxEntry, "chapter": nil,
+					"char_start": revealAt, "char_end": revealAt + len(fxReveal),
+					"deep_link": fmt.Sprintf("/books/%s/read?offset=%d&peek=1", fxEntry, revealAt),
+				}
+			}
+		}
+		if entity != "" {
+			subject, _ := c["subject"].(string)
+			object, _ := c["object"].(string)
+			if fold(subject) != fold(entity) && fold(object) != fold(entity) {
+				continue
+			}
+		}
+		out = append(out, view)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"claims": out, "total": len(out), "stale_hidden": 0, "bound": s.bound(until),
+	})
+}
+
+// serveEntities emulates GET /entities: the cast the readable claims
+// speak about, with the alias resolution get_entity leans on.
+func (s *stubBackhog) serveEntities(w http.ResponseWriter, until, name string) {
+	if s.claimsMissing {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	limit := s.clamp(until)
+	alphaEnd := len(s.chapters[0].folded[0])
+
+	entities := []map[string]any{}
+	for _, e := range []struct {
+		id, display, kind string
+		aliases           []string
+		claims            int
+		first             int
+	}{
+		{"fx-entity-1", "The Village", "place", []string{"the hill"}, 1, 0},
+		{"fx-entity-2", "The Detective", "person", nil, 1, s.chapters[1].start},
+	} {
+		if e.first >= limit {
+			continue // every mention sits past the bound: not yet
+		}
+		entities = append(entities, map[string]any{
+			"id": e.id, "name": e.display, "kind": e.kind, "aliases": e.aliases,
+			"claims": e.claims,
+			"first_seen": map[string]any{
+				"char_start": e.first, "chapter": nil, "percent": 50.0,
+				"deep_link": fmt.Sprintf("/books/%s/read?offset=%d&peek=1", fxEntry, e.first),
+			},
+		})
+	}
+	_ = alphaEnd
+	if name != "" {
+		filtered := []map[string]any{}
+		for _, e := range entities {
+			if fold(e["name"].(string)) == fold(name) {
+				filtered = append(filtered, e)
+				continue
+			}
+			for _, a := range e["aliases"].([]string) {
+				if fold(a) == fold(name) {
+					filtered = append(filtered, e)
+					break
+				}
+			}
+		}
+		entities = filtered
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entities": entities, "bound": s.bound(until)})
+}
+
+// serveClaimsImport emulates the claims POST: the cite-or-drop check with
+// no model — a quote that is not the canonical text at its offsets is
+// rejected per item, never fixed up.
+func (s *stubBackhog) serveClaimsImport(w http.ResponseWriter, body string) {
+	var batch struct {
+		Source string `json:"source"`
+		Claims []struct {
+			Statement string  `json:"statement"`
+			Subject   *string `json:"subject"`
+			Predicate *string `json:"predicate"`
+			Object    *string `json:"object"`
+			CharStart int     `json:"char_start"`
+			CharEnd   int     `json:"char_end"`
+			Quote     string  `json:"quote"`
+		} `json:"claims"`
+		Entities []struct {
+			Name    string   `json:"name"`
+			Kind    string   `json:"kind"`
+			Aliases []string `json:"aliases"`
+		} `json:"entities"`
+	}
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&batch); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+
+	type result struct {
+		Index   int    `json:"index"`
+		Status  string `json:"status"`
+		ClaimID string `json:"claim_id,omitempty"`
+		Error   string `json:"error,omitempty"`
+	}
+	results := []result{}
+	stored := 0
+	for i, item := range batch.Claims {
+		if item.CharStart < 0 || item.CharEnd <= item.CharStart || item.CharEnd > s.charCount ||
+			strings.TrimSpace(item.Quote) != strings.TrimSpace(s.canonical[item.CharStart:item.CharEnd]) {
+			results = append(results, result{Index: i, Status: "rejected",
+				Error: "the quote does not match the canonical text at those offsets"})
+			continue
+		}
+		stored++
+		id := fmt.Sprintf("stub-claim-%d", len(s.importedClaims)+stored)
+		s.importedClaims = append(s.importedClaims, map[string]any{
+			"id": id, "statement": item.Statement,
+			"subject": item.Subject, "predicate": item.Predicate, "object": item.Object,
+			"quote": item.Quote, "char_start": item.CharStart, "char_end": item.CharEnd,
+			"reveal_offset": item.CharStart, "superseded": false,
+			"source": batch.Source, "versions": 0,
+		})
+		results = append(results, result{Index: i, Status: "stored", ClaimID: id})
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"stored": stored, "entities": len(batch.Entities),
+		"rejected": len(batch.Claims) - stored, "results": results,
+	})
 }
 
 // displayBlockAt finds the display block holding a canonical offset.
@@ -689,6 +904,7 @@ func TestToolSurface(t *testing.T) {
 		"read_text": false, "search_book": false, "search_library": false,
 		"get_passage": false, "find_mentions": false, "list_names": false,
 		"list_series": false, "get_series": false, "record_quiz_result": false,
+		"get_claims": false, "get_entity": false, "import_claims": false,
 	}
 	for _, tool := range res.Tools {
 		if _, ok := want[tool.Name]; !ok {
@@ -699,11 +915,11 @@ func TestToolSurface(t *testing.T) {
 			t.Fatalf("tool %q has no description", tool.Name)
 		}
 		// The read tools are read-only by design and by token;
-		// record_quiz_result is the one deliberate write and must not
-		// wear the read-only hint.
-		if tool.Name == "record_quiz_result" {
+		// record_quiz_result and import_claims are the two deliberate
+		// writes and must not wear the read-only hint.
+		if tool.Name == "record_quiz_result" || tool.Name == "import_claims" {
 			if tool.Annotations != nil && tool.Annotations.ReadOnlyHint {
-				t.Fatalf("record_quiz_result is marked read-only — it is the bridge's one write")
+				t.Fatalf("%s is marked read-only — it is one of the bridge's writes", tool.Name)
 			}
 			continue
 		}
@@ -1287,6 +1503,7 @@ func TestPromptSurface(t *testing.T) {
 		"series_so_far":   {"series"},
 		"quiz_me":         {"book", "chapters?"},
 		"discussion_prep": {"book", "section?"},
+		"extract_claims":  {"book", "chapters?"},
 	}
 	seen := map[string]bool{}
 	for _, p := range res.Prompts {
@@ -1331,6 +1548,7 @@ func TestPromptsRenderTheirPlaybooks(t *testing.T) {
 		{"series_so_far", "series", fxSeries, nil},
 		{"quiz_me", "book", "The Village Mystery", []string{"record_quiz_result", "WITHOUT"}},
 		{"discussion_prep", "book", "The Village Mystery", []string{"doesn't settle"}},
+		{"extract_claims", "book", "The Village Mystery", []string{"import_claims", "get_passage", "cite-or-drop"}},
 	}
 	for _, tc := range cases {
 		res, err := h.session.GetPrompt(h.ctx, &mcp.GetPromptParams{
@@ -1586,5 +1804,215 @@ func TestQuizMePlaybookIsLeakFree(t *testing.T) {
 	}, &out)
 	if !out.Recorded {
 		t.Fatal("the report was not recorded")
+	}
+}
+
+// TestGetClaims: the store's truths as of the position — read evidence
+// served, past-the-bound claims and unrevealed versions withheld, deep
+// links absolutized, and the degrade path when a backhog predates the
+// store.
+func TestGetClaims(t *testing.T) {
+	h := newHarness(t)
+	var out struct {
+		Claims []struct {
+			ID         string `json:"id"`
+			Statement  string `json:"statement"`
+			Quote      string `json:"quote"`
+			CharStart  int    `json:"char_start"`
+			Superseded bool   `json:"superseded"`
+			Versions   int    `json:"versions"`
+			DeepLink   string `json:"deep_link"`
+		} `json:"claims"`
+		Total int           `json:"total"`
+		Bound backhog.Bound `json:"bound"`
+	}
+	h.call(t, "get_claims", map[string]any{"book": fxEntry}, &out)
+	if out.Total != 2 {
+		t.Fatalf("claims total = %d, want the two readable truths: %+v", out.Total, out)
+	}
+	statements := map[string]bool{}
+	for _, c := range out.Claims {
+		statements[c.Statement] = true
+		if !strings.HasPrefix(c.DeepLink, h.stub.ts.URL+"/books/") {
+			t.Errorf("claim deep link not absolutized: %q", c.DeepLink)
+		}
+	}
+	if !statements["the village sits under the hill"] || !statements["the village kept its peace"] {
+		t.Errorf("read claims missing: %v", statements)
+	}
+	if statements["the detective found the silver candlestick"] {
+		t.Error("a claim past the reading position was served")
+	}
+	// The fixture's version (the reveal) must not exist yet, and nothing
+	// any claim said may leak it.
+	for _, c := range out.Claims {
+		assertNoLeak(t, "claim statement", c.Statement)
+		assertNoLeak(t, "claim quote", c.Quote)
+		if c.Superseded {
+			t.Error("a version was served as superseded before its reveal")
+		}
+	}
+
+	// Out loud, everything: the version is the truth past its reveal.
+	var full struct {
+		Claims []struct {
+			Statement  string `json:"statement"`
+			Superseded bool   `json:"superseded"`
+			Versions   int    `json:"versions"`
+		} `json:"claims"`
+		Total int `json:"total"`
+	}
+	h.call(t, "get_claims", map[string]any{"book": fxEntry, "include_spoilers": true}, &full)
+	if full.Total != 3 {
+		t.Fatalf("unclamped claims = %d, want 3: %+v", full.Total, full)
+	}
+	superseded := 0
+	for _, c := range full.Claims {
+		if c.Superseded {
+			superseded++
+			if c.Statement != fxReveal {
+				t.Errorf("superseding statement = %q, want the reveal", c.Statement)
+			}
+		}
+	}
+	if superseded != 1 {
+		t.Errorf("superseded claims = %d, want 1", superseded)
+	}
+
+	// The entity filter narrows to one cast member.
+	var filtered struct {
+		Total int `json:"total"`
+	}
+	h.call(t, "get_claims", map[string]any{"book": fxEntry, "entity": "the village"}, &filtered)
+	if filtered.Total != 1 {
+		t.Errorf("entity-filtered claims = %d, want 1", filtered.Total)
+	}
+}
+
+// TestGetClaimsOnOldBackhog: a backhog without the store gets the honest
+// degrade path, not a raw error.
+func TestGetClaimsOnOldBackhog(t *testing.T) {
+	h := newHarness(t)
+	h.stub.claimsMissing = true
+	msg := h.callErr(t, "get_claims", map[string]any{"book": fxEntry})
+	for _, needle := range []string{"claims store", "read_text"} {
+		if !strings.Contains(msg, needle) {
+			t.Errorf("degrade message lacks %q: %s", needle, msg)
+		}
+	}
+}
+
+// TestGetEntity: the cast lookup — alias resolution, facts bounded to the
+// position, and the honest absence for an entity not met yet.
+func TestGetEntity(t *testing.T) {
+	h := newHarness(t)
+	var out struct {
+		Name      string   `json:"name"`
+		Kind      string   `json:"kind"`
+		Aliases   []string `json:"aliases"`
+		Claims    int      `json:"claims"`
+		FirstSeen struct {
+			DeepLink string `json:"deep_link"`
+		} `json:"first_seen"`
+		Facts []struct {
+			Statement string `json:"statement"`
+			Quote     string `json:"quote"`
+		} `json:"facts"`
+	}
+	// "the hill" is The Village's registered alias.
+	h.call(t, "get_entity", map[string]any{"book": fxEntry, "name": "the hill"}, &out)
+	if out.Name != "The Village" || out.Kind != "place" {
+		t.Fatalf("entity = %+v", out)
+	}
+	if out.Claims != 1 || len(out.Facts) != 1 || out.Facts[0].Statement != "the village sits under the hill" {
+		t.Fatalf("entity facts = %+v (claims %d)", out.Facts, out.Claims)
+	}
+	for _, f := range out.Facts {
+		assertNoLeak(t, "entity fact", f.Statement)
+		assertNoLeak(t, "entity quote", f.Quote)
+	}
+	if !strings.HasPrefix(out.FirstSeen.DeepLink, h.stub.ts.URL+"/books/") {
+		t.Errorf("first-seen link not absolutized: %q", out.FirstSeen.DeepLink)
+	}
+
+	// The detective's every mention sits past the position: the entity
+	// does not exist yet, and the tool says so without leaking why.
+	msg := h.callErr(t, "get_entity", map[string]any{"book": fxEntry, "name": "The Detective"})
+	assertNoLeak(t, "entity absence message", msg)
+	if !strings.Contains(msg, "reading position") {
+		t.Errorf("absence message = %q", msg)
+	}
+}
+
+// TestImportClaims: the bridge's second write — a batch through the tool,
+// per-item cite-or-drop from the stub, the round trip into get_claims,
+// and the scope wall's actionable message.
+func TestImportClaims(t *testing.T) {
+	h := newHarness(t)
+	h.stub.claimsWrite = true
+	alphaEnd := len(h.stub.chapters[0].folded[0])
+
+	var out struct {
+		Stored   int `json:"stored"`
+		Rejected int `json:"rejected"`
+		Results  []struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"results"`
+	}
+	h.call(t, "import_claims", map[string]any{
+		"book": fxEntry,
+		"claims": []map[string]any{
+			{
+				"statement": "the hill shelters the village", "subject": "the hill",
+				"char_start": 0, "char_end": alphaEnd, "quote": h.stub.canonical[:alphaEnd],
+			},
+			{
+				"statement": "a misquote", "char_start": 0, "char_end": alphaEnd,
+				"quote": "not the text",
+			},
+		},
+		"entities": []map[string]any{{"name": "The Hill", "kind": "place"}},
+	}, &out)
+	if out.Stored != 1 || out.Rejected != 1 {
+		t.Fatalf("stored/rejected = %d/%d: %+v", out.Stored, out.Rejected, out.Results)
+	}
+	if !strings.Contains(out.Results[1].Error, "does not match the canonical text") {
+		t.Errorf("rejection = %q", out.Results[1].Error)
+	}
+
+	// The round trip: what was written is served, bounded like everything.
+	var served struct {
+		Total int `json:"total"`
+	}
+	h.call(t, "get_claims", map[string]any{"book": fxEntry, "entity": "the hill"}, &served)
+	if served.Total != 1 {
+		t.Errorf("imported claim not served: total = %d", served.Total)
+	}
+
+	// The requests the bridge actually made.
+	sawPOST := false
+	for _, req := range h.stub.requests() {
+		if req.Method == "POST" && req.Path == "/api/books/"+fxEntry+"/claims" {
+			sawPOST = true
+		}
+	}
+	if !sawPOST {
+		t.Error("the import never reached the API")
+	}
+}
+
+// TestImportClaimsNeedsScope: a read-only token gets the 403 and the tool
+// turns it into the fix.
+func TestImportClaimsNeedsScope(t *testing.T) {
+	h := newHarness(t) // claimsWrite off
+	msg := h.callErr(t, "import_claims", map[string]any{
+		"book": fxEntry,
+		"claims": []map[string]any{
+			{"statement": "x", "char_start": 0, "char_end": 5, "quote": h.stub.canonical[:5]},
+		},
+	})
+	if !strings.Contains(msg, "claims:write") {
+		t.Errorf("scope message = %q", msg)
 	}
 }

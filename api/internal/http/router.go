@@ -248,6 +248,32 @@ func (s *Server) Routes() http.Handler {
 			// route shape); a session writes it like any other.
 			r.Post("/books/{entryID}/quiz-results", s.handleRecordQuizResult)
 
+			// The claims store (MAD-466): structured statements an
+			// outside extractor grounded in the canonical text. The
+			// import is the one POST the claims:write scope names, and
+			// every item passes the deterministic cite-or-drop check
+			// before anything lands. Reads clamp to the reading position
+			// like every other knowledge surface: a truth exists only
+			// once its evidence has been read, and a version revealed
+			// past the position does not exist yet.
+			r.Post("/books/{entryID}/claims", s.handleImportBookClaims)
+			r.Get("/books/{entryID}/claims", s.handleBookClaims)
+			r.Get("/books/{entryID}/entities", s.handleBookEntities)
+
+			// The claims store (MAD-466): structured knowledge an
+			// external extractor grounded in the canonical text — never
+			// one backhog produced. The POST is the cite-or-drop door:
+			// every item's quote is checked against the text at its
+			// offsets before anything is stored, and rejections are
+			// reported per item. Tokens need the claims:write scope for
+			// it; the reads below clamp to the reading position for
+			// every caller, versions included, and hide claims whose
+			// chapter changed under them (re-ingest) rather than serve
+			// citations nobody can verify.
+			r.Post("/books/{entryID}/claims", s.handleImportBookClaims)
+			r.Get("/books/{entryID}/claims", s.handleBookClaims)
+			r.Get("/books/{entryID}/entities", s.handleBookEntities)
+
 			// The attach flow: files on the NAS become this book's audio
 			// timeline and canonical text. Reading the list is open to
 			// anyone who may read the book — it is how the detail page

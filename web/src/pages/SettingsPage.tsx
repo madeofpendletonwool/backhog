@@ -320,9 +320,10 @@ function SharingPanel() {
 
 /**
  * Personal API tokens: the credential an outside client (an MCP assistant, a
- * script) uses to act as you. A token reads your library by default; the one
- * optional write is quiz:write, the single POST a quizzing assistant needs to
- * record your results.
+ * script) uses to act as you. A token reads your library by default; the two
+ * optional writes are quiz:write (the single POST a quizzing assistant needs
+ * to record your results) and claims:write (the single POST a claims
+ * extractor needs to store what it grounded in your books).
  *
  * The secret is shown exactly once, at creation, because the server keeps
  * only a hash: a lost token is revoked and reissued, never recovered.
@@ -334,6 +335,7 @@ function APITokensPanel() {
   const [name, setName] = useState("");
   const [expiresDays, setExpiresDays] = useState(0);
   const [quizWrite, setQuizWrite] = useState(false);
+  const [claimsWrite, setClaimsWrite] = useState(false);
   const [error, setError] = useState("");
   const [fresh, setFresh] = useState<APIToken | null>(null);
 
@@ -341,7 +343,9 @@ function APITokensPanel() {
 
   const create = useMutation({
     mutationFn: () => {
-      const scopes: TokenScope[] = quizWrite ? ["books:read", "quiz:write"] : ["books:read"];
+      const scopes: TokenScope[] = ["books:read"];
+      if (quizWrite) scopes.push("quiz:write");
+      if (claimsWrite) scopes.push("claims:write");
       return api.createAPIToken({
         name: name.trim(),
         scopes,
@@ -409,7 +413,7 @@ function APITokensPanel() {
         </Button>
       </form>
 
-      <label className="-mt-2 mb-4 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">
+      <label className="-mt-2 mb-2 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">
         <input
           type="checkbox"
           className="size-3.5 accent-hl-bright"
@@ -418,6 +422,18 @@ function APITokensPanel() {
         />
         Also let it record quiz results (quiz:write) — the one write a quizzing
         assistant needs; self-reported, for-fun achievements.
+      </label>
+
+      <label className="mb-4 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">
+        <input
+          type="checkbox"
+          className="size-3.5 accent-hl-bright"
+          checked={claimsWrite}
+          onChange={(event) => setClaimsWrite(event.target.checked)}
+        />
+        Also let it store extracted claims (claims:write) — the one write a
+        claims extractor needs; every quote is checked against the book before
+        it lands.
       </label>
 
       {fresh?.token && <FreshToken token={fresh} onDone={() => setFresh(null)} />}

@@ -31,6 +31,7 @@ func addPrompts(srv *mcp.Server) {
 	addSeriesSoFar(srv)
 	addQuizMe(srv)
 	addDiscussionPrep(srv)
+	addExtractClaims(srv)
 }
 
 // playbookRules is the contract every prompt's message ends with.
@@ -242,6 +243,63 @@ Write 8 to 12 discussion questions in two kinds, each labeled:
 Order them so the discussion travels: start concrete (a scene, a choice), move outward (theme, structure), end on the unsettled ones. Do not answer your own questions — one line of framing at most, then hand them over.
 
 %s`, book, focus, resolveBook, playbookRules))
+	})
+}
+
+// addExtractClaims (MAD-466): populating the claims store — backhog's
+// half is storing and checking; the extraction itself belongs to the
+// client's own model, run here as a disciplined loop of read, cite,
+// verify, report. The cite-or-drop door is waiting on the other side: a
+// quote that does not match the text at its offsets is dropped, and the
+// prompt's rules keep the client from ever sending one.
+func addExtractClaims(srv *mcp.Server) {
+	srv.AddPrompt(&mcp.Prompt{
+		Name:  "extract_claims",
+		Title: "Extract claims",
+		Description: "Turn what the user has actually read of a book into stored claims — facts grounded in " +
+			"quoted passages, checked verbatim against the text, written to the claims store for later " +
+			"questions. Only what they have read; every quote verified before it is sent.",
+		Arguments: []*mcp.PromptArgument{{
+			Name: "book", Required: true,
+			Description: "The book to extract claims from, by title as the user says it.",
+		}, {
+			Name:        "chapters",
+			Description: "Optional: which chapters to cover — a number like 4 or a range like 4-6. Default: the most recently read chapters.",
+		}},
+	}, func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		book, err := promptArg(req, "book")
+		if err != nil {
+			return nil, err
+		}
+		chapters := promptArgOpt(req, "chapters")
+		scope := "the most recently read chapters — not the whole book"
+		if chapters != "" {
+			scope = "the chapters the user asked for: \"" + chapters + "\" (clamped to what they have read; say so if you clamped)"
+		}
+		return promptResult(
+			"Extract claims from "+book,
+			fmt.Sprintf(`The user wants the claims store of "%s" populated: structured facts about the book, each grounded in a quoted passage, so later questions can be answered from stored, checkable truths instead of re-reading. The scope is %s.
+
+%s
+
+Then work the loop — read, claim, verify, report — one chapter at a time:
+
+1. Call get_reading_position and list_chapters. Everything you extract comes from text at or before the position. Never set include_spoilers; if the scope names unread chapters, clamp to the position and say you did.
+2. Read the chapters in scope with read_text (chapter numbers, following next_from). For each chapter:
+   a. Write the claims: short factual statements a reader could want later — who is related to whom, who lives where, what was revealed, what changed. Prefer a subject/predicate/object triple plus a plain statement. Only facts the read text actually states; never your outside knowledge of the work; never your inferences dressed as facts. Skip prose description — a claim is a fact with an address, not a summary.
+   b. Anchor each claim: find where the text states it, and take the exact character offsets from the result's offsets (a block's start, a hit's char_offset). Then VERIFY with get_passage at [char_start, char_end): adjust the span until the passage returned is exactly the words that ground the claim — short is fine, exact is everything. Use the passage text verbatim as the quote.
+   c. Register the cast: for each person or place your claims name, include it in entities (kind person/place/thing) with the aliases the book actually uses. Register once per run.
+3. Report with import_claims: all verified claims and the entities in one call. Items rejected for quote mismatches are yours to fix honestly — re-read the passage with get_passage, correct the offsets or the span, and retry only with what the text says. Never edit a quote to make it fit; never widen a span past what you verified.
+4. Reveal versions: if the read text supersedes an earlier state ("X was suspected" → "X confessed"), send the later truth as a version of the same claim: same subject/predicate, its own evidence span, and the reveal where the truth lands. The store keeps both; readers before the reveal see only the earlier truth.
+
+Honesty rules that are the whole point:
+- Every claim carries offsets you verified with get_passage this session. An unverified quote is a guess, and the cite-or-drop door will drop it anyway.
+- Extract only from what the user has read. A fact from an unread chapter is a spoiler wearing a citation.
+- The subject line of your final answer: how many claims stored, how many rejected, and what the store now knows about the scope. The user should see the shape of what was written.
+
+This needs a token with the claims:write scope; if the call is refused for it, say so and stop — do not work around it.
+
+%s`, book, scope, resolveBook, playbookRules))
 	})
 }
 func promptArg(req *mcp.GetPromptRequest, name string) (string, error) {

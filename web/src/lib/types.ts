@@ -304,9 +304,11 @@ export interface Invite {
 
 export type TokenStatus = "active" | "revoked" | "expired";
 
-/** What a token may do. The default is read-only; quiz:write opens exactly
- *  one POST — recording a self-reported quiz result — and nothing else. */
-export type TokenScope = "books:read" | "quiz:write";
+/** What a token may do. The default is read-only; each write scope opens
+ *  exactly one POST — quiz:write records a self-reported quiz result,
+ *  claims:write imports extractor-written claims (every quote checked
+ *  against the book) — and nothing else. */
+export type TokenScope = "books:read" | "quiz:write" | "claims:write";
 
 /** A personal bearer credential for the API. `token` is the bh_… secret,
  *  present only on the response that created it — the server stores a hash,

@@ -304,9 +304,9 @@ export interface Invite {
 
 export type TokenStatus = "active" | "revoked" | "expired";
 
-/** What a token may do. Write scopes arrive with the features that need
- *  them; until then every token is read-only. */
-export type TokenScope = "books:read";
+/** What a token may do. The default is read-only; quiz:write opens exactly
+ *  one POST — recording a self-reported quiz result — and nothing else. */
+export type TokenScope = "books:read" | "quiz:write";
 
 /** A personal bearer credential for the API. `token` is the bh_… secret,
  *  present only on the response that created it — the server stores a hash,
@@ -777,6 +777,10 @@ export interface ReadingSeason {
   authors_cleared: number;
   /** Books finished after a year or more of ownership. */
   rescues: number;
+  /** Quiz questions answered / answered correctly this year, as reported by
+   *  quizzing clients. Self-reported — for fun, not proof. */
+  quiz_answered: number;
+  quiz_correct: number;
 }
 
 /** A project kind: what the target is measured against. */

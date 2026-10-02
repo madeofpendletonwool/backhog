@@ -95,11 +95,16 @@ func Middleware(r Resolver, tokens TokenResolver) func(http.Handler) http.Handle
 				// A token is read-only until a write scope exists to say
 				// otherwise. The check is on the method, not the route,
 				// so no write endpoint can appear beside it unguarded.
-				// The one exception is a read wearing POST's clothes:
-				// passage placement carries its query in a body and
-				// writes nothing, so a books:read token may ask it like
-				// the app does.
-				if isWriteMethod(req.Method) && !isReadShapedPost(req) {
+				// Two exceptions, both narrow:
+				//   - a read wearing POST's clothes: passage placement
+				//     carries its query in a body and writes nothing, so a
+				//     books:read token may ask it like the app does;
+				//   - a quiz result: the one POST the quiz:write scope
+				//     names, self-reported counts against the caller's own
+				//     shelf and nothing else.
+				if isWriteMethod(req.Method) &&
+					!isReadShapedPost(req) &&
+					!(isQuizResultPost(req) && hasScope(scopes, models.ScopeQuizWrite)) {
 					writeError(w, http.StatusForbidden,
 						"this token is read-only — manage your library from the app")
 					return
@@ -165,6 +170,30 @@ func isReadShapedPost(req *http.Request) bool {
 	}
 	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
 	return len(parts) == 4 && parts[0] == "api" && parts[1] == "books" && parts[3] == "passage"
+}
+
+// isQuizResultPost reports whether the request is the one write the
+// quiz:write scope names: recording a quiz result against a book entry.
+// Same shape-matching discipline as isReadShapedPost — the middleware runs
+// before chi resolves the route, so exactly /api/books/{entryID}/quiz-results
+// is the address, and the route table binds that shape to the quiz handler.
+// Any other POST stays behind the read-only wall whatever its scopes.
+func isQuizResultPost(req *http.Request) bool {
+	if req.Method != http.MethodPost {
+		return false
+	}
+	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	return len(parts) == 4 && parts[0] == "api" && parts[1] == "books" && parts[3] == "quiz-results"
+}
+
+// hasScope reports whether the token's scope list carries s.
+func hasScope(scopes []string, s string) bool {
+	for _, scope := range scopes {
+		if scope == s {
+			return true
+		}
+	}
+	return false
 }
 
 // Require rejects requests that Middleware did not authenticate.

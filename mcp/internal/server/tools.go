@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -55,6 +56,7 @@ func addTools(srv *mcp.Server, c *backhog.Client, link *linker) {
 	addListNames(srv, c, link)
 	addListSeries(srv, c, link)
 	addGetSeries(srv, c, link)
+	addRecordQuizResult(srv, c)
 }
 
 // The spoiler opt-in every read tool shares: the parameter's jsonschema
@@ -633,6 +635,73 @@ func asAPIErr(err error, target **backhog.APIError) bool {
 		*target = apiErr
 	}
 	return ok
+}
+
+// --- record_quiz_result ---------------------------------------------------
+
+type recordQuizIn struct {
+	Book        string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	Questions   int    `json:"questions" jsonschema:"how many questions the quiz asked"`
+	Correct     int    `json:"correct" jsonschema:"how many the reader answered correctly — the count you actually graded, never a flattering one"`
+	ChapterFrom int    `json:"chapter_from,omitempty" jsonschema:"optional first chapter (1-based, from list_chapters) the quiz covered"`
+	ChapterTo   int    `json:"chapter_to,omitempty" jsonschema:"optional last chapter (1-based, inclusive) the quiz covered"`
+}
+
+type recordQuizOut struct {
+	Recorded     bool                      `json:"recorded"`
+	Questions    int                       `json:"questions"`
+	Correct      int                       `json:"correct"`
+	Achievements []backhog.QuizAchievement `json:"achievements"`
+	Note         string                    `json:"note,omitempty"`
+}
+
+// addRecordQuizResult registers the bridge's only write: the report a
+// quizzing client files after grading. It exists so the achievements and
+// the Reading Season card can count comprehension — and its honesty is
+// entirely the caller's: backhog stores what is sent, it never grades.
+func addRecordQuizResult(srv *mcp.Server, c *backhog.Client) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "record_quiz_result",
+		Description: "Record a quiz's outcome after you have graded the reader's answers: how many " +
+			"questions were asked and how many they got right. The only write this server carries. " +
+			"Report the count you actually graded — a flattering count buys a hollow achievement. " +
+			"Call it once per quiz, only with the reader's knowledge; anything it unlocks is for fun, " +
+			"not proof. Needs a token with the quiz:write scope.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in recordQuizIn) (*mcp.CallToolResult, recordQuizOut, error) {
+		if in.Questions < 1 {
+			return nil, recordQuizOut{}, fmt.Errorf("questions must be at least 1 — a quiz with no questions did not happen")
+		}
+		if in.Correct < 0 || in.Correct > in.Questions {
+			return nil, recordQuizOut{}, fmt.Errorf("correct must be between 0 and the questions asked")
+		}
+		report := backhog.QuizResultReport{
+			Questions: in.Questions, Correct: in.Correct, Source: "mcp",
+		}
+		if in.ChapterFrom > 0 || in.ChapterTo > 0 {
+			if in.ChapterFrom < 1 || in.ChapterTo < in.ChapterFrom {
+				return nil, recordQuizOut{}, fmt.Errorf("the chapter range must run from a chapter to the same or a later one")
+			}
+			report.ChapterRange = &backhog.QuizChapterRange{From: in.ChapterFrom, To: in.ChapterTo}
+		}
+		recorded, err := c.RecordQuizResult(ctx, in.Book, report)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == http.StatusForbidden {
+				return nil, recordQuizOut{}, fmt.Errorf("this token cannot record quiz results — mint one with the quiz:write scope in Settings → API tokens")
+			}
+			return nil, recordQuizOut{}, fmt.Errorf("recording quiz result: %w", err)
+		}
+		out := recordQuizOut{
+			Recorded:     true,
+			Questions:    recorded.QuizResult.Questions,
+			Correct:      recorded.QuizResult.Correct,
+			Achievements: recorded.Achievements,
+		}
+		if len(out.Achievements) == 0 {
+			out.Note = "Recorded. Nothing new unlocked — the ladder climbs slowly, that is the point."
+		}
+		return nil, out, nil
+	})
 }
 
 // --- list_names ----------------------------------------------------------

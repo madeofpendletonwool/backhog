@@ -7,10 +7,12 @@ local model for users who want the text to never leave their network. No
 model runs inside backhog or this server — it is an adapter.
 
 The spoiler safety is a server guarantee, not a model promise: the personal
-API token this server holds is read-only **and** defaults to
-`until=position`, so every tool result is clamped to *your reading
-position*. An assistant using these tools cannot read ahead of you unless
-you explicitly ask it to (`include_spoilers` on a tool call).
+API token this server holds reads nothing past your position **and** every
+read defaults to `until=position`, so every tool result is clamped to *your
+reading position*. An assistant using these tools cannot read ahead of you
+unless you explicitly ask it to (`include_spoilers` on a tool call). The
+one write the bridge carries is recording a quiz score — counts only, and
+only with a token you gave the `quiz:write` scope.
 
 ## What your assistant sees
 
@@ -27,6 +29,7 @@ you explicitly ask it to (`include_spoilers` on a tool call).
 | `list_names(book)` | The book's own index of names so far — the cast you've actually met (MAD-670). |
 | `list_series()` | Every series your shelf holds books of, with counts (MAD-469). |
 | `get_series(series)` | Your books of one series in reading order, each with status and position (MAD-469). |
+| `record_quiz_result(book, questions, correct, chapter_from?, chapter_to?)` | Report a quiz's outcome after grading it — the only write this server carries (needs a token with `quiz:write`, MAD-471). |
 
 Every result carries the effective `bound` (where your reading stood) and
 peek deep links (`…/read?offset=N&peek=1`) that jump your reader to a
@@ -47,13 +50,15 @@ spoil you — while the book you're on stops exactly at your position.
 ## Prompts — the returning reader
 
 The same server ships prompts (MCP `prompts/list`): instruction playbooks
-your assistant runs with the tools above. Three ship today:
+your assistant runs with the tools above. Five ship today:
 
 | Prompt | What it does |
 | --- | --- |
 | `previously_on(book)` | "Previously on…" — where you are, what has happened, who's who, and the open threads, every line cited with a peek link. |
 | `cast_list(book)` | A dramatis personae of exactly the people introduced so far, each with a cited first appearance. |
 | `series_so_far(series)` | The story so far across a series: the finished books in order, plus where you stand in the current one. |
+| `quiz_me(book, chapters?)` | A quiz over the chapters you've actually read — questions first, answers after, every answer in the key cited with a passage link (MAD-471). |
+| `discussion_prep(book, section?)` | Book-club questions grounded in cited passages, plus the ones the book doesn't settle (MAD-471). |
 
 Each playbook carries the same rules: use the bounded tools only, never
 set `include_spoilers`, cite every line with its deep link, cut any line
@@ -62,12 +67,29 @@ than drawing on outside knowledge of the work. The recap's spoiler safety
 is the server's clamp, not the model's judgment — a recap requested before
 a mid-book reveal cannot contain it because the tools cannot serve it.
 
+The quiz playbook ends the same honest way: after grading your answers
+against cited passages, the assistant calls `record_quiz_result` with the
+count it actually graded — never a flattering one — and tells you what
+the result unlocked.
+
+## An honest word about quiz achievements
+
+Quiz results are **self-reported by whichever assistant gave the quiz**.
+Backhog stores the counts; it does not grade, and nothing in it can verify
+what your model scored you. The comprehension achievements (Book Report,
+Gold Star, Honor Roll) and the Reading Season quiz stat are a game to play
+with your assistant — **for fun, not proof** — and their descriptions say
+so. If a score sounds too good to be true, it was graded by a friend who
+likes you.
+
 ## Prerequisites
 
 1. A backhog account with books in your library.
-2. A personal API token: **Settings → API tokens → create**, leave it
-   read-only (`books:read`), copy the `bh_…` secret when it is shown — it
-   is displayed exactly once.
+2. A personal API token: **Settings → API tokens → create**, copy the
+   `bh_…` secret when it is shown — it is displayed exactly once.
+   Read-only (`books:read`) covers every tool except `record_quiz_result`;
+   tick **quiz:write** if you want your assistant to be able to record
+   quiz results — the single write that scope names.
 
 ## Claude Code
 
@@ -88,7 +110,10 @@ claude mcp add backhog \
 
 Now, mid-book, you can ask things like *"what did the detective find in the
 pantry?"* or *"who is Iris so far?"* — and get answers grounded only in what
-you have read, with links you can click to check.
+you have read, with links you can click to check. Say *"quiz me"* and the
+same grounding becomes a comprehension check: questions from the chapters
+you've read, graded against the passages that answer them, the honest score
+recorded when you want it counted.
 
 ## Claude Desktop
 
@@ -144,7 +169,7 @@ has only been shown your first three chapters cannot quote the fourth.
 | Variable | Flag | Meaning |
 | --- | --- | --- |
 | `BACKHOG_URL` | `-backhog-url` | Backhog origin (an `/api` suffix is tolerated). |
-| `BACKHOG_TOKEN` | `-backhog-token` | Personal read-only token, `bh_…`. |
+| `BACKHOG_TOKEN` | `-backhog-token` | Personal token, `bh_…` — read-only, or read + `quiz:write` to let it record quiz results. |
 | `BACKHOG_PUBLIC_URL` | `-public-url` | Origin for deep links when it differs from `BACKHOG_URL`. |
 | `BACKHOG_MCP_HTTP` | `-http addr` | Serve streamable HTTP on `addr` instead of stdio. |
 | — | `-healthcheck` | Probe `/healthz` once and exit (container healthchecks). |

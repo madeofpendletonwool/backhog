@@ -29,6 +29,8 @@ func addPrompts(srv *mcp.Server) {
 	addPreviouslyOn(srv)
 	addCastList(srv)
 	addSeriesSoFar(srv)
+	addQuizMe(srv)
+	addDiscussionPrep(srv)
 }
 
 // playbookRules is the contract every prompt's message ends with.
@@ -44,7 +46,7 @@ const playbookRules = `Rules you must not bend:
 const resolveBook = `First resolve the book: call list_books and match the argument against titles (case-insensitive). If several match, prefer the one with status "playing"; if still ambiguous, ask the user which they mean rather than guessing. Use the matched entry_id for every later call.`
 
 func addPreviouslyOn(srv *mcp.Server) {
-	srv.AddPrompt( &mcp.Prompt{
+	srv.AddPrompt(&mcp.Prompt{
 		Name:        "previously_on",
 		Title:       "Previously on…",
 		Description: "A recap of everything the reader has actually read so far — events, people, and open threads — every line cited with a link that jumps right to the passage.",
@@ -80,7 +82,7 @@ Then write the recap in four short sections, every line cited with its deep_link
 }
 
 func addCastList(srv *mcp.Server) {
-	srv.AddPrompt( &mcp.Prompt{
+	srv.AddPrompt(&mcp.Prompt{
 		Name:        "cast_list",
 		Title:       "Cast list",
 		Description: "Who's who in the book as of the reader's position — a dramatis personae of exactly the people met so far, each with a cited introduction.",
@@ -112,7 +114,7 @@ Then write the dramatis personae: name, one line, and the deep_link to their fir
 }
 
 func addSeriesSoFar(srv *mcp.Server) {
-	srv.AddPrompt( &mcp.Prompt{
+	srv.AddPrompt(&mcp.Prompt{
 		Name:        "series_so_far",
 		Title:       "The story so far",
 		Description: "Across a whole series: the finished books in order, plus where the reader stands in the one they're on — every line cited, nothing from books not yet begun.",
@@ -144,13 +146,115 @@ Cross-book continuity is yours to see: a character introduced in one book and re
 	})
 }
 
-// promptArg reads one required string argument from a prompts/get call.
+// addQuizMe (MAD-471): the comprehension half of the knowledge layer. The
+// model writes questions from what the reader has actually read, withholds
+// the answers, grades against cited passages, and reports the honest count
+// — backhog's AI-free endpoint does the rest.
+func addQuizMe(srv *mcp.Server) {
+	srv.AddPrompt(&mcp.Prompt{
+		Name:        "quiz_me",
+		Title:       "Quiz me",
+		Description: "A quiz over the chapters actually read — questions first, answers after, every answer in the key cited with a passage link, and the honest score reported at the end.",
+		Arguments: []*mcp.PromptArgument{{
+			Name: "book", Required: true,
+			Description: "The book to be quizzed on, by title as the user says it.",
+		}, {
+			Name:        "chapters",
+			Description: "Optional: which chapters to cover — a number like 4, a range like 4-6, or \"last 2\". Default: the most recently read chapters.",
+		}},
+	}, func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		book, err := promptArg(req, "book")
+		if err != nil {
+			return nil, err
+		}
+		chapters := promptArgOpt(req, "chapters")
+		scope := "the most recently read chapters — the last few the reader has finished, not the whole book"
+		if chapters != "" {
+			scope = "the chapters the user asked for: \"" + chapters + "\" (read it as a number, a range, or a count from the end; if it names chapters the reader has not reached, clamp to what they have read and say you did)"
+		}
+		return promptResult(
+			"Quiz me on "+book,
+			fmt.Sprintf(`The user wants to be quizzed on the book "%s" — a check of what they actually retained, not an exam. The quiz covers %s.
+
+%s
+
+Then:
+1. Call get_reading_position — the quiz asks only about text at or before it, by decree of the server.
+2. Call list_chapters to see the book's shape and which chapters are still locked. Locked chapters are off the table; treat their titles cautiously too.
+3. Read the chapters in scope with read_text (use the chapter number), enough to write questions grounded in specific passages. Follow next_from until you have the material.
+4. Write 5 to 8 questions: a mix of recall (what happened, who said it) and inference (why did they, what does it mean for later). Every question must be answerable from the text the reader has read — never from outside knowledge of the work, and never from beyond the reading position. Vary the difficulty; the point is to find what stuck, not to stump.
+
+Present the questions numbered, WITHOUT any answers, and stop. Wait for the user's answers — do not answer for them, do not hint.
+
+When the user answers, grade each one against the text (read_text or get_passage to check before judging):
+- for each question: their answer, whether it counts (right, half-right, wrong), and the citation — the quote and its deep_link from the passage that settles it;
+- a wrong answer gets the passage that would have answered it, so the quiz teaches on the way out;
+- an answer the read text does not settle is not correct just because it sounds plausible — the book is the arbiter, and only the part of it the reader has read.
+
+Then report the score plainly and call record_quiz_result with the honest count: the number of questions you asked, and the number you graded correct (half-right counts only if you said so while grading, and then only as one count or the other — pick one). Never round up. Tell the user you recorded it and what it unlocked; if they would rather not record it, say so before calling — but never record a count you did not grade.
+
+%s`, book, scope, resolveBook, playbookRules))
+	})
+}
+
+// addDiscussionPrep (MAD-471): the book-club half. Questions grounded in
+// cited passages, plus the honest kind no quiz can have — the ones the
+// book, so far, refuses to settle.
+func addDiscussionPrep(srv *mcp.Server) {
+	srv.AddPrompt(&mcp.Prompt{
+		Name:        "discussion_prep",
+		Title:       "Discussion prep",
+		Description: "Book-club questions over what's been read — each grounded in a cited passage, plus the open questions the book hasn't settled yet.",
+		Arguments: []*mcp.PromptArgument{{
+			Name: "book", Required: true,
+			Description: "The book to discuss, by title as the user says it.",
+		}, {
+			Name:        "section",
+			Description: "Optional: what to focus the questions on — a chapter number or title, a character, or a theme.",
+		}},
+	}, func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		book, err := promptArg(req, "book")
+		if err != nil {
+			return nil, err
+		}
+		section := promptArgOpt(req, "section")
+		focus := "the whole read-so-far"
+		if section != "" {
+			focus = "the angle the user named: \"" + section + "\" — a chapter, a character, or a theme; find the passages that speak to it with search_book, read_text and find_mentions"
+		}
+		return promptResult(
+			"Discussion prep for "+book,
+			fmt.Sprintf(`The user is preparing to talk about the book "%s" — a book club, a reading group, or just a think. Build the question set a good discussion needs, over %s.
+
+%s
+
+Then:
+1. Call get_reading_position — the discussion covers what the user has read, full stop. Say where they are so everyone knows the room's "as of".
+2. Call list_chapters for the book's shape; locked chapters are ahead of the reader and out of bounds.
+3. Gather the material: read_text over the read chapters (lightly for sweep, closely near the position), search_book for the passages that bear on the focus, find_mentions for the people who matter. Every question you write must stand on a passage you actually saw.
+
+Write 8 to 12 discussion questions in two kinds, each labeled:
+
+**Grounded in the text** — questions a passage can open: why a character did the thing at the deep_link; what a choice costs; what the book seems to believe, as shown at the deep_link; what the user would have done in the scene at the deep_link. Each carries its citation. A grounded question asks what the reader makes of the passage — it shows the passage, it does not quiz on it.
+
+**The book doesn't settle this** — the open questions: what the read text raises and pointedly does not answer, where reasonable readers could disagree, what the book seems to be asking the reader to decide. Mark these honestly: they are questions *about* the read text, and the answer is the discussion itself. Never smuggle in something only a later chapter resolves — if the tools would not serve the passage, the question cannot lean on it.
+
+Order them so the discussion travels: start concrete (a scene, a choice), move outward (theme, structure), end on the unsettled ones. Do not answer your own questions — one line of framing at most, then hand them over.
+
+%s`, book, focus, resolveBook, playbookRules))
+	})
+}
 func promptArg(req *mcp.GetPromptRequest, name string) (string, error) {
 	v := strings.TrimSpace(req.Params.Arguments[name])
 	if v == "" {
 		return "", fmt.Errorf("the %q argument is required — say which %s this is for", name, name)
 	}
 	return v, nil
+}
+
+// promptArgOpt reads one optional string argument from a prompts/get call.
+func promptArgOpt(req *mcp.GetPromptRequest, name string) string {
+	return strings.TrimSpace(req.Params.Arguments[name])
 }
 
 // promptResult wraps one instruction message as the prompt's answer: the

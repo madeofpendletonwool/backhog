@@ -34,6 +34,11 @@ const (
 	// EventResumed fires when a dropped game comes back: a transition from
 	// dropped to playing or backlog. Unlocks the comeback predicates.
 	EventResumed = "resumed"
+	// EventQuiz fires when a client records a quiz result against a book.
+	// The result is self-reported — the client's model wrote the questions
+	// and graded the answers — so the comprehension ladder it feeds is
+	// for fun, never proof, and the docs say so out loud.
+	EventQuiz = "quiz"
 )
 
 // Thresholds the predicates turn on.
@@ -170,6 +175,11 @@ const (
 	// cartographerPages is how many pages of one physical copy a user must
 	// map by scanning before the map counts as drawn.
 	cartographerPages = 25
+	// The comprehension ladder (MAD-471): correct quiz answers recorded by
+	// a quizzing client within one calendar year. Self-reported counts,
+	// sized so a season of honest quizzing climbs it.
+	goldStarCorrect  = 25
+	honorRollCorrect = 100
 )
 
 // Entry is the snapshot of the triggering library entry, plus the user-level
@@ -322,6 +332,12 @@ type Entry struct {
 	// XboxGenerations is how many distinct Xbox generations the finishes
 	// span.
 	XboxGenerations int
+	// YearQuizCorrect is how many quiz answers the user has gotten right
+	// in At's calendar year, the result being evaluated included. Book
+	// domain only, and only meaningful on a quiz event: the comprehension
+	// ladder climbs it. The count is self-reported by quizzing clients —
+	// the ladder treats it as play, not proof.
+	YearQuizCorrect int
 }
 
 // DropCycle is one drop-and-return arc: when the entry was dropped and, if
@@ -370,6 +386,12 @@ func (e Event) dropped() bool {
 // resumed reports whether this event is a dropped game coming back.
 func (e Event) resumed() bool {
 	return e.Kind == EventResumed
+}
+
+// quizzed reports whether this event is a recorded quiz result — the
+// self-reported comprehension signal the books arena's quiz ladder climbs.
+func (e Event) quizzed() bool {
+	return e.Kind == EventQuiz
 }
 
 // book reports whether the event's snapshot belongs to the books arena.
@@ -1526,6 +1548,50 @@ var Catalogue = []Definition{
 		},
 		TimePredicate: func(ts TimeSnapshot) bool {
 			return ts.BookPagesMapped >= cartographerPages
+		},
+	},
+	// The comprehension ladder (MAD-471): the quiz half of the knowledge
+	// layer. A client's model writes the questions and grades the answers;
+	// backhog counts what the client reports. The ladder is deliberately
+	// playful — self-reported results can never be proof of anything, and
+	// these say so in their own voice.
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "book_report",
+			Title:       "Book Report",
+			Description: "Turn in your first quiz result on something you've read.",
+			Icon:        "pencil",
+			Tier:        models.TierBronze,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.quizzed()
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "gold_star",
+			Title:       "Gold Star",
+			Description: "Answer 25 quiz questions correctly in a year. Graded on the honor system, obviously.",
+			Icon:        "star",
+			Tier:        models.TierSilver,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.quizzed() && e.Entry.YearQuizCorrect >= goldStarCorrect
+		},
+	},
+	{
+		Achievement: models.Achievement{
+			Domain:      models.DomainBook,
+			ID:          "honor_roll",
+			Title:       "Honor Roll",
+			Description: "Answer 100 quiz questions correctly in a year. Still the honor system. Still for fun.",
+			Icon:        "list-checks",
+			Tier:        models.TierGold,
+		},
+		Predicate: func(e Event) bool {
+			return e.book() && e.quizzed() && e.Entry.YearQuizCorrect >= honorRollCorrect
 		},
 	},
 	// The easter eggs: unlockable only by playing with the app itself, never

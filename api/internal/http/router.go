@@ -238,6 +238,16 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/books/{entryID}/sessions", s.handleGetReadingSessions)
 			r.Post("/books/{entryID}/sessions", s.handleAddReadingSession)
 
+			// Quiz results (MAD-471): the AI-free back half of "quiz me".
+			// A quizzing client's own report — questions asked, answers
+			// right, the chapters covered — stored and counted, never
+			// graded. The counts feed the comprehension achievements and
+			// Reading Season, both documented as for-fun: self-reported
+			// is all they can honestly be. Tokens need the quiz:write
+			// scope for this one POST (the middleware enforces it by
+			// route shape); a session writes it like any other.
+			r.Post("/books/{entryID}/quiz-results", s.handleRecordQuizResult)
+
 			// The attach flow: files on the NAS become this book's audio
 			// timeline and canonical text. Reading the list is open to
 			// anyone who may read the book — it is how the detail page

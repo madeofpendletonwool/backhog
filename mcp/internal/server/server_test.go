@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,11 +131,16 @@ type request struct {
 	Method string
 	Path   string
 	Until  string
+	// Body carries the JSON of a write, when the method has one.
+	Body string
 }
 
 // stubBackhog is the fixture backhog: the read-path subset of the real API
 // with the same JSON shapes and the same clamp semantics (absent until on a
-// token request clamps to the position; until=none serves everything).
+// token request clamps to the position; until=none serves everything),
+// plus the one write the bridge carries — the quiz-results POST, which the
+// stub gates behind quizWrite the way the real one gates behind the
+// quiz:write scope.
 type stubBackhog struct {
 	*fixture
 	ts *httptest.Server
@@ -144,9 +150,17 @@ type stubBackhog struct {
 	mentionsMissing bool
 	// seriesMissing emulates a backhog that predates book series.
 	seriesMissing bool
+	// quizWrite emulates a token carrying the quiz:write scope: the
+	// quiz-results POST is accepted when set, and answered with the same
+	// 403 every write gets when not.
+	quizWrite bool
 
 	mu       sync.Mutex
 	recorded []request
+	// quizYearCorrect is the running correct-answer count the stub's
+	// comprehension ladder reads, so achievements cross like the real one.
+	quizResults int
+	quizCorrect int
 }
 
 func newStubBackhog(t *testing.T) *stubBackhog {
@@ -157,10 +171,60 @@ func newStubBackhog(t *testing.T) *stubBackhog {
 	return stub
 }
 
-func (s *stubBackhog) record(r *http.Request) {
+func (s *stubBackhog) record(r *http.Request, body string) {
 	s.mu.Lock()
-	s.recorded = append(s.recorded, request{Method: r.Method, Path: r.URL.Path, Until: r.URL.Query().Get("until")})
+	s.recorded = append(s.recorded, request{Method: r.Method, Path: r.URL.Path, Until: r.URL.Query().Get("until"), Body: body})
 	s.mu.Unlock()
+}
+
+// serveQuizResult emulates POST /api/books/{entry}/quiz-results: validate
+// the report's arithmetic, store it, and answer with the achievements the
+// comprehension ladder crossed — first result tips Book Report, the 25th
+// correct answer of the year tips Gold Star.
+func (s *stubBackhog) serveQuizResult(w http.ResponseWriter, body string) {
+	var report struct {
+		Questions    int `json:"questions"`
+		Correct      int `json:"correct"`
+		ChapterRange *struct {
+			From int `json:"from"`
+			To   int `json:"to"`
+		} `json:"chapter_range"`
+		Source string `json:"source"`
+	}
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&report); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if report.Questions < 1 || report.Correct < 0 || report.Correct > report.Questions {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "implausible quiz"})
+		return
+	}
+
+	s.mu.Lock()
+	s.quizResults++
+	before := s.quizCorrect
+	s.quizCorrect += report.Correct
+	s.mu.Unlock()
+
+	var achievements []map[string]any
+	if s.quizResults == 1 {
+		achievements = append(achievements, map[string]any{"id": "book_report", "title": "Book Report", "tier": "bronze"})
+	}
+	if before < 25 && s.quizCorrect >= 25 {
+		achievements = append(achievements, map[string]any{"id": "gold_star", "title": "Gold Star", "tier": "silver"})
+	}
+	result := map[string]any{
+		"id": "q-stub", "entry_id": fxEntry,
+		"questions": report.Questions, "correct": report.Correct,
+		"source": report.Source, "created_at": "2026-10-01T00:00:00Z",
+	}
+	if report.ChapterRange != nil {
+		result["chapter_start"] = report.ChapterRange.From
+		result["chapter_end"] = report.ChapterRange.To
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"quiz_result": result, "achievements": achievements,
+	})
 }
 
 func (s *stubBackhog) requests() []request {
@@ -203,12 +267,26 @@ func (s *stubBackhog) clamp(until string) int {
 }
 
 func (s *stubBackhog) serve(w http.ResponseWriter, r *http.Request) {
-	s.record(r)
+	body := ""
+	if r.Method != http.MethodGet && r.Body != nil {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err == nil {
+			body = string(raw)
+		}
+	}
+	s.record(r, body)
 	if r.Header.Get("Authorization") != "Bearer "+fxToken {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
 		return
 	}
+	// The one write the bridge carries: the quiz report. Gated behind
+	// quizWrite like the real one is gated behind the quiz:write scope;
+	// every other POST, PUT, PATCH and DELETE stays behind the 403.
 	if r.Method != http.MethodGet {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/books/"+fxEntry+"/quiz-results" && s.quizWrite {
+			s.serveQuizResult(w, body)
+			return
+		}
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this token is read-only"})
 		return
 	}
@@ -457,16 +535,16 @@ func (s *stubBackhog) serve(w http.ResponseWriter, r *http.Request) {
 			// series, so the finished book one leads.
 			"books": []map[string]any{{
 				"entry_id": "entry-2", "book_id": "OL0W", "title": "The Earlier Mystery",
-				"authors":         []string{"A. Author"},
-				"status":          "played", "finished": true, "series_number": 1.0,
+				"authors": []string{"A. Author"},
+				"status":  "played", "finished": true, "series_number": 1.0,
 				"first_publish_year": 1996,
 				"position": map[string]any{"position_mode": "text",
 					"char_offset": 0, "percent": 100.0},
 				"deep_link": "/books/entry-2/read",
 			}, {
 				"entry_id": fxEntry, "book_id": "OL1W", "title": "The Village Mystery",
-				"authors":         []string{"A. Author"},
-				"status":          "playing", "finished": false, "series_number": 2.0,
+				"authors": []string{"A. Author"},
+				"status":  "playing", "finished": false, "series_number": 2.0,
 				"first_publish_year": 1998,
 				"position": map[string]any{"position_mode": "text",
 					"char_offset": s.position,
@@ -610,18 +688,27 @@ func TestToolSurface(t *testing.T) {
 		"list_books": false, "get_reading_position": false, "list_chapters": false,
 		"read_text": false, "search_book": false, "search_library": false,
 		"get_passage": false, "find_mentions": false, "list_names": false,
-		"list_series": false, "get_series": false,
+		"list_series": false, "get_series": false, "record_quiz_result": false,
 	}
 	for _, tool := range res.Tools {
 		if _, ok := want[tool.Name]; !ok {
 			t.Fatalf("unexpected tool %q", tool.Name)
 		}
 		want[tool.Name] = true
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-			t.Fatalf("tool %q is not marked read-only", tool.Name)
-		}
 		if tool.Description == "" {
 			t.Fatalf("tool %q has no description", tool.Name)
+		}
+		// The read tools are read-only by design and by token;
+		// record_quiz_result is the one deliberate write and must not
+		// wear the read-only hint.
+		if tool.Name == "record_quiz_result" {
+			if tool.Annotations != nil && tool.Annotations.ReadOnlyHint {
+				t.Fatalf("record_quiz_result is marked read-only — it is the bridge's one write")
+			}
+			continue
+		}
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Fatalf("tool %q is not marked read-only", tool.Name)
 		}
 	}
 	for name, seen := range want {
@@ -1020,6 +1107,8 @@ func TestFindMentionsListsSoFar(t *testing.T) {
 // cannot mutate anything": across the whole battery, every request the
 // bridge made was a GET carrying the bearer token. The stub answers 403 to
 // anything else, so a write attempt would have failed every test above.
+// record_quiz_result is the exception by name — its own tests below pin
+// that it writes only the one quiz POST, and only when the token may.
 func TestReadOnlyTokenCannotMutate(t *testing.T) {
 	h := newHarness(t)
 	for _, tool := range []string{"list_books"} {
@@ -1191,14 +1280,17 @@ func TestPromptSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list prompts: %v", err)
 	}
-	want := map[string]string{
-		"previously_on": "book",
-		"cast_list":     "book",
-		"series_so_far": "series",
+	// name → the arguments, in order; a "?" marks the optional ones.
+	want := map[string][]string{
+		"previously_on":   {"book"},
+		"cast_list":       {"book"},
+		"series_so_far":   {"series"},
+		"quiz_me":         {"book", "chapters?"},
+		"discussion_prep": {"book", "section?"},
 	}
 	seen := map[string]bool{}
 	for _, p := range res.Prompts {
-		arg, ok := want[p.Name]
+		expected, ok := want[p.Name]
 		if !ok {
 			t.Fatalf("unexpected prompt %q", p.Name)
 		}
@@ -1206,8 +1298,16 @@ func TestPromptSurface(t *testing.T) {
 		if p.Description == "" {
 			t.Fatalf("prompt %q has no description", p.Name)
 		}
-		if len(p.Arguments) != 1 || p.Arguments[0].Name != arg || !p.Arguments[0].Required {
-			t.Fatalf("prompt %q arguments = %+v", p.Name, p.Arguments)
+		if len(p.Arguments) != len(expected) {
+			t.Fatalf("prompt %q arguments = %+v, want %v", p.Name, p.Arguments, expected)
+		}
+		for i, arg := range p.Arguments {
+			if arg.Name != strings.TrimSuffix(expected[i], "?") {
+				t.Fatalf("prompt %q argument %d = %q, want %q", p.Name, i, arg.Name, expected[i])
+			}
+			if arg.Required != !strings.HasSuffix(expected[i], "?") {
+				t.Fatalf("prompt %q argument %q required = %v", p.Name, arg.Name, arg.Required)
+			}
 		}
 	}
 	for name := range want {
@@ -1223,10 +1323,14 @@ func TestPromptsRenderTheirPlaybooks(t *testing.T) {
 		prompt string
 		argKey string
 		argVal string
+		// needles the playbook must carry beyond the shared rules.
+		extra []string
 	}{
-		{"previously_on", "book", "The Village Mystery"},
-		{"cast_list", "book", "The Village Mystery"},
-		{"series_so_far", "series", fxSeries},
+		{"previously_on", "book", "The Village Mystery", nil},
+		{"cast_list", "book", "The Village Mystery", nil},
+		{"series_so_far", "series", fxSeries, nil},
+		{"quiz_me", "book", "The Village Mystery", []string{"record_quiz_result", "WITHOUT"}},
+		{"discussion_prep", "book", "The Village Mystery", []string{"doesn't settle"}},
 	}
 	for _, tc := range cases {
 		res, err := h.session.GetPrompt(h.ctx, &mcp.GetPromptParams{
@@ -1245,7 +1349,9 @@ func TestPromptsRenderTheirPlaybooks(t *testing.T) {
 		}
 		// The playbook carries its subject, its rules, and the tools it
 		// steers the client through.
-		for _, needle := range []string{tc.argVal, "include_spoilers", "deep_link", "read_text"} {
+		needles := []string{tc.argVal, "include_spoilers", "deep_link", "read_text"}
+		needles = append(needles, tc.extra...)
+		for _, needle := range needles {
 			if !strings.Contains(text.Text, needle) {
 				t.Fatalf("%s playbook lacks %q", tc.prompt, needle)
 			}
@@ -1325,4 +1431,160 @@ func TestPreviouslyOnPlaybookIsLeakFree(t *testing.T) {
 	// reveal, the withheld word, or the unread final chapter.
 	assertNoLeak(t, "the previously_on walk",
 		accumulated.String(), fmt.Sprintf("%v", chapters), fmt.Sprintf("%v", names))
+}
+
+// --- the quiz surface (MAD-471) ----------------------------------------------
+
+// TestRecordQuizResult drives the bridge's one write end to end: the tool
+// grades nothing and invents nothing, it carries the client's own report
+// to the endpoint, and the answer says what the count unlocked.
+func TestRecordQuizResult(t *testing.T) {
+	h := newHarness(t)
+	h.stub.quizWrite = true
+
+	var out struct {
+		Recorded     bool `json:"recorded"`
+		Questions    int  `json:"questions"`
+		Correct      int  `json:"correct"`
+		Achievements []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"achievements"`
+	}
+	h.call(t, "record_quiz_result", map[string]any{
+		"book": fxEntry, "questions": 6, "correct": 5,
+		"chapter_from": 1, "chapter_to": 1,
+	}, &out)
+	if !out.Recorded || out.Questions != 6 || out.Correct != 5 {
+		t.Fatalf("recorded result = %+v", out)
+	}
+	if len(out.Achievements) != 1 || out.Achievements[0].ID != "book_report" {
+		t.Fatalf("first result unlocked %+v, want book_report", out.Achievements)
+	}
+
+	// Exactly one write left the bridge, shaped for the endpoint, with
+	// the honest counts and the source named.
+	var post *request
+	for i, r := range h.stub.requests() {
+		if r.Method == http.MethodPost {
+			if post != nil {
+				t.Fatalf("more than one write: %s %s", r.Method, r.Path)
+			}
+			post = &h.stub.requests()[i]
+		}
+	}
+	if post == nil {
+		t.Fatal("the bridge never issued the quiz POST")
+	}
+	if post.Path != "/api/books/"+fxEntry+"/quiz-results" {
+		t.Fatalf("write path = %s", post.Path)
+	}
+	var sent struct {
+		Questions    int    `json:"questions"`
+		Correct      int    `json:"correct"`
+		Source       string `json:"source"`
+		ChapterRange *struct {
+			From int `json:"from"`
+			To   int `json:"to"`
+		} `json:"chapter_range"`
+	}
+	if err := json.Unmarshal([]byte(post.Body), &sent); err != nil {
+		t.Fatalf("write body %q: %v", post.Body, err)
+	}
+	if sent.Questions != 6 || sent.Correct != 5 || sent.Source != "mcp" {
+		t.Fatalf("write body = %s", post.Body)
+	}
+	if sent.ChapterRange == nil || sent.ChapterRange.From != 1 || sent.ChapterRange.To != 1 {
+		t.Fatalf("chapter range = %+v", sent.ChapterRange)
+	}
+}
+
+// TestRecordQuizResultNeedsWriteScope pins the degrade path: a read-only
+// token gets the API's 403, and the tool's answer tells the user exactly
+// which scope to mint — not a stack trace.
+func TestRecordQuizResultNeedsWriteScope(t *testing.T) {
+	h := newHarness(t)
+	msg := h.callErr(t, "record_quiz_result", map[string]any{
+		"book": fxEntry, "questions": 5, "correct": 5,
+	})
+	if !strings.Contains(msg, "quiz:write") {
+		t.Fatalf("degrade message = %q, want it to name the quiz:write scope", msg)
+	}
+	// The attempt reached the API and was refused — nothing was stored.
+	if h.stub.quizResults != 0 {
+		t.Fatalf("a refused report was stored (%d results)", h.stub.quizResults)
+	}
+}
+
+// TestRecordQuizResultValidation keeps the report honest at the tool's own
+// edge: the arithmetic has to hold before it ever reaches the API.
+func TestRecordQuizResultValidation(t *testing.T) {
+	h := newHarness(t)
+	h.stub.quizWrite = true
+	for name, args := range map[string]map[string]any{
+		"no questions":     {"book": fxEntry, "questions": 0, "correct": 0},
+		"flattering count": {"book": fxEntry, "questions": 5, "correct": 6},
+		"backwards range":  {"book": fxEntry, "questions": 5, "correct": 5, "chapter_from": 3, "chapter_to": 1},
+		"half a range":     {"book": fxEntry, "questions": 5, "correct": 5, "chapter_to": 2},
+	} {
+		if msg := h.callErr(t, "record_quiz_result", args); msg == "" {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	for _, r := range h.stub.requests() {
+		if r.Method != http.MethodGet {
+			t.Fatalf("an invalid report still issued %s %s", r.Method, r.Path)
+		}
+	}
+}
+
+// TestQuizMePlaybookIsLeakFree walks the exact tool round quiz_me
+// prescribes against the fixture backhog — position, chapters, the read
+// chapters' text, a passage check while grading, then the honest report —
+// and asserts every byte any tool answered with stays clean of the reveal.
+// The score reported is the one the walk actually produced: only Alpha's
+// text is readable, so a quiz written from it cannot ask, and a grade
+// cannot cite, anything past the bound.
+func TestQuizMePlaybookIsLeakFree(t *testing.T) {
+	h := newHarness(t)
+	h.stub.quizWrite = true
+
+	var pos struct {
+		CharOffset int `json:"char_offset"`
+	}
+	h.call(t, "get_reading_position", map[string]any{"book": fxEntry}, &pos)
+
+	var chapters map[string]any
+	h.call(t, "list_chapters", map[string]any{"book": fxEntry}, &chapters)
+
+	var page struct {
+		Text     string `json:"text"`
+		NextFrom *int   `json:"next_from"`
+		Note     string `json:"note"`
+	}
+	h.call(t, "read_text", map[string]any{"book": fxEntry, "chapter": 1}, &page)
+
+	var passage map[string]any
+	h.call(t, "get_passage", map[string]any{"book": fxEntry, "char_start": 0, "char_end": 10}, &passage)
+
+	// Grading from the readable window alone: everything the quiz knows
+	// is in these answers.
+	var grade strings.Builder
+	grade.WriteString(page.Text)
+	grade.WriteString(page.Note)
+	grade.WriteString(fmt.Sprint(passage))
+	assertNoLeak(t, "the quiz_me walk", grade.String(), fmt.Sprint(chapters))
+
+	// The honest report: one question, one correct — the count the walk
+	// can actually defend.
+	var out struct {
+		Recorded bool `json:"recorded"`
+	}
+	h.call(t, "record_quiz_result", map[string]any{
+		"book": fxEntry, "questions": 1, "correct": 1,
+		"chapter_from": 1, "chapter_to": 1,
+	}, &out)
+	if !out.Recorded {
+		t.Fatal("the report was not recorded")
+	}
 }

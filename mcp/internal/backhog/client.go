@@ -1,11 +1,12 @@
 // Package backhog is the MCP server's HTTP client for the backhog API.
 //
 // It speaks only the public API a personal token (MAD-465) can reach, and
-// it issues exactly one write: recording a quiz result (MAD-471), the
-// single POST the quiz:write scope names. Every read path it touches
-// clamps itself to the caller's reading position under the token default
-// `until=position` (MAD-467), which is where the spoiler safety of every
-// tool result comes from — this client adds `until=none` only when a
+// it issues exactly two writes: recording a quiz result (MAD-471, the one
+// POST the quiz:write scope names) and importing extracted claims
+// (MAD-466, the one POST the claims:write scope names). Every read path it
+// touches clamps itself to the caller's reading position under the token
+// default `until=position` (MAD-467), which is where the spoiler safety of
+// every tool result comes from — this client adds `until=none` only when a
 // caller explicitly asks for spoilers.
 //
 // The JSON field names mirror the API's response bodies exactly; nothing is
@@ -112,9 +113,9 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 }
 
 // post writes one JSON body to an API path and decodes the answer. It
-// exists for exactly one call — RecordQuizResult — and stays that narrow
-// on purpose: the bridge's whole spoiler-safety story rests on its writes
-// being countable on one hand.
+// exists for exactly the two writes the bridge carries — RecordQuizResult
+// and ImportClaims — and stays that narrow on purpose: the bridge's whole
+// spoiler-safety story rests on its writes being countable on one hand.
 func (c *Client) post(ctx context.Context, path string, body any, out any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -608,13 +609,185 @@ type QuizAchievement struct {
 	Tier  string `json:"tier"`
 }
 
-// RecordQuizResult reports a quiz outcome over the one write this client
-// carries (MAD-471). Needs a token with the quiz:write scope; a read-only
-// token gets the 403 the API hands every write, returned here as an
-// APIError so the tool can say what to fix.
+// RecordQuizResult reports a quiz outcome over one of the two writes this
+// client carries (MAD-471). Needs a token with the quiz:write scope; a
+// read-only token gets the standard 403 the API hands every write,
+// returned here as an APIError so the tool can say what to fix.
 func (c *Client) RecordQuizResult(ctx context.Context, entryID string, report QuizResultReport) (*QuizResultRecorded, error) {
 	var out QuizResultRecorded
 	if err := c.post(ctx, "/api/books/"+url.PathEscape(entryID)+"/quiz-results", report, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ClaimEntityRef is the cast member a claim's triple names, resolved
+// through the shelf's own entity table (MAD-466).
+type ClaimEntityRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind,omitempty"`
+}
+
+// Claim is one stored truth as the claims read serves it (MAD-466): the
+// statement that holds at the request's bound, the quote that grounds it
+// with its offsets and peek link, and where its truth was revealed. A
+// claim absent from the answer does not exist yet — its evidence or its
+// reveal sits past the reading position.
+type Claim struct {
+	ID            string          `json:"id"`
+	Statement     string          `json:"statement"`
+	Subject       *string         `json:"subject"`
+	Predicate     *string         `json:"predicate"`
+	Object        *string         `json:"object"`
+	SubjectEntity *ClaimEntityRef `json:"subject_entity"`
+	ObjectEntity  *ClaimEntityRef `json:"object_entity"`
+	Quote         string          `json:"quote"`
+	Provenance    Provenance      `json:"provenance"`
+	RevealOffset  int             `json:"reveal_offset"`
+	// Superseded says the served statement is a later version's truth,
+	// not the claim's original words.
+	Superseded bool   `json:"superseded"`
+	Source     string `json:"source"`
+	// Versions is how many later truths exist in total, revealed or not.
+	Versions int `json:"versions"`
+}
+
+type claimsResponse struct {
+	Claims      []Claim `json:"claims"`
+	Total       int     `json:"total"`
+	StaleHidden int     `json:"stale_hidden"`
+	Bound       Bound   `json:"bound"`
+}
+
+// Claims lists a book's stored truths as they stand at the caller's
+// position (MAD-466). Entity optionally narrows to one cast member by
+// name or alias. On a backhog that predates the claims store it returns
+// an APIError with status 404.
+func (c *Client) Claims(ctx context.Context, entryID, entity string, spoilers bool) (*claimsResponse, error) {
+	q := untilQuery(spoilers)
+	if entity != "" {
+		q.Set("entity", entity)
+	}
+	var out claimsResponse
+	if err := c.get(ctx, "/api/books/"+url.PathEscape(entryID)+"/claims", q, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// EntityFirstSeen cites an entity's introduction: the earliest evidence
+// among the claims that name it.
+type EntityFirstSeen struct {
+	CharStart int         `json:"char_start"`
+	Chapter   *ChapterRef `json:"chapter"`
+	Percent   float64     `json:"percent"`
+	DeepLink  string      `json:"deep_link"`
+}
+
+// Entity is one member of the cast a book's claims speak about (MAD-466):
+// how many readable truths name it and where its story with the reader
+// began.
+type Entity struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Kind      string          `json:"kind,omitempty"`
+	Aliases   []string        `json:"aliases"`
+	Claims    int             `json:"claims"`
+	FirstSeen EntityFirstSeen `json:"first_seen"`
+}
+
+type entitiesResponse struct {
+	Entities []Entity `json:"entities"`
+	Bound    Bound    `json:"bound"`
+}
+
+// Entities lists the cast a book's readable claims speak about (MAD-466).
+// Name optionally resolves one entity through its aliases. An entity
+// whose every mention sits past the position does not exist yet.
+func (c *Client) Entities(ctx context.Context, entryID, name string, spoilers bool) (*entitiesResponse, error) {
+	q := untilQuery(spoilers)
+	if name != "" {
+		q.Set("name", name)
+	}
+	var out entitiesResponse
+	if err := c.get(ctx, "/api/books/"+url.PathEscape(entryID)+"/entities", q, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ClaimVersionImport is one later truth of a claim: its own evidence and
+// the offset where it is revealed.
+type ClaimVersionImport struct {
+	Statement     string `json:"statement"`
+	CharStart     int    `json:"char_start"`
+	CharEnd       int    `json:"char_end"`
+	Quote         string `json:"quote"`
+	RevealOffset  *int   `json:"reveal_offset,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SourceVersion string `json:"source_version,omitempty"`
+}
+
+// ClaimImport is one claim of an extraction run: a statement, its optional
+// triple, and the evidence that grounds it — the quote must fold to the
+// canonical text at exactly [CharStart, CharEnd), or the item is rejected.
+type ClaimImport struct {
+	Statement     string               `json:"statement"`
+	Subject       *string              `json:"subject,omitempty"`
+	Predicate     *string              `json:"predicate,omitempty"`
+	Object        *string              `json:"object,omitempty"`
+	CharStart     int                  `json:"char_start"`
+	CharEnd       int                  `json:"char_end"`
+	Quote         string               `json:"quote"`
+	Source        string               `json:"source,omitempty"`
+	SourceVersion string               `json:"source_version,omitempty"`
+	Versions      []ClaimVersionImport `json:"versions,omitempty"`
+}
+
+// EntityImport registers a person, place or thing the claims are about,
+// with the aliases it answers to.
+type EntityImport struct {
+	Name    string   `json:"name"`
+	Kind    string   `json:"kind,omitempty"`
+	Aliases []string `json:"aliases,omitempty"`
+}
+
+// ClaimsBatch is one extraction run's report.
+type ClaimsBatch struct {
+	Source        string         `json:"source"`
+	SourceVersion string         `json:"source_version,omitempty"`
+	Claims        []ClaimImport  `json:"claims"`
+	Entities      []EntityImport `json:"entities,omitempty"`
+}
+
+// ClaimImportResult is one item's verdict: stored (with its id) or
+// rejected with the reason — a rejection is the cite-or-drop door saying
+// the quote did not check out.
+type ClaimImportResult struct {
+	Index   int    `json:"index"`
+	Status  string `json:"status"`
+	ClaimID string `json:"claim_id,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// ClaimsImported is the import's answer: what landed, what was rejected,
+// and why per item.
+type ClaimsImported struct {
+	Stored   int                 `json:"stored"`
+	Entities int                 `json:"entities"`
+	Rejected int                 `json:"rejected"`
+	Results  []ClaimImportResult `json:"results"`
+}
+
+// ImportClaims writes one extraction run through the claims import
+// (MAD-466) — the second and last write this client carries. Every item
+// passes the API's deterministic cite-or-drop check; needs a token with
+// the claims:write scope, and a read-only token gets the 403 returned
+// here as an APIError.
+func (c *Client) ImportClaims(ctx context.Context, entryID string, batch ClaimsBatch) (*ClaimsImported, error) {
+	var out ClaimsImported
+	if err := c.post(ctx, "/api/books/"+url.PathEscape(entryID)+"/claims", batch, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

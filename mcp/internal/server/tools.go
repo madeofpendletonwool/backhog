@@ -57,6 +57,9 @@ func addTools(srv *mcp.Server, c *backhog.Client, link *linker) {
 	addListSeries(srv, c, link)
 	addGetSeries(srv, c, link)
 	addRecordQuizResult(srv, c)
+	addGetClaims(srv, c, link)
+	addGetEntity(srv, c, link)
+	addImportClaims(srv, c)
 }
 
 // The spoiler opt-in every read tool shares: the parameter's jsonschema
@@ -842,6 +845,266 @@ func addGetSeries(srv *mcp.Server, c *backhog.Client, link *linker) {
 				Finished: b.Finished, SeriesNumber: b.SeriesNumber,
 				FirstPublishYear: b.FirstPublishYear, Position: b.Position, DeepLink: b.DeepLink,
 			})
+		}
+		return nil, out, nil
+	})
+}
+
+// --- get_claims -----------------------------------------------------------
+
+type getClaimsIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	Entity          string `json:"entity,omitempty" jsonschema:"optional: only claims whose subject or object names this person or place (a name or an alias)"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true reads claims whose evidence or reveal sits past the user's saved reading position. Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type claimOut struct {
+	ID            string                  `json:"id"`
+	Statement     string                  `json:"statement"`
+	Subject       *string                 `json:"subject,omitempty"`
+	Predicate     *string                 `json:"predicate,omitempty"`
+	Object        *string                 `json:"object,omitempty"`
+	SubjectEntity *backhog.ClaimEntityRef `json:"subject_entity,omitempty"`
+	ObjectEntity  *backhog.ClaimEntityRef `json:"object_entity,omitempty"`
+	Quote         string                  `json:"quote"`
+	CharStart     int                     `json:"char_start"`
+	CharEnd       int                     `json:"char_end"`
+	Chapter       *backhog.ChapterRef     `json:"chapter,omitempty"`
+	RevealOffset  int                     `json:"reveal_offset"`
+	Superseded    bool                    `json:"superseded"`
+	Source        string                  `json:"source"`
+	Versions      int                     `json:"versions"`
+	DeepLink      string                  `json:"deep_link"`
+}
+
+type getClaimsOut struct {
+	Claims      []claimOut    `json:"claims"`
+	Total       int           `json:"total"`
+	StaleHidden int           `json:"stale_hidden"`
+	Bound       backhog.Bound `json:"bound"`
+	Note        string        `json:"note,omitempty"`
+}
+
+func addGetClaims(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_claims",
+		Annotations: readOnly,
+		Description: "A book's stored claims — structured facts an extractor grounded in quoted " +
+			"passages — served as of the user's reading position: a fact exists only once its " +
+			"evidence has been read, and a version revealed past the position does not exist yet. " +
+			"Each claim carries its grounding quote, character offsets and a deep link; cite them " +
+			"exactly as you would a search hit. Claims are the extractor's words checked against " +
+			"the text, never the book's own prose — verify against read_text or get_passage when " +
+			"in doubt. Needs a backhog with the claims store; if this backhog predates it, " +
+			"read_text and search_book answer instead.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in getClaimsIn) (*mcp.CallToolResult, getClaimsOut, error) {
+		res, err := c.Claims(ctx, in.Book, in.Entity, in.IncludeSpoilers)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == 404 {
+				return nil, getClaimsOut{}, fmt.Errorf("this backhog does not have the claims store yet " +
+					"(it lands with backhog's claims update); read_text and search_book answer instead")
+			}
+			return nil, getClaimsOut{}, fmt.Errorf("reading claims: %w", err)
+		}
+		out := getClaimsOut{
+			Total: res.Total, StaleHidden: res.StaleHidden, Bound: res.Bound,
+			Claims: make([]claimOut, 0, len(res.Claims)),
+		}
+		for _, cl := range res.Claims {
+			out.Claims = append(out.Claims, claimOut{
+				ID: cl.ID, Statement: cl.Statement,
+				Subject: cl.Subject, Predicate: cl.Predicate, Object: cl.Object,
+				SubjectEntity: cl.SubjectEntity, ObjectEntity: cl.ObjectEntity,
+				Quote:     cl.Quote,
+				CharStart: cl.Provenance.CharStart, CharEnd: cl.Provenance.CharEnd,
+				Chapter:      cl.Provenance.Chapter,
+				RevealOffset: cl.RevealOffset, Superseded: cl.Superseded,
+				Source: cl.Source, Versions: cl.Versions,
+				DeepLink: link.relative(cl.Provenance.DeepLink),
+			})
+		}
+		if !in.IncludeSpoilers {
+			out.Note = "Claims are bounded to the user's reading position (see bound); a claim absent " +
+				"here may rest on text they have not read."
+		}
+		return nil, out, nil
+	})
+}
+
+// --- get_entity -----------------------------------------------------------
+
+type getEntityIn struct {
+	Book            string `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	Name            string `json:"name" jsonschema:"the person, place or thing to resolve — a name or any of its aliases"`
+	IncludeSpoilers bool   `json:"include_spoilers,omitempty" jsonschema:"default false. SPOILERS: true includes mentions past the user's saved reading position. Only set it when the user has explicitly asked to see beyond where they have read; false bounds results to what they have actually read."`
+}
+
+type getEntityOut struct {
+	Name      string                  `json:"name"`
+	Kind      string                  `json:"kind,omitempty"`
+	Aliases   []string                `json:"aliases,omitempty"`
+	Claims    int                     `json:"claims"`
+	FirstSeen backhog.EntityFirstSeen `json:"first_seen"`
+	// Facts are the readable claims that name this entity, the same
+	// shape get_claims serves.
+	Facts []claimOut    `json:"facts"`
+	Bound backhog.Bound `json:"bound"`
+	Note  string        `json:"note,omitempty"`
+}
+
+func addGetEntity(srv *mcp.Server, c *backhog.Client, link *linker) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_entity",
+		Annotations: readOnly,
+		Description: "Who is this person, so far? One entity of a book's claims — a character, a " +
+			"place, a thing — resolved by name or alias, with the readable facts that name it and " +
+			"a cited first appearance. An entity whose every mention sits past the reading " +
+			"position does not exist yet. Needs a backhog with the claims store; if this backhog " +
+			"predates it, find_mentions answers instead.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in getEntityIn) (*mcp.CallToolResult, getEntityOut, error) {
+		if strings.TrimSpace(in.Name) == "" {
+			return nil, getEntityOut{}, fmt.Errorf("name is required — say who to look up")
+		}
+		res, err := c.Entities(ctx, in.Book, in.Name, in.IncludeSpoilers)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == 404 {
+				return nil, getEntityOut{}, fmt.Errorf("this backhog does not have the claims store yet " +
+					"(it lands with backhog's claims update); find_mentions answers instead")
+			}
+			return nil, getEntityOut{}, fmt.Errorf("resolving entity: %w", err)
+		}
+		if len(res.Entities) == 0 {
+			return nil, getEntityOut{}, fmt.Errorf("no entity of that name exists in this book yet — " +
+				"either it truly does not appear, or its every mention sits past the user's reading position")
+		}
+		entity := res.Entities[0]
+
+		facts, err := c.Claims(ctx, in.Book, in.Name, in.IncludeSpoilers)
+		if err != nil {
+			return nil, getEntityOut{}, fmt.Errorf("reading the entity's claims: %w", err)
+		}
+		out := getEntityOut{
+			Name: entity.Name, Kind: entity.Kind, Aliases: entity.Aliases,
+			Claims: entity.Claims, FirstSeen: entity.FirstSeen, Bound: res.Bound,
+			Facts: make([]claimOut, 0, len(facts.Claims)),
+		}
+		for _, cl := range facts.Claims {
+			out.Facts = append(out.Facts, claimOut{
+				ID: cl.ID, Statement: cl.Statement,
+				Subject: cl.Subject, Predicate: cl.Predicate, Object: cl.Object,
+				SubjectEntity: cl.SubjectEntity, ObjectEntity: cl.ObjectEntity,
+				Quote:     cl.Quote,
+				CharStart: cl.Provenance.CharStart, CharEnd: cl.Provenance.CharEnd,
+				Chapter:      cl.Provenance.Chapter,
+				RevealOffset: cl.RevealOffset, Superseded: cl.Superseded,
+				Source: cl.Source, Versions: cl.Versions,
+				DeepLink: link.relative(cl.Provenance.DeepLink),
+			})
+		}
+		out.FirstSeen.DeepLink = link.relative(out.FirstSeen.DeepLink)
+		if !in.IncludeSpoilers {
+			out.Note = "Facts are bounded to the user's reading position (see bound)."
+		}
+		return nil, out, nil
+	})
+}
+
+// --- import_claims ----------------------------------------------------------
+
+type importClaimIn struct {
+	Statement     string `json:"statement" jsonschema:"the claim in plain words"`
+	Subject       string `json:"subject,omitempty" jsonschema:"optional: who or what the claim is about"`
+	Predicate     string `json:"predicate,omitempty" jsonschema:"optional: the relation, e.g. 'lives in' or 'is sister of'"`
+	Object        string `json:"object,omitempty" jsonschema:"optional: what the subject stands in relation to"`
+	CharStart     int    `json:"char_start" jsonschema:"character offset the grounding quote starts at (inclusive) — verify with get_passage first"`
+	CharEnd       int    `json:"char_end" jsonschema:"character offset the grounding quote ends at (exclusive)"`
+	Quote         string `json:"quote" jsonschema:"the exact canonical text at [char_start, char_end) — get_passage returns it verbatim"`
+	SourceVersion string `json:"source_version,omitempty" jsonschema:"optional: your run's version string"`
+}
+
+type importEntityIn struct {
+	Name    string   `json:"name" jsonschema:"the entity's canonical display name"`
+	Kind    string   `json:"kind,omitempty" jsonschema:"optional: person, place, thing…"`
+	Aliases []string `json:"aliases,omitempty" jsonschema:"other names this entity answers to"`
+}
+
+type importClaimsIn struct {
+	Book     string           `json:"book" jsonschema:"the book's backhog entry ID (from list_books)"`
+	Claims   []importClaimIn  `json:"claims" jsonschema:"the claims extracted this run; every quote is checked against the text — items that do not cite are rejected, not fixed"`
+	Entities []importEntityIn `json:"entities,omitempty" jsonschema:"optional: the cast the claims are about, with aliases"`
+	Source   string           `json:"source,omitempty" jsonschema:"optional: your extractor's name, e.g. 'claude-extract'; defaults to 'mcp'"`
+}
+
+type importClaimsOut struct {
+	Stored   int                         `json:"stored"`
+	Entities int                         `json:"entities"`
+	Rejected int                         `json:"rejected"`
+	Results  []backhog.ClaimImportResult `json:"results"`
+	Note     string                      `json:"note,omitempty"`
+}
+
+// addImportClaims registers the bridge's second write: the extraction
+// run's report. The API checks every quote against the canonical text
+// before anything is stored — cite or drop, no model anywhere — so this
+// tool's contract is honesty about offsets, not honesty about truth.
+func addImportClaims(srv *mcp.Server, c *backhog.Client) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "import_claims",
+		Description: "Store extracted claims for a book (MAD-466). Every item is validated " +
+			"deterministically server-side: the quote must be exactly the canonical text at " +
+			"[char_start, char_end) (get_passage returns it verbatim — use that, never your " +
+			"memory of the prose), the span must sit inside one chapter. Items that fail are " +
+			"rejected with a reason and never fixed up. Extract only from text you read with " +
+			"read_text this session, and only within the user's reading position unless they " +
+			"explicitly asked for the whole book. Needs a token with the claims:write scope.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in importClaimsIn) (*mcp.CallToolResult, importClaimsOut, error) {
+		if len(in.Claims) == 0 && len(in.Entities) == 0 {
+			return nil, importClaimsOut{}, fmt.Errorf("nothing to import — extract claims first")
+		}
+		source := strings.TrimSpace(in.Source)
+		if source == "" {
+			source = "mcp"
+		}
+		batch := backhog.ClaimsBatch{Source: source, Claims: make([]backhog.ClaimImport, 0, len(in.Claims))}
+		for _, item := range in.Claims {
+			claim := backhog.ClaimImport{
+				Statement: item.Statement, CharStart: item.CharStart, CharEnd: item.CharEnd,
+				Quote: item.Quote, SourceVersion: item.SourceVersion,
+			}
+			if s := strings.TrimSpace(item.Subject); s != "" {
+				claim.Subject = &s
+			}
+			if p := strings.TrimSpace(item.Predicate); p != "" {
+				claim.Predicate = &p
+			}
+			if o := strings.TrimSpace(item.Object); o != "" {
+				claim.Object = &o
+			}
+			batch.Claims = append(batch.Claims, claim)
+		}
+		for _, e := range in.Entities {
+			batch.Entities = append(batch.Entities, backhog.EntityImport{
+				Name: e.Name, Kind: e.Kind, Aliases: e.Aliases,
+			})
+		}
+		recorded, err := c.ImportClaims(ctx, in.Book, batch)
+		var apiErr *backhog.APIError
+		if err != nil {
+			if asAPIErr(err, &apiErr) && apiErr.Status == http.StatusForbidden {
+				return nil, importClaimsOut{}, fmt.Errorf("this token cannot import claims — mint one with the claims:write scope in Settings → API tokens")
+			}
+			return nil, importClaimsOut{}, fmt.Errorf("importing claims: %w", err)
+		}
+		out := importClaimsOut{
+			Stored: recorded.Stored, Entities: recorded.Entities,
+			Rejected: recorded.Rejected, Results: recorded.Results,
+		}
+		if recorded.Rejected > 0 {
+			out.Note = "Rejected items failed the cite-or-drop check: their quotes did not match the " +
+				"canonical text at the given offsets. Re-read the passage with get_passage and retry " +
+				"with exact offsets — never adjust a quote to fit."
 		}
 		return nil, out, nil
 	})

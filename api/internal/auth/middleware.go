@@ -95,16 +95,21 @@ func Middleware(r Resolver, tokens TokenResolver) func(http.Handler) http.Handle
 				// A token is read-only until a write scope exists to say
 				// otherwise. The check is on the method, not the route,
 				// so no write endpoint can appear beside it unguarded.
-				// Two exceptions, both narrow:
+				// Three exceptions, each narrow and each bound to the one
+				// scope that names it:
 				//   - a read wearing POST's clothes: passage placement
 				//     carries its query in a body and writes nothing, so a
 				//     books:read token may ask it like the app does;
 				//   - a quiz result: the one POST the quiz:write scope
 				//     names, self-reported counts against the caller's own
-				//     shelf and nothing else.
+				//     shelf and nothing else;
+				//   - a claims import: the one POST the claims:write scope
+				//     names, every item still validated against the
+				//     canonical text before anything is stored.
 				if isWriteMethod(req.Method) &&
 					!isReadShapedPost(req) &&
-					!(isQuizResultPost(req) && hasScope(scopes, models.ScopeQuizWrite)) {
+					!isScopedBookPost(req, isQuizResultPost, models.ScopeQuizWrite, scopes) &&
+					!isScopedBookPost(req, isClaimsPost, models.ScopeClaimsWrite, scopes) {
 					writeError(w, http.StatusForbidden,
 						"this token is read-only — manage your library from the app")
 					return
@@ -184,6 +189,25 @@ func isQuizResultPost(req *http.Request) bool {
 	}
 	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
 	return len(parts) == 4 && parts[0] == "api" && parts[1] == "books" && parts[3] == "quiz-results"
+}
+
+// isClaimsPost reports whether the request is the one write the
+// claims:write scope names: batch-importing extracted claims against a
+// book entry. Exactly /api/books/{entryID}/claims — the reads under the
+// same path are GETs and never reach the write gate.
+func isClaimsPost(req *http.Request) bool {
+	if req.Method != http.MethodPost {
+		return false
+	}
+	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	return len(parts) == 4 && parts[0] == "api" && parts[1] == "books" && parts[3] == "claims"
+}
+
+// isScopedBookPost binds one POST shape to the scope that names it: the
+// request matches the shape and the token carries the scope, or the
+// read-only wall stands.
+func isScopedBookPost(req *http.Request, shape func(*http.Request) bool, scope string, scopes []string) bool {
+	return shape(req) && hasScope(scopes, scope)
 }
 
 // hasScope reports whether the token's scope list carries s.

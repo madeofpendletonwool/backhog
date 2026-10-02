@@ -11,8 +11,10 @@ API token this server holds reads nothing past your position **and** every
 read defaults to `until=position`, so every tool result is clamped to *your
 reading position*. An assistant using these tools cannot read ahead of you
 unless you explicitly ask it to (`include_spoilers` on a tool call). The
-one write the bridge carries is recording a quiz score — counts only, and
-only with a token you gave the `quiz:write` scope.
+two writes the bridge carries are recording a quiz score (counts only, with
+a token you gave the `quiz:write` scope) and importing claims an extractor
+grounded in quoted passages (every quote checked against the book, with a
+token you gave the `claims:write` scope).
 
 ## What your assistant sees
 
@@ -29,7 +31,10 @@ only with a token you gave the `quiz:write` scope.
 | `list_names(book)` | The book's own index of names so far — the cast you've actually met (MAD-670). |
 | `list_series()` | Every series your shelf holds books of, with counts (MAD-469). |
 | `get_series(series)` | Your books of one series in reading order, each with status and position (MAD-469). |
-| `record_quiz_result(book, questions, correct, chapter_from?, chapter_to?)` | Report a quiz's outcome after grading it — the only write this server carries (needs a token with `quiz:write`, MAD-471). |
+| `record_quiz_result(book, questions, correct, chapter_from?, chapter_to?)` | Report a quiz's outcome after grading it — one of the two writes this server carries (needs a token with `quiz:write`, MAD-471). |
+| `get_claims(book, entity?, include_spoilers?)` | The book's stored claims — facts grounded in quoted passages — as of your position: a fact exists only once its evidence has been read, and a version revealed past your position does not exist yet (MAD-466). |
+| `get_entity(book, name)` | Who is this person, so far? One cast member with the readable facts that name it and a cited first appearance (MAD-466). |
+| `import_claims(book, claims[], entities[]?)` | Store an extraction run's claims — every quote validated against the text server-side, items that do not cite are rejected (needs a token with `claims:write`, MAD-466). |
 
 Every result carries the effective `bound` (where your reading stood) and
 peek deep links (`…/read?offset=N&peek=1`) that jump your reader to a
@@ -59,6 +64,7 @@ your assistant runs with the tools above. Five ship today:
 | `series_so_far(series)` | The story so far across a series: the finished books in order, plus where you stand in the current one. |
 | `quiz_me(book, chapters?)` | A quiz over the chapters you've actually read — questions first, answers after, every answer in the key cited with a passage link (MAD-471). |
 | `discussion_prep(book, section?)` | Book-club questions grounded in cited passages, plus the ones the book doesn't settle (MAD-471). |
+| `extract_claims(book, chapters?)` | Turn what you've actually read into stored claims — a disciplined read/cite/verify/report loop, every quote verified with `get_passage` before it is sent (MAD-466). |
 
 Each playbook carries the same rules: use the bounded tools only, never
 set `include_spoilers`, cite every line with its deep link, cut any line
@@ -87,9 +93,9 @@ likes you.
 1. A backhog account with books in your library.
 2. A personal API token: **Settings → API tokens → create**, copy the
    `bh_…` secret when it is shown — it is displayed exactly once.
-   Read-only (`books:read`) covers every tool except `record_quiz_result`;
-   tick **quiz:write** if you want your assistant to be able to record
-   quiz results — the single write that scope names.
+   Read-only (`books:read`) covers every tool except the two writes; tick
+   **quiz:write** to let it record quiz results, **claims:write** to let it
+   store extracted claims — each scope names exactly one POST.
 
 ## Claude Code
 
@@ -169,7 +175,7 @@ has only been shown your first three chapters cannot quote the fourth.
 | Variable | Flag | Meaning |
 | --- | --- | --- |
 | `BACKHOG_URL` | `-backhog-url` | Backhog origin (an `/api` suffix is tolerated). |
-| `BACKHOG_TOKEN` | `-backhog-token` | Personal token, `bh_…` — read-only, or read + `quiz:write` to let it record quiz results. |
+| `BACKHOG_TOKEN` | `-backhog-token` | Personal token, `bh_…` — read-only, or read + `quiz:write` (record quiz results) and/or `claims:write` (store extracted claims). |
 | `BACKHOG_PUBLIC_URL` | `-public-url` | Origin for deep links when it differs from `BACKHOG_URL`. |
 | `BACKHOG_MCP_HTTP` | `-http addr` | Serve streamable HTTP on `addr` instead of stdio. |
 | — | `-healthcheck` | Probe `/healthz` once and exit (container healthchecks). |

@@ -232,10 +232,15 @@ const (
 	// open any other mutation — a token carrying it is still read-only
 	// everywhere the read scope is all there is.
 	ScopeQuizWrite = "quiz:write"
+	// ScopeClaimsWrite covers exactly one write: batch-importing extracted
+	// claims into a book in the caller's own library (MAD-466). Every item
+	// still passes the deterministic cite-or-drop validation, so the scope
+	// grants a chance to be checked, never a place in the store.
+	ScopeClaimsWrite = "claims:write"
 )
 
 // AllScopes lists every scope a token may carry.
-var AllScopes = []string{ScopeBooksRead, ScopeQuizWrite}
+var AllScopes = []string{ScopeBooksRead, ScopeQuizWrite, ScopeClaimsWrite}
 
 // ValidScope reports whether s is a real token scope.
 func ValidScope(s string) bool {
@@ -1011,8 +1016,76 @@ type QuizResult struct {
 	ChapterStart *int `json:"chapter_start,omitempty"`
 	ChapterEnd   *int `json:"chapter_end,omitempty"`
 	// Source names the client that gave the quiz.
-	Source    string     `json:"source"`
-	CreatedAt time.Time  `json:"created_at"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// BookClaim is one stored claim about a book (MAD-466): a statement the
+// extractor grounded in a quoted span of the canonical text. Backhog
+// stores and serves these; it never produces them. Every row passed the
+// deterministic cite-or-drop door — the quote matched the text at its
+// offsets, inside one chapter — and carries the hash of that chapter so a
+// re-ingest that changes the text hides the claim instead of serving a
+// citation nobody can verify.
+type BookClaim struct {
+	ID     string `json:"id"`
+	UserID string `json:"-"`
+	Entry  string `json:"entry_id"`
+	// Statement is the claim in plain words; Subject/Predicate/Object are
+	// the optional structured triple of the same fact.
+	Statement string  `json:"statement"`
+	Subject   *string `json:"subject,omitempty"`
+	Predicate *string `json:"predicate,omitempty"`
+	Object    *string `json:"object,omitempty"`
+	// Quote is the quoted span exactly as the extractor cited it; the
+	// canonical text at [CharStart, CharEnd) is its folded form.
+	Quote     string `json:"quote"`
+	CharStart int    `json:"char_start"`
+	CharEnd   int    `json:"char_end"`
+	// ChapterIndex is the 1-based chapter the evidence sits in;
+	// ChapterHash is that chapter's canonical text at import time.
+	ChapterIndex int    `json:"chapter_index"`
+	ChapterHash  string `json:"-"`
+	// Source names the extractor that wrote the claim; SourceVersion is
+	// its own version string, so a bad extractor run is identifiable.
+	Source        string         `json:"source"`
+	SourceVersion string         `json:"source_version,omitempty"`
+	Versions      []ClaimVersion `json:"versions,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+}
+
+// ClaimVersion is one later truth of a claim: the append-only reveal log.
+// A version's statement holds from its RevealOffset on; a reader before it
+// sees the base claim (and any earlier versions), never the reveal.
+type ClaimVersion struct {
+	ID           string `json:"id"`
+	ClaimID      string `json:"-"`
+	Statement    string `json:"statement"`
+	Quote        string `json:"quote"`
+	CharStart    int    `json:"char_start"`
+	CharEnd      int    `json:"char_end"`
+	ChapterIndex int    `json:"chapter_index"`
+	ChapterHash  string `json:"-"`
+	// RevealOffset is where the truth arrives; at or after the evidence,
+	// enforced at import.
+	RevealOffset  int       `json:"reveal_offset"`
+	Source        string    `json:"source"`
+	SourceVersion string    `json:"source_version,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// BookEntity is a person, place or thing claims are about, on the reader's
+// own shelf. Aliases are the other names it answers to — the cross-book
+// "Lizzy is Elizabeth" — matched folded, so case and punctuation never
+// decide identity.
+type BookEntity struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"-"`
+	BookID    string    `json:"-"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind,omitempty"`
+	Aliases   []string  `json:"aliases,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // MediaFile is one file the scanner found under a configured media root.

@@ -993,6 +993,45 @@ server; see `docs/mcp.md`. The tool the client reports through is
 `record_quiz_result`, whose description carries the same honesty rule the
 endpoint lives by: report the count you actually graded.
 
+## The claims store (MAD-466)
+
+Backhog may *store and serve* structured claims about a book's content; it
+never *produces* them. Any extractor — an MCP client running the
+`extract_claims` prompt, a script, the Arda pipeline — runs outside and
+writes through `POST /api/books/{entryID}/claims`. The door on the way in
+is deterministic, no model anywhere:
+
+- **Cite or drop.** The quoted span, after `books.Normalize`, must be
+  exactly the canonical text at `[char_start, char_end)`; the span must
+  sit inside one chapter; a version's `reveal_offset` never precedes its
+  evidence. Failures are rejected per item with reasons — never fixed up.
+- **Identity is the evidence plus the statement**
+  (`UNIQUE (entry_id, char_start, char_end, statement)`), so a re-import
+  is a no-op — or a hash refresh after a re-ingest, which is exactly the
+  heal a stale claim needs.
+- **Staleness is the chapter content hash.** Claims are anchored to the
+  sha256 of their chapter's canonical slice; a re-ingest that changes the
+  chapter hides its claims (`stale_hidden` in the read response) — hidden,
+  not deleted — until an extractor re-anchors them.
+- **Versions are an append-only reveal log** (`claim_versions`, `UNIQUE
+  (claim_id, reveal_offset, statement)`): the butler did NOT do it. A read
+  at position P serves, per claim, the latest version whose evidence was
+  fully read and whose reveal sits at or before P — the spoiler clamp
+  working on statements exactly as it works on text. Nothing is ever
+  overwritten.
+- **One POST for tokens, named by scope.** `claims:write` opens exactly
+  the claims import shape and nothing else (the middleware matches the
+  route shape, the quiz rule); a cookie session writes like any library
+  write.
+- **Entities are shelf rows** (`book_entities` + `entity_aliases`, per
+  user and book): the cast the claims speak about, matched to claims by
+  folded name or alias at read time, so a claim's subject/object strings
+  stay the extractor's own words. An entity whose every mention sits past
+  the reading position does not exist yet.
+
+The MCP surface — `get_claims`, `get_entity`, `import_claims` and the
+`extract_claims` prompt — is documented in `docs/mcp.md`.
+
 ### The second corpus: OCR lettering search
 
 A comic or picture book has no canonical text — that is the paged model's
@@ -1156,6 +1195,9 @@ handoff degrades, by asking the user to say where they were.
 | `GET /api/books/series`, `GET /api/books/series/{seriesName}` | the caller's book series in reading order, per-book status + position (MAD-469; membership from Calibre sidecars) |
 | `POST/GET/DELETE /api/books/{entryID}/ocr` | lettering enqueue / status / clear — the search-only second corpus for paged books |
 | `POST /api/books/{entryID}/quiz-results` | record a self-reported quiz outcome (MAD-471): counts in, comprehension achievements + season stats out; tokens need `quiz:write` |
+| `POST /api/books/{entryID}/claims` | batch-import extracted claims (MAD-466): deterministic cite-or-drop on every item (quote must fold to the canonical text at its offsets, inside one chapter, reveal never precedes evidence); tokens need `claims:write` |
+| `GET /api/books/{entryID}/claims` | the stored claims as of the position (MAD-466): a truth exists only once its evidence has been read; versions served by reveal; stale (re-ingested) claims hidden; `until=none` opts in, `entity=` filters |
+| `GET /api/books/{entryID}/entities` | the cast the readable claims speak about (MAD-466): folded name/alias resolution, claim counts, cited first appearance; `name=` resolves one |
 | `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages`, `POST …/copies/{copyID}/seed-from-pdf` | physical copies (owned + borrowed) + page anchors (scanned, pinned, or seeded from a text-native PDF) |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |
 

@@ -19,7 +19,7 @@ import {
   type ThemeFamily,
 } from "@/hooks/useTheme";
 import { api } from "@/lib/api";
-import { ROLE_COPY, type APIToken } from "@/lib/types";
+import { ROLE_COPY, type APIToken, type TokenScope } from "@/lib/types";
 import { ARENAS, ARENA_LABELS, type Arena } from "@/lib/arena";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/format";
@@ -320,8 +320,9 @@ function SharingPanel() {
 
 /**
  * Personal API tokens: the credential an outside client (an MCP assistant, a
- * script) uses to act as you. Tokens are read-only for now — a token can read
- * your library the way you can, and touch nothing else.
+ * script) uses to act as you. A token reads your library by default; the one
+ * optional write is quiz:write, the single POST a quizzing assistant needs to
+ * record your results.
  *
  * The secret is shown exactly once, at creation, because the server keeps
  * only a hash: a lost token is revoked and reissued, never recovered.
@@ -332,18 +333,21 @@ function APITokensPanel() {
 
   const [name, setName] = useState("");
   const [expiresDays, setExpiresDays] = useState(0);
+  const [quizWrite, setQuizWrite] = useState(false);
   const [error, setError] = useState("");
   const [fresh, setFresh] = useState<APIToken | null>(null);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
 
   const create = useMutation({
-    mutationFn: () =>
-      api.createAPIToken({
+    mutationFn: () => {
+      const scopes: TokenScope[] = quizWrite ? ["books:read", "quiz:write"] : ["books:read"];
+      return api.createAPIToken({
         name: name.trim(),
-        scopes: ["books:read"],
+        scopes,
         expires_days: expiresDays || undefined,
-      }),
+      });
+    },
     onSuccess: (token) => {
       setFresh(token);
       setName("");
@@ -366,13 +370,13 @@ function APITokensPanel() {
       <h2 className="mb-1 text-sm font-semibold text-ink-200">API tokens</h2>
       <p className="mb-4 text-xs leading-relaxed text-ink-500">
         A personal key for clients that talk to your library from outside the app — an
-        MCP assistant, a script. It acts as you, read-only: your books, your reading
+        MCP assistant, a script. It acts as you: your books, your reading
         position, your searches. The key is shown once, when you make it; the server
         keeps only a fingerprint.
       </p>
 
       <form
-        className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"
+        className="mb-3 grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"
         onSubmit={(event) => {
           event.preventDefault();
           if (name.trim()) create.mutate();
@@ -405,10 +409,16 @@ function APITokensPanel() {
         </Button>
       </form>
 
-      <p className="-mt-2 mb-4 text-xs leading-relaxed text-ink-500">
-        Scope: reads your library (books:read). Write scopes arrive with the features
-        that need them — until then every token is read-only.
-      </p>
+      <label className="-mt-2 mb-4 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">
+        <input
+          type="checkbox"
+          className="size-3.5 accent-hl-bright"
+          checked={quizWrite}
+          onChange={(event) => setQuizWrite(event.target.checked)}
+        />
+        Also let it record quiz results (quiz:write) — the one write a quizzing
+        assistant needs; self-reported, for-fun achievements.
+      </label>
 
       {fresh?.token && <FreshToken token={fresh} onDone={() => setFresh(null)} />}
 

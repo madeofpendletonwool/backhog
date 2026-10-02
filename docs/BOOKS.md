@@ -949,6 +949,50 @@ button on the book detail page: a peek link to the stored position
 they've read to re-orient without a single position write — the banner
 inside the reader remains the only way back into writing mode.
 
+### Quizzing yourself (MAD-471)
+
+`POST /api/books/{entryID}/quiz-results` is the AI-free back half of
+"quiz me": a client reports `{questions, correct, chapter_range,
+source: "mcp"}` and backhog **stores and counts** — it never grades and
+never generates. The questions, the answers and the score are all the
+client's own report; backhog's job is to make the report durable and to
+turn it into the two places comprehension shows:
+
+- **The comprehension ladder** — three book achievements (`book_report`,
+  `gold_star`, `honor_roll`) wired through the same framework as every
+  other achievement: event-hooked predicates over a snapshot, idempotent
+  unlocks, a chronological backfill. The event is a new kind, `quiz`;
+  the aggregate is correct answers in the calendar year.
+- **Reading Season's quiz stat** — questions answered and answered
+  correctly for the year, beside the pages and the hours.
+
+The honesty rules are structural, not aspirational:
+
+- **Results are self-reported, and everything downstream says so.** The
+  achievements' own descriptions call it the honor system; the season
+  card's footnote says the same. A quiz score a client reports can never
+  be proof of comprehension — it is a game the reader plays with their
+  assistant, and the copy never lets that blur.
+- **The counts must at least be arithmetically possible.** 1–100
+  questions, `0 ≤ correct ≤ questions`, a chapter range that runs
+  forward or is absent, a `source` from the known set (`mcp` today —
+  name the client that gave the quiz). The table's CHECKs and the
+  handler agree.
+- **One POST for tokens, named by scope.** The `quiz:write` token scope
+  opens exactly the quiz-results shape and nothing else — the auth
+  middleware matches the route shape the way the passage read-POST does,
+  so a `books:read`-only token gets the standard 403, and a `quiz:write`
+  token still cannot touch any other write. A cookie session writes it
+  like any library write.
+- **The reader's own shelf.** Results record against the caller's own
+  entry (the `bookEntryOwned` door), so a stranger's book is the usual
+  404, and the ladder's aggregates are user-scoped like every other.
+
+The prompt half — `quiz_me` and `discussion_prep` — ships with the MCP
+server; see `docs/mcp.md`. The tool the client reports through is
+`record_quiz_result`, whose description carries the same honesty rule the
+endpoint lives by: report the count you actually graded.
+
 ### The second corpus: OCR lettering search
 
 A comic or picture book has no canonical text — that is the paged model's
@@ -1111,6 +1155,7 @@ handoff degrades, by asking the user to say where they were.
 | `GET /api/books/{entryID}/names`, `GET …/mentions?name=` | the name index (MAD-670): names met so far + a name's mentions, position-clamped by default; `POST …/names/hide\|/unhide` curates false positives (cookie-only) |
 | `GET /api/books/series`, `GET /api/books/series/{seriesName}` | the caller's book series in reading order, per-book status + position (MAD-469; membership from Calibre sidecars) |
 | `POST/GET/DELETE /api/books/{entryID}/ocr` | lettering enqueue / status / clear — the search-only second corpus for paged books |
+| `POST /api/books/{entryID}/quiz-results` | record a self-reported quiz outcome (MAD-471): counts in, comprehension achievements + season stats out; tokens need `quiz:write` |
 | `GET/POST …/copies[…]`, `POST …/copies/{copyID}/return\|/reopen\|/own`, `GET/POST …/copies/{copyID}/pages`, `POST …/copies/{copyID}/seed-from-pdf` | physical copies (owned + borrowed) + page anchors (scanned, pinned, or seeded from a text-native PDF) |
 | `/api/achievements/reading-season` | the per-year Reading Season rollup |
 

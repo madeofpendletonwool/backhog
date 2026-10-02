@@ -1057,6 +1057,9 @@ func (s *Store) BackfillAchievements(ctx context.Context, userID string) error {
 	if err := s.backfillBookAchievementsTx(ctx, tx, userID); err != nil {
 		return err
 	}
+	if err := backfillQuizAchievementsTx(ctx, tx, userID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -1765,6 +1768,15 @@ func (s *Store) ReadingSeason(ctx context.Context, userID string, year int) (mod
 			   AND SUM(e.status = 'played') = COUNT(*)
 			   AND MAX(e.finished_at) >= ? AND MAX(e.finished_at) < ?
 		)`, userID, start, end).Scan(&season.AuthorsCleared)
+	if err != nil {
+		return season, err
+	}
+
+	// The comprehension half (MAD-471): questions answered and answered
+	// correctly, as quizzing clients reported them for the year. Self-
+	// reported counts on a for-fun card — the stat carries no weight the
+	// achievements don't.
+	season.QuizAnswered, season.QuizCorrect, err = quizStats(ctx, s.db, userID, start, end)
 	if err != nil {
 		return season, err
 	}

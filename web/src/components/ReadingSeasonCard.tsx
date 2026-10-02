@@ -39,7 +39,16 @@ export function ReadingSeasonCard() {
         <Stat icon={<Gi name="headphones" className="size-3.5" />} label="Hours listened" value={formatHours(season.hours_listened)} />
         <Stat icon={<Gi name="pencil" className="size-3.5" />} label="Authors cleared" value={String(season.authors_cleared)} />
         <Stat icon={<Gi name="lifebuoy" className="size-3.5" />} label="Shelf rescues" value={String(season.rescues)} />
+        <Stat
+          icon={<Gi name="list-checks" className="size-3.5" />}
+          label="Quiz answers"
+          value={`${season.quiz_correct.toLocaleString()}/${season.quiz_answered.toLocaleString()}`}
+        />
       </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-ink-600">
+        Quiz answers are what your quizzing assistant reported you scored — the honor
+        system, for fun. The achievements they feed are the same deal.
+      </p>
     </Panel>
   );
 }

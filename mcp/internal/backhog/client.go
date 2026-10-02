@@ -1,11 +1,11 @@
 // Package backhog is the MCP server's HTTP client for the backhog API.
 //
-// It speaks only the public API a personal token (MAD-465) can reach and
-// only ever issues GETs: the token is read-only by construction, so the
-// bridge cannot mutate a library even if a tool tried. Every read path it
-// touches clamps itself to the caller's reading position under the token
-// default `until=position` (MAD-467), which is where the spoiler safety of
-// every tool result comes from — this client adds `until=none` only when a
+// It speaks only the public API a personal token (MAD-465) can reach, and
+// it issues exactly one write: recording a quiz result (MAD-471), the
+// single POST the quiz:write scope names. Every read path it touches
+// clamps itself to the caller's reading position under the token default
+// `until=position` (MAD-467), which is where the spoiler safety of every
+// tool result comes from — this client adds `until=none` only when a
 // caller explicitly asks for spoilers.
 //
 // The JSON field names mirror the API's response bodies exactly; nothing is
@@ -14,6 +14,7 @@
 package backhog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -108,6 +109,49 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 		return nil
 	}
 	return json.Unmarshal(raw, out)
+}
+
+// post writes one JSON body to an API path and decodes the answer. It
+// exists for exactly one call — RecordQuizResult — and stays that narrow
+// on purpose: the bridge's whole spoiler-safety story rests on its writes
+// being countable on one hand.
+func (c *Client) post(ctx context.Context, path string, body any, out any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	u := *c.base
+	u.Path = strings.TrimSuffix(u.Path, "/") + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("reaching backhog at %s: %w", c.base, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		msg := strings.TrimSpace(string(data))
+		var envelope struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(data, &envelope) == nil && envelope.Error != "" {
+			msg = envelope.Error
+		}
+		return &APIError{Status: resp.StatusCode, Body: msg}
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(data, out)
 }
 
 // untilQuery renders the spoiler opt-in the read paths understand: an empty
@@ -520,6 +564,57 @@ type seriesDetailResponse struct {
 func (c *Client) Series(ctx context.Context, name string) (*seriesDetailResponse, error) {
 	var out seriesDetailResponse
 	if err := c.get(ctx, "/api/books/series/"+name, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// QuizResultReport is the self-reported outcome a quizzing client sends
+// after grading (MAD-471): the questions it asked, the answers the reader
+// got right, and the chapter span the quiz covered. Backhog stores and
+// counts; it never grades or generates.
+type QuizResultReport struct {
+	Questions    int               `json:"questions"`
+	Correct      int               `json:"correct"`
+	ChapterRange *QuizChapterRange `json:"chapter_range,omitempty"`
+	Source       string            `json:"source"`
+}
+
+// QuizChapterRange is the inclusive 1-based chapter span a quiz covered.
+type QuizChapterRange struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+}
+
+// QuizResultRecorded is backhog's answer to a recorded result: the stored
+// row and any achievements the count tipped, for the toast.
+type QuizResultRecorded struct {
+	QuizResult struct {
+		ID           string    `json:"id"`
+		Questions    int       `json:"questions"`
+		Correct      int       `json:"correct"`
+		ChapterStart *int      `json:"chapter_start,omitempty"`
+		ChapterEnd   *int      `json:"chapter_end,omitempty"`
+		Source       string    `json:"source"`
+		CreatedAt    time.Time `json:"created_at"`
+	} `json:"quiz_result"`
+	Achievements []QuizAchievement `json:"achievements"`
+}
+
+// QuizAchievement is one comprehension achievement the result unlocked.
+type QuizAchievement struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Tier  string `json:"tier"`
+}
+
+// RecordQuizResult reports a quiz outcome over the one write this client
+// carries (MAD-471). Needs a token with the quiz:write scope; a read-only
+// token gets the 403 the API hands every write, returned here as an
+// APIError so the tool can say what to fix.
+func (c *Client) RecordQuizResult(ctx context.Context, entryID string, report QuizResultReport) (*QuizResultRecorded, error) {
+	var out QuizResultRecorded
+	if err := c.post(ctx, "/api/books/"+url.PathEscape(entryID)+"/quiz-results", report, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

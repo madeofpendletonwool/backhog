@@ -127,6 +127,9 @@ and unlock text stay in sync.
 | `doorstop` | Doorstop | silver | false | false | Finish a book over 600 pages long. |
 | `honest_dnf` | The Honest DNF | bronze | false | false | Drop a book you've left 'reading' for two years. Honesty counts. |
 | `cartographer` | Cartographer | silver | false | false | Map 25 pages of a physical copy by scanning them. |
+| `book_report` | Book Report | bronze | false | false | Turn in your first quiz result on something you've read. |
+| `gold_star` | Gold Star | silver | false | false | Answer 25 quiz questions correctly in a year. Graded on the honor system, obviously. |
+| `honor_roll` | Honor Roll | gold | false | false | Answer 100 quiz questions correctly in a year. Still the honor system. Still for fun. |
 | `night_owl` | Do You Even Sleep? | bronze | true | true | Log a play session between 3 and 5 in the morning. |
 | `hog_watcher` | Hog Watcher | bronze | true | true | Click the Backhog logo 10 times in a row. |
 | `konami` | Old Habits | silver | true | true | Enter the Konami code on the achievements page. |

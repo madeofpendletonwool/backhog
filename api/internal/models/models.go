@@ -219,17 +219,23 @@ type ShareCandidate struct {
 // greppable.
 const TokenPrefix = "bh_"
 
-// Token scopes, starting minimal: a token is a reader. Write scopes
-// (position:write, claims:write) are separate names added only when a later
-// feature needs them, so the default token is read-only by construction.
+// Token scopes, starting minimal: a token is a reader. Write scopes are
+// separate names added only when a later feature needs them, so the default
+// token is read-only by construction. The first one is quiz:write — the
+// single POST a quizzing client needs, and nothing else.
 const (
 	// ScopeBooksRead covers every read over the caller's own library: the
 	// canonical text and chapters, search, passage placement, and position.
 	ScopeBooksRead = "books:read"
+	// ScopeQuizWrite covers exactly one write: recording a self-reported
+	// quiz result against a book in the caller's own library. It does not
+	// open any other mutation — a token carrying it is still read-only
+	// everywhere the read scope is all there is.
+	ScopeQuizWrite = "quiz:write"
 )
 
 // AllScopes lists every scope a token may carry.
-var AllScopes = []string{ScopeBooksRead}
+var AllScopes = []string{ScopeBooksRead, ScopeQuizWrite}
 
 // ValidScope reports whether s is a real token scope.
 func ValidScope(s string) bool {
@@ -969,6 +975,44 @@ type ReadingSeason struct {
 	AuthorsCleared int `json:"authors_cleared"`
 	// Rescues counts books finished after sitting owned for a year or more.
 	Rescues int `json:"rescues"`
+	// QuizAnswered / QuizCorrect are the comprehension half: questions
+	// answered and answered correctly, as recorded by quizzing clients
+	// this year. Self-reported by whoever gave the quiz — the card treats
+	// them as fun, not proof.
+	QuizAnswered int `json:"quiz_answered"`
+	QuizCorrect  int `json:"quiz_correct"`
+}
+
+// Quiz sources: who gave the quiz. The MCP prompts are the first and only
+// client, so the set has one member; it is a set rather than a flag because
+// the row's honesty depends on naming its author.
+const (
+	QuizSourceMCP = "mcp"
+)
+
+// ValidQuizSource reports whether s names a quiz source backhog records.
+func ValidQuizSource(s string) bool {
+	return s == QuizSourceMCP
+}
+
+// QuizResult is one recorded quiz outcome: how many questions a client says
+// it asked, how many the reader is said to have gotten right, and the
+// chapter span it covered. Backhog stores and counts it; it never grades
+// or generates it.
+type QuizResult struct {
+	ID     string `json:"id"`
+	UserID string `json:"-"`
+	Entry  string `json:"entry_id"`
+	// Questions / Correct are the client's own count of what happened.
+	Questions int `json:"questions"`
+	Correct   int `json:"correct"`
+	// ChapterStart / ChapterEnd are the inclusive 1-based chapter span the
+	// quiz covered; nil when the client did not say.
+	ChapterStart *int `json:"chapter_start,omitempty"`
+	ChapterEnd   *int `json:"chapter_end,omitempty"`
+	// Source names the client that gave the quiz.
+	Source    string     `json:"source"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // MediaFile is one file the scanner found under a configured media root.

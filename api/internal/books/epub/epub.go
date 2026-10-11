@@ -33,6 +33,12 @@ var ErrDRM = errors.New("epub: file is DRM-protected (META-INF/encryption.xml pr
 type Doc struct {
 	// SpineIndex is the document's position in the OPF spine.
 	SpineIndex int
+	// FragmentIndex is the document's position among *all* the OPF spine's
+	// itemrefs, non-linear ones included — the 0-based form of the N in a
+	// KOReader XPointer's /body/DocFragment[N]. It differs from SpineIndex
+	// only in books with linear="no" items or dangling itemrefs, which the
+	// canonical text skips and a rendering engine does not.
+	FragmentIndex int
 	// Href is the document's path inside the zip, e.g. "OEBPS/Text/ch1.xhtml".
 	Href string
 	// Title and Depth come from the first TOC entry that targets this
@@ -136,7 +142,7 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 	report.Entries = len(entries)
 
 	doc := &Document{Docs: make([]Doc, 0, len(pkg.Spine.ItemRefs)), TOC: report}
-	for _, ref := range pkg.Spine.ItemRefs {
+	for fragment, ref := range pkg.Spine.ItemRefs {
 		if ref.Linear == "no" {
 			continue
 		}
@@ -150,8 +156,9 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 			return nil, err
 		}
 		doc.Docs = append(doc.Docs, Doc{
-			SpineIndex: len(doc.Docs),
-			Href:       href,
+			SpineIndex:    len(doc.Docs),
+			FragmentIndex: fragment,
+			Href:          href,
 			Title:      matchingTitle(entries, href),
 			Depth:      matchingDepth(entries, href),
 			Blocks:     blocks,

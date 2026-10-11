@@ -27,6 +27,12 @@ type Config struct {
 	// — which looks exactly like "login does nothing". Turn it on when serving
 	// through an HTTPS reverse proxy.
 	CookieSecure bool
+	// PublicURL is the origin clients outside the browser reach Backhog at
+	// (PUBLIC_URL, e.g. https://books.example.com). The e-reader catalog
+	// writes absolute links with it; empty means each request's own Host
+	// and X-Forwarded-* headers decide, which is right for a LAN or a
+	// well-behaved proxy.
+	PublicURL string
 	// MediaDirs are the read-only library roots for the Books arena, in
 	// PATH-style colon-separated form (MEDIA_DIR=/media/audiobooks:/media/ebooks).
 	// The directories are bind-mounted into the container and are never written
@@ -65,6 +71,7 @@ func Load() (Config, error) {
 		SteamAPIKey:  os.Getenv("STEAM_API_KEY"),
 		Production:   strings.EqualFold(env("APP_ENV", "development"), "production"),
 		CookieSecure: strings.EqualFold(env("COOKIE_SECURE", "false"), "true"),
+		PublicURL:    strings.TrimSpace(os.Getenv("PUBLIC_URL")),
 	}
 	// BOOK_LIBRARY_DIR is the older spelling; it still works when MEDIA_DIR
 	// is unset so existing deployments keep scanning after an upgrade.

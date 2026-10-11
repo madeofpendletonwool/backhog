@@ -151,6 +151,8 @@ export function SettingsPage() {
 
         <APITokensPanel />
 
+        <UnmatchedSyncsPanel />
+
         <Panel className="p-5">
           <h2 className="mb-1 text-sm font-semibold text-ink-200">Change password</h2>
           <p className="mb-4 text-xs text-ink-500">
@@ -558,12 +560,12 @@ function FreshToken({ token, onDone }: { token: APIToken; onDone: () => void }) 
 
 /**
  * What to type into the e-reader, beside the one showing of its key. The key
- * is the password; the username is yours. The OPDS catalog's address joins
- * this card when the catalog lands (MAD-830).
+ * is the password in both places; the username is yours.
  */
 function DeviceSetup() {
   const { user } = useAuth();
   const rows: [string, string][] = [
+    ["OPDS catalog", `${window.location.origin}/api/opds`],
     ["Progress sync server", `${window.location.origin}/api/kosync`],
     ["Username", user?.username ?? ""],
     ["Password", "the key above"],
@@ -577,6 +579,77 @@ function DeviceSetup() {
         </div>
       ))}
     </dl>
+  );
+}
+
+/**
+ * Sync pushes from an e-reader that no book claimed. A device names a book
+ * only by a hash of its file (or its filename); a book that reached the
+ * device some other way than the catalog hashes to nothing Backhog made,
+ * so its position is parked here until it is linked to the book it is.
+ * Hidden entirely while there is nothing to link.
+ */
+function UnmatchedSyncsPanel() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ["unmatched-syncs"], queryFn: api.unmatchedSyncs });
+  const unmatched = data?.unmatched ?? [];
+  const { data: books } = useQuery({
+    queryKey: ["library", "books-for-linking"],
+    queryFn: () => api.library({ media: "book", sort: "title", limit: 500 }),
+    enabled: unmatched.length > 0,
+  });
+  const [choice, setChoice] = useState<Record<string, string>>({});
+  const link = useMutation({
+    mutationFn: ({ document, entryId }: { document: string; entryId: string }) =>
+      api.linkUnmatchedSync(document, entryId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["unmatched-syncs"] }),
+  });
+
+  if (unmatched.length === 0) return null;
+
+  return (
+    <Panel className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">Unmatched e-reader syncs</h2>
+      <p className="mb-4 text-xs leading-relaxed text-ink-500">
+        Your e-reader synced a book Backhog could not recognise — usually one copied onto
+        the device instead of downloaded from the catalog. Link it to the book it is, and
+        its next sync lands there.
+      </p>
+      <ul className="divide-y divide-line">
+        {unmatched.map((u) => (
+          <li key={u.document} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
+            <span className="min-w-0 flex-1 text-sm text-ink-200">
+              <span className="block truncate">{u.title || u.filename || u.document}</span>
+              <span className="text-xs text-ink-500">
+                {[u.authors, u.device, `${Math.round(u.percentage * 100)}%`, `seen ${formatDate(u.seen_at)}`]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </span>
+            <Select
+              className="w-56"
+              value={choice[u.document] ?? ""}
+              onChange={(event) => setChoice({ ...choice, [u.document]: event.target.value })}
+            >
+              <option value="">Choose a book…</option>
+              {(books?.entries ?? []).map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.book?.title}
+                </option>
+              ))}
+            </Select>
+            <Button
+              size="sm"
+              disabled={!choice[u.document]}
+              loading={link.isPending}
+              onClick={() => link.mutate({ document: u.document, entryId: choice[u.document] })}
+            >
+              Link
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }
 

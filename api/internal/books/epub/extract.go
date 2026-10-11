@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"path"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/html"
 )
@@ -69,6 +70,40 @@ type extractor struct {
 	// path is really in this EPUB.
 	baseDir string
 	exists  func(string) bool
+	// anchors, when non-nil, records where each emitted block starts in
+	// the DOM — the one addition the XPointer translation needs, made to
+	// this walker rather than a copy of it so the two can never disagree
+	// about what a block is. pending is the start of the block the buffer
+	// is currently filling: the first text node that put a non-space
+	// character in it, and that character's byte offset.
+	anchors *[]Anchor
+	pending *Anchor
+}
+
+// Anchor is where one block starts in its document's DOM: the text node
+// holding the block's first non-space character, and that character's byte
+// offset in the node's Data. Raw is the block's text exactly as Blocks has
+// it, so a caller can apply the same normalization that decides which
+// blocks survive into the canonical text.
+type Anchor struct {
+	Node   *html.Node
+	Offset int
+	Raw    string
+}
+
+// AnchorBlocks parses one spine document and returns its root together with
+// the anchor of every block, in the order and with the text extractBlocks
+// produces for the same document.
+func AnchorBlocks(zr *zip.Reader, href string) (*html.Node, []Anchor, error) {
+	root, err := parseHTML(zr, href)
+	if err != nil {
+		return nil, nil, err
+	}
+	var anchors []Anchor
+	ex := &extractor{anchors: &anchors}
+	ex.walk(root)
+	ex.flush()
+	return root, anchors, nil
 }
 
 // ExtractBlocksHTML returns the raw text of every block-level element in an
@@ -116,6 +151,11 @@ func extractBlocks(zr *zip.Reader, href string) ([]string, []int, []Image, error
 func (ex *extractor) walk(n *html.Node) {
 	switch n.Type {
 	case html.TextNode:
+		if ex.anchors != nil && ex.pending == nil {
+			if i := strings.IndexFunc(n.Data, func(r rune) bool { return !unicode.IsSpace(r) }); i >= 0 {
+				ex.pending = &Anchor{Node: n, Offset: i}
+			}
+		}
 		ex.buf.WriteString(n.Data)
 	case html.ElementNode:
 		if skipTags[n.Data] {
@@ -217,8 +257,14 @@ func (ex *extractor) flush() {
 			ex.headings = append(ex.headings, len(ex.blocks))
 		}
 		ex.blocks = append(ex.blocks, s)
+		if ex.anchors != nil && ex.pending != nil {
+			a := *ex.pending
+			a.Raw = s
+			*ex.anchors = append(*ex.anchors, a)
+		}
 	}
 	ex.buf.Reset()
+	ex.pending = nil
 }
 
 // isHeading reports whether a block element is marked up as a heading: an

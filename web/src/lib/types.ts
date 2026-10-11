@@ -328,6 +328,19 @@ export interface APIToken {
   created_at: string;
 }
 
+/** An e-reader sync push no book claimed: a document the device knows by a
+ *  hash nothing in the library produced, with what the push said about it. */
+export interface UnmatchedSync {
+  document: string;
+  title: string;
+  authors: string;
+  filename: string;
+  progress: string;
+  percentage: number;
+  device: string;
+  seen_at: string;
+}
+
 /** What the sign-in pages read before anyone has an account. */
 export interface AuthConfig {
   registration_enabled: boolean;

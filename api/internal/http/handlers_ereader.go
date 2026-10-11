@@ -13,6 +13,7 @@ import (
 	"github.com/collinpendleton/backhog/api/internal/auth"
 	"github.com/collinpendleton/backhog/api/internal/books"
 	"github.com/collinpendleton/backhog/api/internal/ereader"
+	"github.com/collinpendleton/backhog/api/internal/models"
 	"github.com/collinpendleton/backhog/api/internal/store"
 )
 
@@ -61,7 +62,7 @@ func (s *Server) handleEpubDownload(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	author, title := ereader.FeedAuthor(book.Authors), ereader.FeedTitle(book.Title)
+	author, title := feedStrings(book)
 
 	if err := s.refreshKosyncDocuments(r.Context(), entryID, ef, author, title); err != nil {
 		slog.WarnContext(r.Context(), "kosync document ids not refreshed",
@@ -76,6 +77,12 @@ func (s *Server) handleEpubDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, name, ef.Info.ModTime(), ef.File)
+}
+
+// feedStrings is a book's author and title exactly as the catalog emits
+// them, which is also what CrossPoint names the downloaded file from.
+func feedStrings(book models.Book) (author, title string) {
+	return ereader.FeedAuthor(book.Authors), ereader.FeedTitle(book.Title)
 }
 
 // refreshKosyncDocuments recomputes an entry's document ids from the file

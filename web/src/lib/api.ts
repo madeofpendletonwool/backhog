@@ -69,6 +69,7 @@ import type {
   ServerSettings,
   ShareCandidate,
   TokenScope,
+  UnmatchedSync,
 } from "./types";
 
 /** An API error carrying the HTTP status, so callers can special-case 401. */
@@ -340,6 +341,15 @@ export const api = {
 
   /** Kills the credential; the row stays as the record that it existed. */
   revokeAPIToken: (tokenId: string) => request<void>(`/tokens/${tokenId}`, { method: "DELETE" }),
+
+  // --- e-reader sync ------------------------------------------------------
+  unmatchedSyncs: () => request<{ unmatched: UnmatchedSync[] }>("/ereader/unmatched"),
+  /** Bind a device's document id to a book; its next sync lands there. */
+  linkUnmatchedSync: (document: string, entryId: string) =>
+    request<void>(`/ereader/unmatched/${document}/link`, {
+      method: "POST",
+      body: body({ entry_id: entryId }),
+    }),
 
   // --- sharing ----------------------------------------------------------
   /** Every account this book could be shared with, flagged with whether it is. */

@@ -174,14 +174,34 @@ func (s *Server) Routes() http.Handler {
 		// a token, never an account password.
 		r.Route("/opds", func(r chi.Router) {
 			r.Use(auth.RequireDevice)
+			// The catalog (MAD-830): a navigation root, acquisition shelves,
+			// lists, series and search, all paginated small for the ESP32.
+			r.Get("/", s.handleOPDSRoot)
+			r.Get("/reading", s.handleOPDSShelf("reading"))
+			r.Get("/queue", s.handleOPDSShelf("queue"))
+			r.Get("/recent", s.handleOPDSShelf("recent"))
+			r.Get("/all", s.handleOPDSShelf("all"))
+			r.Get("/search", s.handleOPDSSearch)
+			r.Get("/lists", s.handleOPDSLists)
+			r.Get("/lists/{listID}", s.handleOPDSList)
+			r.Get("/series", s.handleOPDSSeriesIndex)
+			r.Get("/series/books", s.handleOPDSSeries)
 			// The original EPUB, byte for byte: the acquisition link's target.
 			r.Get("/books/{entryID}/epub/{filename}", s.handleEpubDownload)
 			// HEAD too: some readers ask the size before they commit to it.
 			r.Head("/books/{entryID}/epub/{filename}", s.handleEpubDownload)
 		})
+		// The KOReader sync protocol (MAD-831). Registration is the one
+		// anonymous route — a client calls it with no credentials — and it
+		// never creates anything (see handleKosyncCreate).
 		r.Route("/kosync", func(r chi.Router) {
-			r.Use(auth.RequireDevice)
-			r.Get("/users/auth", s.handleKosyncAuth)
+			r.Post("/users/create", s.handleKosyncCreate)
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireDevice)
+				r.Get("/users/auth", s.handleKosyncAuth)
+				r.Put("/syncs/progress", s.handleKosyncPush)
+				r.Get("/syncs/progress/{document}", s.handleKosyncPull)
+			})
 		})
 
 		r.Group(func(r chi.Router) {
@@ -190,6 +210,11 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/games/search", s.handleGameSearch)
 			r.Get("/games/{gameID}", s.handleGetGame)
 			r.Get("/games/{gameID}/series", s.handleGameSeries)
+
+			// E-reader sync pushes no book claimed, and the hand link that
+			// places them (MAD-831).
+			r.Get("/ereader/unmatched", s.handleKosyncUnmatched)
+			r.Post("/ereader/unmatched/{document}/link", s.handleKosyncLink)
 
 			r.Get("/books/search", s.handleBookSearch)
 			// Search inside every book at once (MAD-470): FTS over the

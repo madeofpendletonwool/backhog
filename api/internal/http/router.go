@@ -140,7 +140,7 @@ func (s *Server) Routes() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(timeoutExcept(30*time.Second, isLongTransfer))
 	r.Use(auth.Middleware(s.store, s.store))
 
 	r.Route("/api", func(r chi.Router) {
@@ -165,6 +165,24 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/covers/game/{gameID}", s.handleCover)
 		r.Get("/covers/book/{bookID}", s.handleBookCover)
 		r.Get("/covers/{gameID}", s.handleLegacyCoverRedirect)
+
+		// The e-reader routes (MAD-827). They sit outside the Require group
+		// because they answer an anonymous request differently: with a Basic
+		// challenge, which is what makes an OPDS client prompt for
+		// credentials. They are also the only routes where the middleware
+		// reads Basic and KOReader x-auth credentials at all — both carrying
+		// a token, never an account password.
+		r.Route("/opds", func(r chi.Router) {
+			r.Use(auth.RequireDevice)
+			// The original EPUB, byte for byte: the acquisition link's target.
+			r.Get("/books/{entryID}/epub/{filename}", s.handleEpubDownload)
+			// HEAD too: some readers ask the size before they commit to it.
+			r.Head("/books/{entryID}/epub/{filename}", s.handleEpubDownload)
+		})
+		r.Route("/kosync", func(r chi.Router) {
+			r.Use(auth.RequireDevice)
+			r.Get("/users/auth", s.handleKosyncAuth)
+		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Require)
@@ -519,4 +537,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"metadata": s.cfg.MetadataEnabled(),
 		"steam":    s.steam.Enabled(),
 	})
+}
+
+// timeoutExcept applies chi's request timeout to every request but the ones
+// exempt names — whole-file downloads whose honest duration is the
+// client's bandwidth, not our work (see isLongTransfer).
+func timeoutExcept(d time.Duration, exempt func(*http.Request) bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		timed := middleware.Timeout(d)(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if exempt(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			timed.ServeHTTP(w, r)
+		})
+	}
 }

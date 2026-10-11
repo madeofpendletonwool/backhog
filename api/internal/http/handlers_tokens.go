@@ -19,6 +19,10 @@ type tokenRequest struct {
 	Scopes []string `json:"scopes"`
 	// ExpiresDays sets an optional lifetime; zero means no expiry.
 	ExpiresDays int `json:"expires_days"`
+	// Device mints an e-reader token (MAD-828): it also answers to the
+	// KOReader sync protocol's x-auth headers, and its scopes default to
+	// books:read + progress:write instead of read-only.
+	Device bool `json:"device"`
 }
 
 // handleListAPITokens shows the caller's own tokens with their last use and
@@ -72,6 +76,9 @@ func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.Scopes) == 0 {
 		body.Scopes = []string{models.ScopeBooksRead}
+		if body.Device {
+			body.Scopes = models.DeviceScopes
+		}
 	}
 	for _, scope := range body.Scopes {
 		if !models.ValidScope(scope) {
@@ -91,7 +98,11 @@ func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &t
 	}
 
-	token, err := s.store.CreateAPIToken(r.Context(), userID, name, body.Scopes, expiresAt)
+	create := s.store.CreateAPIToken
+	if body.Device {
+		create = s.store.CreateDeviceAPIToken
+	}
+	token, err := create(r.Context(), userID, name, body.Scopes, expiresAt)
 	if err != nil {
 		fail(w, err)
 		return
@@ -144,6 +155,7 @@ func tokenJSON(t models.APIToken, now time.Time) map[string]any {
 		"id":         t.ID,
 		"name":       t.Name,
 		"scopes":     t.Scopes,
+		"device":     t.Device,
 		"status":     t.Status(now),
 		"created_at": t.CreatedAt,
 	}

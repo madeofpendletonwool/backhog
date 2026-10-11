@@ -325,6 +325,11 @@ function SharingPanel() {
  * to record your results) and claims:write (the single POST a claims
  * extractor needs to store what it grounded in your books).
  *
+ * An e-reader token (KOReader, CrossPoint) is the same kind of key with a
+ * preset: it reads and moves its reading position (progress:write), and it
+ * also answers to KOReader sync's login, which sends an MD5 of the password
+ * rather than the password itself.
+ *
  * The secret is shown exactly once, at creation, because the server keeps
  * only a hash: a lost token is revoked and reissued, never recovered.
  */
@@ -336,6 +341,7 @@ function APITokensPanel() {
   const [expiresDays, setExpiresDays] = useState(0);
   const [quizWrite, setQuizWrite] = useState(false);
   const [claimsWrite, setClaimsWrite] = useState(false);
+  const [device, setDevice] = useState(false);
   const [error, setError] = useState("");
   const [fresh, setFresh] = useState<APIToken | null>(null);
 
@@ -343,6 +349,13 @@ function APITokensPanel() {
 
   const create = useMutation({
     mutationFn: () => {
+      if (device) {
+        return api.createAPIToken({
+          name: name.trim(),
+          device: true,
+          expires_days: expiresDays || undefined,
+        });
+      }
       const scopes: TokenScope[] = ["books:read"];
       if (quizWrite) scopes.push("quiz:write");
       if (claimsWrite) scopes.push("claims:write");
@@ -417,24 +430,39 @@ function APITokensPanel() {
         <input
           type="checkbox"
           className="size-3.5 accent-hl-bright"
-          checked={quizWrite}
-          onChange={(event) => setQuizWrite(event.target.checked)}
+          checked={device}
+          onChange={(event) => setDevice(event.target.checked)}
         />
-        Also let it record quiz results (quiz:write) — the one write a quizzing
-        assistant needs; self-reported, for-fun achievements.
+        This is an e-reader (KOReader, CrossPoint) — it downloads your books and
+        syncs its reading position, and nothing else.
       </label>
 
-      <label className="mb-4 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">
-        <input
-          type="checkbox"
-          className="size-3.5 accent-hl-bright"
-          checked={claimsWrite}
-          onChange={(event) => setClaimsWrite(event.target.checked)}
-        />
-        Also let it store extracted claims (claims:write) — the one write a
-        claims extractor needs; every quote is checked against the book before
-        it lands.
-      </label>
+      {!device && (
+        <>
+        <label className="mb-2 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">
+          <input
+            type="checkbox"
+            className="size-3.5 accent-hl-bright"
+            checked={quizWrite}
+            onChange={(event) => setQuizWrite(event.target.checked)}
+          />
+          Also let it record quiz results (quiz:write) — the one write a quizzing
+          assistant needs; self-reported, for-fun achievements.
+        </label>
+
+        <label className="mb-4 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">
+          <input
+            type="checkbox"
+            className="size-3.5 accent-hl-bright"
+            checked={claimsWrite}
+            onChange={(event) => setClaimsWrite(event.target.checked)}
+          />
+          Also let it store extracted claims (claims:write) — the one write a
+          claims extractor needs; every quote is checked against the book before
+          it lands.
+        </label>
+        </>
+      )}
 
       {fresh?.token && <FreshToken token={fresh} onDone={() => setFresh(null)} />}
 
@@ -455,6 +483,11 @@ function APITokensPanel() {
               <TokenStatusChip status={token.status} />
               <span className="min-w-0 flex-1 truncate text-sm text-ink-200">
                 {token.name}
+                {token.device && (
+                  <span className="ml-2 rounded-md bg-ink-700/50 px-1.5 py-0.5 text-[11px] text-ink-300">
+                    e-reader
+                  </span>
+                )}
                 <span className="ml-2 text-xs text-ink-500">{token.scopes.join(", ")}</span>
               </span>
               <span className="text-xs text-ink-500">
@@ -512,10 +545,38 @@ function FreshToken({ token, onDone }: { token: APIToken; onDone: () => void }) 
           Done
         </Button>
       </div>
-      <p className="mt-2 text-xs leading-relaxed text-emerald-300/70">
-        Use it as a Bearer token: Authorization: Bearer {token.token?.slice(0, 8)}…
-      </p>
+      {token.device ? (
+        <DeviceSetup />
+      ) : (
+        <p className="mt-2 text-xs leading-relaxed text-emerald-300/70">
+          Use it as a Bearer token: Authorization: Bearer {token.token?.slice(0, 8)}…
+        </p>
+      )}
     </div>
+  );
+}
+
+/**
+ * What to type into the e-reader, beside the one showing of its key. The key
+ * is the password; the username is yours. The OPDS catalog's address joins
+ * this card when the catalog lands (MAD-830).
+ */
+function DeviceSetup() {
+  const { user } = useAuth();
+  const rows: [string, string][] = [
+    ["Progress sync server", `${window.location.origin}/api/kosync`],
+    ["Username", user?.username ?? ""],
+    ["Password", "the key above"],
+  ];
+  return (
+    <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-emerald-300/80">
+      {rows.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt className="text-emerald-300/60">{label}</dt>
+          <dd className="min-w-0 truncate font-mono">{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

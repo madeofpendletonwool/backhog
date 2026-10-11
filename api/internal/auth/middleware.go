@@ -32,7 +32,13 @@ type Resolver interface {
 // credentials itself; the middleware only decides what to do with the answer.
 type TokenResolver interface {
 	UserForAPIToken(ctx context.Context, token string) (models.User, []string, error)
+	// UserForKosyncKey resolves the KOReader sync protocol's x-auth-user /
+	// x-auth-key pair, which only device tokens answer to (MAD-828).
+	UserForKosyncKey(ctx context.Context, username, key string) (models.User, []string, error)
 }
+
+// DeviceRealm is the Basic-auth realm the e-reader routes challenge with.
+const DeviceRealm = "Backhog"
 
 // SetCookie writes the session cookie. Secure is set only in production so that
 // plain-HTTP local development still works.
@@ -72,6 +78,13 @@ func ClearCookie(w http.ResponseWriter, production bool) {
 //     bearer value without the bh_ prefix is not ours at all — the /internal
 //     worker gates authenticate their own tokens, and those pass through
 //     untouched.
+//   - On the e-reader routes only (/api/opds, /api/kosync — MAD-828), the
+//     same token also arrives the two ways e-readers can send it: HTTP
+//     Basic with the token as the password (OPDS clients and CrossPoint),
+//     and the KOReader sync protocol's x-auth-user / x-auth-key pair, the
+//     key being md5(token) for device tokens. Everywhere else those headers
+//     are ignored, so neither widens what the rest of the API accepts — and
+//     an account password is never a credential here, only a token.
 //   - The session cookie stays the browser's credential, unchanged.
 //
 // It does not reject anonymous requests — Require does that — so optional
@@ -92,32 +105,19 @@ func Middleware(r Resolver, tokens TokenResolver) func(http.Handler) http.Handle
 					writeError(w, http.StatusUnauthorized, "invalid or expired token")
 					return
 				}
-				// A token is read-only until a write scope exists to say
-				// otherwise. The check is on the method, not the route,
-				// so no write endpoint can appear beside it unguarded.
-				// Three exceptions, each narrow and each bound to the one
-				// scope that names it:
-				//   - a read wearing POST's clothes: passage placement
-				//     carries its query in a body and writes nothing, so a
-				//     books:read token may ask it like the app does;
-				//   - a quiz result: the one POST the quiz:write scope
-				//     names, self-reported counts against the caller's own
-				//     shelf and nothing else;
-				//   - a claims import: the one POST the claims:write scope
-				//     names, every item still validated against the
-				//     canonical text before anything is stored.
-				if isWriteMethod(req.Method) &&
-					!isReadShapedPost(req) &&
-					!isScopedBookPost(req, isQuizResultPost, models.ScopeQuizWrite, scopes) &&
-					!isScopedBookPost(req, isClaimsPost, models.ScopeClaimsWrite, scopes) {
-					writeError(w, http.StatusForbidden,
-						"this token is read-only — manage your library from the app")
+				serveAsToken(w, req, next, user, scopes)
+				return
+			}
+
+			if IsDevicePath(req.URL.Path) {
+				if user, scopes, presented, ok := deviceCredential(req, tokens); presented {
+					if !ok {
+						challengeDevice(w, "invalid or expired device credentials")
+						return
+					}
+					serveAsToken(w, req, next, user, scopes)
 					return
 				}
-				ctx := context.WithValue(req.Context(), userKey, user)
-				ctx = context.WithValue(ctx, tokenScopesKey, scopes)
-				next.ServeHTTP(w, req.WithContext(ctx))
-				return
 			}
 
 			cookie, err := req.Cookie(CookieName)
@@ -135,6 +135,97 @@ func Middleware(r Resolver, tokens TokenResolver) func(http.Handler) http.Handle
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	}
+}
+
+// serveAsToken runs the request as a token-authenticated user, behind the
+// token write gate.
+//
+// A token is read-only until a write scope exists to say otherwise. The
+// check is on the method, not the route, so no write endpoint can appear
+// beside it unguarded. The exceptions are each narrow and each bound to the
+// one scope that names it:
+//   - a read wearing POST's clothes: passage placement carries its query in
+//     a body and writes nothing, so a books:read token may ask it like the
+//     app does;
+//   - a quiz result: the one POST the quiz:write scope names, self-reported
+//     counts against the caller's own shelf and nothing else;
+//   - a claims import: the one POST the claims:write scope names, every item
+//     still validated against the canonical text before anything is stored;
+//   - a reading-position write: the position PUT (and its sendBeacon POST)
+//     and the KOReader sync progress PUT, both named by progress:write.
+func serveAsToken(w http.ResponseWriter, req *http.Request, next http.Handler, user models.User, scopes []string) {
+	if isWriteMethod(req.Method) &&
+		!isReadShapedPost(req) &&
+		!isScopedBookPost(req, isQuizResultPost, models.ScopeQuizWrite, scopes) &&
+		!isScopedBookPost(req, isClaimsPost, models.ScopeClaimsWrite, scopes) &&
+		!isScopedBookPost(req, isPositionWrite, models.ScopeProgressWrite, scopes) &&
+		!isScopedBookPost(req, isKosyncProgressPut, models.ScopeProgressWrite, scopes) {
+		writeError(w, http.StatusForbidden,
+			"this token is read-only — manage your library from the app")
+		return
+	}
+	ctx := context.WithValue(req.Context(), userKey, user)
+	ctx = context.WithValue(ctx, tokenScopesKey, scopes)
+	next.ServeHTTP(w, req.WithContext(ctx))
+}
+
+// IsDevicePath reports whether a URL path belongs to the e-reader routes,
+// the only place Basic and x-auth credentials are read.
+func IsDevicePath(p string) bool {
+	return p == "/api/opds" || strings.HasPrefix(p, "/api/opds/") ||
+		p == "/api/kosync" || strings.HasPrefix(p, "/api/kosync/")
+}
+
+// deviceCredential reads an e-reader's credential. presented is false when
+// the request carries neither form, which leaves it to the cookie path (and
+// so to Require's 401); ok is false when a credential was presented and is
+// no good.
+//
+// Basic wins when both arrive, as they do from CrossPoint: its password is
+// the token itself, the stronger of the two. The Basic username must be the
+// token owner's, so a leaked token pasted under someone else's name does not
+// quietly work — the pair is the credential, as it is for x-auth. A Basic
+// password without the bh_ prefix is refused outright rather than looked
+// up: account passwords are never accepted here.
+func deviceCredential(req *http.Request, tokens TokenResolver) (models.User, []string, bool, bool) {
+	if username, password, ok := req.BasicAuth(); ok {
+		if !strings.HasPrefix(password, models.TokenPrefix) {
+			return models.User{}, nil, true, false
+		}
+		user, scopes, err := tokens.UserForAPIToken(req.Context(), password)
+		if err != nil || !strings.EqualFold(strings.TrimSpace(username), user.Username) {
+			return models.User{}, nil, true, false
+		}
+		return user, scopes, true, true
+	}
+	username, key := req.Header.Get("x-auth-user"), req.Header.Get("x-auth-key")
+	if username == "" && key == "" {
+		return models.User{}, nil, false, false
+	}
+	user, scopes, err := tokens.UserForKosyncKey(req.Context(), username, key)
+	if err != nil {
+		return models.User{}, nil, true, false
+	}
+	return user, scopes, true, true
+}
+
+// challengeDevice answers 401 with a Basic challenge: OPDS clients (KOReader,
+// Thorium) only prompt for credentials when they see one.
+func challengeDevice(w http.ResponseWriter, message string) {
+	w.Header().Set("WWW-Authenticate", `Basic realm="`+DeviceRealm+`", charset="UTF-8"`)
+	writeError(w, http.StatusUnauthorized, message)
+}
+
+// RequireDevice is Require for the e-reader routes: the same rejection of
+// anonymous requests, with the Basic challenge attached.
+func RequireDevice(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if _, ok := UserFrom(req.Context()); !ok {
+			challengeDevice(w, "not authenticated")
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
 }
 
 // bearerToken returns the bearer credential from the Authorization header,
@@ -203,7 +294,24 @@ func isClaimsPost(req *http.Request) bool {
 	return len(parts) == 4 && parts[0] == "api" && parts[1] == "books" && parts[3] == "claims"
 }
 
-// isScopedBookPost binds one POST shape to the scope that names it: the
+// isPositionWrite reports whether the request is the reading-position write
+// progress:write names: PUT /api/books/{entryID}/position, or the POST twin
+// that exists for navigator.sendBeacon.
+func isPositionWrite(req *http.Request) bool {
+	if req.Method != http.MethodPut && req.Method != http.MethodPost {
+		return false
+	}
+	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	return len(parts) == 4 && parts[0] == "api" && parts[1] == "books" && parts[3] == "position"
+}
+
+// isKosyncProgressPut reports whether the request is the KOReader sync
+// protocol's progress push: exactly PUT /api/kosync/syncs/progress.
+func isKosyncProgressPut(req *http.Request) bool {
+	return req.Method == http.MethodPut && strings.Trim(req.URL.Path, "/") == "api/kosync/syncs/progress"
+}
+
+// isScopedBookPost binds one write shape to the scope that names it: the
 // request matches the shape and the token carries the scope, or the
 // read-only wall stands.
 func isScopedBookPost(req *http.Request, shape func(*http.Request) bool, scope string, scopes []string) bool {

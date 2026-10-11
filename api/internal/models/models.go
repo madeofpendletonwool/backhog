@@ -237,10 +237,19 @@ const (
 	// still passes the deterministic cite-or-drop validation, so the scope
 	// grants a chance to be checked, never a place in the store.
 	ScopeClaimsWrite = "claims:write"
+	// ScopeProgressWrite covers exactly the reading-position writes an
+	// e-reader makes (MAD-828): the position PUT (and its sendBeacon POST
+	// twin) and the KOReader sync progress PUT. It moves where you are in a
+	// book you can already read, and nothing else.
+	ScopeProgressWrite = "progress:write"
 )
 
 // AllScopes lists every scope a token may carry.
-var AllScopes = []string{ScopeBooksRead, ScopeQuizWrite, ScopeClaimsWrite}
+var AllScopes = []string{ScopeBooksRead, ScopeQuizWrite, ScopeClaimsWrite, ScopeProgressWrite}
+
+// DeviceScopes are the scopes an e-reader device token carries: it browses
+// and downloads the library and moves its reading position.
+var DeviceScopes = []string{ScopeBooksRead, ScopeProgressWrite}
 
 // ValidScope reports whether s is a real token scope.
 func ValidScope(s string) bool {
@@ -262,7 +271,10 @@ type APIToken struct {
 	Scopes []string `json:"scopes"`
 	// Token is the plaintext secret (bh_…), present only in the create
 	// response. Every later read leaves it empty.
-	Token      string     `json:"token,omitempty"`
+	Token string `json:"token,omitempty"`
+	// Device marks a token minted for an e-reader: it also answers to the
+	// KOReader sync protocol's x-auth headers (MAD-828).
+	Device     bool       `json:"device"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`

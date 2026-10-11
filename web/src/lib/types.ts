@@ -305,10 +305,11 @@ export interface Invite {
 export type TokenStatus = "active" | "revoked" | "expired";
 
 /** What a token may do. The default is read-only; each write scope opens
- *  exactly one POST — quiz:write records a self-reported quiz result,
- *  claims:write imports extractor-written claims (every quote checked
- *  against the book) — and nothing else. */
-export type TokenScope = "books:read" | "quiz:write" | "claims:write";
+ *  exactly one kind of write — quiz:write records a self-reported quiz
+ *  result, claims:write imports extractor-written claims (every quote
+ *  checked against the book), progress:write moves a reading position (the
+ *  e-reader's one write) — and nothing else. */
+export type TokenScope = "books:read" | "quiz:write" | "claims:write" | "progress:write";
 
 /** A personal bearer credential for the API. `token` is the bh_… secret,
  *  present only on the response that created it — the server stores a hash,
@@ -317,6 +318,8 @@ export interface APIToken {
   id: string;
   name: string;
   scopes: TokenScope[];
+  /** Minted for an e-reader: also answers to KOReader sync's x-auth headers. */
+  device: boolean;
   status: TokenStatus;
   token?: string;
   last_used_at?: string;

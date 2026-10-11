@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -28,6 +29,14 @@ func hashAPIToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// kosyncKey is what a KOReader-protocol client sends as x-auth-key when its
+// password is this token: the lowercase MD5 hex of the plaintext. Stored
+// only for device tokens (see migration 00038 for why MD5 is tolerable).
+func kosyncKey(token string) string {
+	sum := md5.Sum([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
+}
+
 // newAPITokenSecret returns 256 bits of randomness with the greppable
 // prefix: a leaked credential is easier to spot in a log or a chat when
 // every one of them starts the same way.
@@ -40,7 +49,8 @@ func newAPITokenSecret() string {
 }
 
 // apiTokenColumns is the projection every token read shares.
-const apiTokenColumns = `id, user_id, name, scopes, created_at, last_used_at, expires_at, revoked_at`
+const apiTokenColumns = `id, user_id, name, scopes, created_at, last_used_at, expires_at, revoked_at,
+	(kosync_key IS NOT NULL)`
 
 // CreateAPIToken issues a personal bearer credential. The returned token is
 // the only time the secret exists in plaintext — the row holds its hash —
@@ -48,6 +58,23 @@ const apiTokenColumns = `id, user_id, name, scopes, created_at, last_used_at, ex
 // lands on the read-only default; expiresAt nil means the token never
 // expires.
 func (s *Store) CreateAPIToken(ctx context.Context, userID, name string, scopes []string, expiresAt *time.Time) (models.APIToken, error) {
+	return s.createAPIToken(ctx, userID, name, scopes, expiresAt, false)
+}
+
+// CreateDeviceAPIToken issues a token for an e-reader (MAD-828). It is an
+// ordinary token in every respect — same hash, same scopes, same lifecycle
+// — that additionally answers to the KOReader sync protocol's x-auth-key,
+// because KOReader authenticates with nothing else. An empty scope list
+// lands on the device default rather than the read-only one: a reader that
+// cannot move its own position is not much of a reader.
+func (s *Store) CreateDeviceAPIToken(ctx context.Context, userID, name string, scopes []string, expiresAt *time.Time) (models.APIToken, error) {
+	if len(scopes) == 0 {
+		scopes = models.DeviceScopes
+	}
+	return s.createAPIToken(ctx, userID, name, scopes, expiresAt, true)
+}
+
+func (s *Store) createAPIToken(ctx context.Context, userID, name string, scopes []string, expiresAt *time.Time, device bool) (models.APIToken, error) {
 	scopes = normalizeScopes(scopes)
 	t := models.APIToken{
 		ID:        newID(),
@@ -55,13 +82,18 @@ func (s *Store) CreateAPIToken(ctx context.Context, userID, name string, scopes 
 		Name:      name,
 		Scopes:    scopes,
 		Token:     newAPITokenSecret(),
+		Device:    device,
 		ExpiresAt: expiresAt,
 	}
+	var key sql.NullString
+	if device {
+		key = sql.NullString{String: kosyncKey(t.Token), Valid: true}
+	}
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO api_tokens (id, user_id, name, token_hash, scopes, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO api_tokens (id, user_id, name, token_hash, scopes, expires_at, kosync_key)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		RETURNING created_at`,
-		t.ID, userID, name, hashAPIToken(t.Token), strings.Join(scopes, ","), expiresAt).
+		t.ID, userID, name, hashAPIToken(t.Token), strings.Join(scopes, ","), expiresAt, key).
 		Scan(&t.CreatedAt)
 	if err != nil {
 		return models.APIToken{}, err
@@ -118,6 +150,26 @@ func (s *Store) RevokeAPIToken(ctx context.Context, userID, id string) error {
 // retires its tokens on their very next use. last_used_at is refreshed when
 // stale, at most once a minute.
 func (s *Store) UserForAPIToken(ctx context.Context, token string) (models.User, []string, error) {
+	return s.resolveAPIToken(ctx, `t.token_hash = ?`, hashAPIToken(token))
+}
+
+// UserForKosyncKey resolves the KOReader sync protocol's credentials —
+// x-auth-user and x-auth-key, the MD5 of the device token — to the same
+// user and scopes the token itself would. Only device tokens carry a key,
+// and the username must be the token owner's (case-insensitive), so a key
+// alone, without the account it belongs to, authenticates nobody. Every
+// other rule is UserForAPIToken's: revoked, expired and disabled all fail.
+func (s *Store) UserForKosyncKey(ctx context.Context, username, key string) (models.User, []string, error) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	username = strings.TrimSpace(username)
+	if key == "" || username == "" {
+		return models.User{}, nil, ErrNotFound
+	}
+	return s.resolveAPIToken(ctx, `t.kosync_key = ? AND u.username = ? COLLATE NOCASE`, key, username)
+}
+
+// resolveAPIToken is the one gate both token lookups share.
+func (s *Store) resolveAPIToken(ctx context.Context, match string, args ...any) (models.User, []string, error) {
 	var u models.User
 	var scopes string
 	var id string
@@ -126,9 +178,9 @@ func (s *Store) UserForAPIToken(ctx context.Context, token string) (models.User,
 		SELECT u.id, u.email, u.username, u.role, u.disabled_at, u.created_at,
 		       t.id, t.scopes, t.last_used_at
 		FROM api_tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.token_hash = ? AND t.revoked_at IS NULL
+		WHERE `+match+` AND t.revoked_at IS NULL
 		  AND (t.expires_at IS NULL OR t.expires_at > CURRENT_TIMESTAMP)
-		  AND u.disabled_at IS NULL`, hashAPIToken(token)).
+		  AND u.disabled_at IS NULL`, args...).
 		Scan(&u.ID, &u.Email, &u.Username, &u.Role, &u.DisabledAt, &u.CreatedAt,
 			&id, &scopes, &lastUsed)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -170,7 +222,7 @@ func scanAPIToken(row interface{ Scan(...any) error }) (models.APIToken, error) 
 	var t models.APIToken
 	var scopes string
 	err := row.Scan(&t.ID, &t.UserID, &t.Name, &scopes, &t.CreatedAt,
-		&t.LastUsedAt, &t.ExpiresAt, &t.RevokedAt)
+		&t.LastUsedAt, &t.ExpiresAt, &t.RevokedAt, &t.Device)
 	if err != nil {
 		return models.APIToken{}, err
 	}

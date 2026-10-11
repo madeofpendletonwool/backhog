@@ -329,7 +329,13 @@ export const api = {
 
   /** The response is the only time the secret exists — show it immediately.
    *  An empty scope list means read-only; zero days means no expiry. */
-  createAPIToken: (input: { name: string; scopes?: TokenScope[]; expires_days?: number }) =>
+  createAPIToken: (input: {
+    name: string;
+    scopes?: TokenScope[];
+    expires_days?: number;
+    /** An e-reader token: scopes default to books:read + progress:write. */
+    device?: boolean;
+  }) =>
     request<APIToken>("/tokens", { method: "POST", body: body(input) }),
 
   /** Kills the credential; the row stays as the record that it existed. */

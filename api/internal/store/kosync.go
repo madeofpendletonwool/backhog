@@ -317,3 +317,48 @@ func (s *Store) UsernameExists(ctx context.Context, username string) (bool, erro
 		`SELECT COUNT(*) FROM users WHERE username = ? COLLATE NOCASE`, strings.TrimSpace(username)).Scan(&n)
 	return n > 0, err
 }
+
+// CatalogBookMatch is a book entry found by the e-reader catalog's search.
+type CatalogBookMatch struct {
+	EntryID, BookID, Title, AuthorsJSON string
+}
+
+// SearchBooksBySeriesOrISBN finds the user's book entries whose series name
+// contains q, or one of whose printings has q as its ISBN (digits only, so
+// "978-0-06-102069-8" matches) — the two things a reader types into a
+// device's search box that title/author search misses. Series hits come in
+// reading order.
+func (s *Store) SearchBooksBySeriesOrISBN(ctx context.Context, userID, q string) ([]CatalogBookMatch, error) {
+	q = strings.TrimSpace(q)
+	digits := strings.Map(func(r rune) rune {
+		if (r >= '0' && r <= '9') || r == 'X' || r == 'x' {
+			return r
+		}
+		return -1
+	}, q)
+	if len(digits) != 10 && len(digits) != 13 {
+		digits = "-" // never an ISBN
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.id, b.id, b.title, b.authors_json FROM library_entries e
+		JOIN books b ON b.id = e.book_id
+		WHERE e.user_id = ? AND e.media_type = 'book'
+		  AND ((b.series_name <> '' AND b.series_name LIKE ? COLLATE NOCASE)
+		       OR EXISTS (SELECT 1 FROM book_editions ed WHERE ed.book_id = b.id
+		                  AND (ed.isbn13 = ? OR UPPER(ed.isbn10) = UPPER(?))))
+		ORDER BY b.series_name COLLATE NOCASE, b.series_number NULLS LAST, b.title COLLATE NOCASE`,
+		userID, "%"+escapeLike(q)+"%", digits, digits)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CatalogBookMatch
+	for rows.Next() {
+		var m CatalogBookMatch
+		if err := rows.Scan(&m.EntryID, &m.BookID, &m.Title, &m.AuthorsJSON); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}

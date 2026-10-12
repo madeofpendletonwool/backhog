@@ -112,7 +112,7 @@ func Middleware(r Resolver, tokens TokenResolver) func(http.Handler) http.Handle
 			if IsDevicePath(req.URL.Path) {
 				if user, scopes, presented, ok := deviceCredential(req, tokens); presented {
 					if !ok {
-						challengeDevice(w, "invalid or expired device credentials")
+						challengeDevice(w, req, "invalid or expired device credentials")
 						return
 					}
 					serveAsToken(w, req, next, user, scopes)
@@ -210,9 +210,18 @@ func deviceCredential(req *http.Request, tokens TokenResolver) (models.User, []s
 }
 
 // challengeDevice answers 401 with a Basic challenge: OPDS clients (KOReader,
-// Thorium) only prompt for credentials when they see one.
-func challengeDevice(w http.ResponseWriter, message string) {
+// Thorium) only prompt for credentials when they see one. On the sync
+// routes the body is the reference kosync server's own 401, so a client
+// written against that server reads ours the same way (scripts/ereader/
+// kosync-diff.py keeps the two honest).
+func challengeDevice(w http.ResponseWriter, req *http.Request, message string) {
 	w.Header().Set("WWW-Authenticate", `Basic realm="`+DeviceRealm+`", charset="UTF-8"`)
+	if p := req.URL.Path; p == "/api/kosync" || strings.HasPrefix(p, "/api/kosync/") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 2001, "message": "Unauthorized"})
+		return
+	}
 	writeError(w, http.StatusUnauthorized, message)
 }
 
@@ -221,7 +230,7 @@ func challengeDevice(w http.ResponseWriter, message string) {
 func RequireDevice(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if _, ok := UserFrom(req.Context()); !ok {
-			challengeDevice(w, "not authenticated")
+			challengeDevice(w, req, "not authenticated")
 			return
 		}
 		next.ServeHTTP(w, req)

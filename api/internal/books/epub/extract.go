@@ -2,7 +2,10 @@ package epub
 
 import (
 	"archive/zip"
+	"bytes"
+	"fmt"
 	"path"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -80,6 +83,36 @@ type extractor struct {
 	pending *Anchor
 }
 
+// selfClosingRE matches a self-closing tag: <name attrs/>.
+var selfClosingRE = regexp.MustCompile(`<([A-Za-z][A-Za-z0-9:_-]*)(\s[^<>]*?)?\s*/>`)
+
+// voidTags never have content, so "<br/>" means the same to every parser.
+var voidTags = map[string]bool{
+	"area": true, "base": true, "br": true, "col": true, "embed": true, "hr": true,
+	"img": true, "input": true, "link": true, "meta": true, "param": true,
+	"source": true, "track": true, "wbr": true, "image": true,
+}
+
+// closeSelfClosingInline rewrites "<span id="pg_7"/>" as
+// "<span id="pg_7"></span>". XHTML means the former as an empty element, and
+// crengine (an XML parser) builds it so; the HTML5 parser ignores the slash
+// on a non-void element and nests everything after it inside — so a page
+// break marker would put a phantom <span> into every later path, and a
+// pointer written through it would not resolve on the device. Void and
+// block elements are left alone: the void ones parse the same either way,
+// and rewriting a block one could move a block boundary, which only the
+// extractor gets to decide.
+func closeSelfClosingInline(src []byte) []byte {
+	return selfClosingRE.ReplaceAllFunc(src, func(tag []byte) []byte {
+		m := selfClosingRE.FindSubmatch(tag)
+		name := strings.ToLower(string(m[1]))
+		if voidTags[name] || blockTags[name] || skipTags[name] {
+			return tag
+		}
+		return []byte("<" + string(m[1]) + string(m[2]) + "></" + string(m[1]) + ">")
+	})
+}
+
 // Anchor is where one block starts in its document's DOM: the text node
 // holding the block's first non-space character, and that character's byte
 // offset in the node's Data. Raw is the block's text exactly as Blocks has
@@ -94,10 +127,23 @@ type Anchor struct {
 // AnchorBlocks parses one spine document and returns its root together with
 // the anchor of every block, in the order and with the text extractBlocks
 // produces for the same document.
+//
+// The DOM is built from the document with its self-closing inline tags
+// closed (see closeSelfClosingInline), so the paths it yields are the ones
+// an XML-parsing engine like crengine sees. Inline tags never start or end
+// a block, so the blocks are exactly extractBlocks' either way.
 func AnchorBlocks(zr *zip.Reader, href string) (*html.Node, []Anchor, error) {
-	root, err := parseHTML(zr, href)
+	f := zipLookup(zr, href)
+	if f == nil {
+		return nil, nil, fmt.Errorf("epub: document not found in zip: %s", href)
+	}
+	data, err := readAll(f)
 	if err != nil {
 		return nil, nil, err
+	}
+	root, err := html.Parse(bytes.NewReader(closeSelfClosingInline(data)))
+	if err != nil {
+		return nil, nil, fmt.Errorf("epub: parse %s: %w", href, err)
 	}
 	var anchors []Anchor
 	ex := &extractor{anchors: &anchors}

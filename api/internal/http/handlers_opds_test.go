@@ -233,6 +233,13 @@ func TestOPDSSearchListsAndSeries(t *testing.T) {
 	if f := app.feed(t, device, "/api/opds/search?q="); len(f.Entries) != 0 {
 		t.Errorf("empty search = %d entries", len(f.Entries))
 	}
+	// ISBN, typed with hyphens the way it is printed on a cover.
+	if _, err := db.Exec(`INSERT INTO book_editions (id, book_id, isbn13) VALUES ('OLX02M', 'OLX02W', '9780061020698')`); err != nil {
+		t.Fatal(err)
+	}
+	if f := app.feed(t, device, "/api/opds/search?q=978-0-06-102069-8"); len(f.Entries) != 1 || f.Entries[0].Title != "Shelf Book 02" {
+		t.Errorf("ISBN search = %+v", f.Entries)
+	}
 
 	// A list: navigation feed, then its books in list order.
 	for _, q := range []string{
@@ -270,6 +277,10 @@ func TestOPDSSearchListsAndSeries(t *testing.T) {
 	books := app.feed(t, device, sl.Href)
 	if len(books.Entries) != 2 || books.Entries[0].Title != "Shelf Book 01" {
 		t.Errorf("series books = %+v", books.Entries)
+	}
+	// Searching the series name finds its books, in reading order.
+	if f := app.feed(t, device, "/api/opds/search?q=light%2Fdark"); len(f.Entries) != 2 || f.Entries[0].Title != "Shelf Book 01" {
+		t.Errorf("series search = %+v", f.Entries)
 	}
 }
 

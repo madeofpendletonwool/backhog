@@ -29,9 +29,10 @@ func fixtureXPointer(t *testing.T) []byte {
     <item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
     <item id="art" href="art.xhtml" media-type="application/xhtml+xml"/>
     <item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
   <spine>
-    <itemref idref="notes" linear="no"/><itemref idref="c1"/><itemref idref="art"/><itemref idref="c2"/>
+    <itemref idref="notes" linear="no"/><itemref idref="c1"/><itemref idref="art"/><itemref idref="c2"/><itemref idref="c3"/>
   </spine>
 </package>`},
 		{"OEBPS/notes.xhtml", `<html><body><p>A note nobody reads.</p></body></html>`},
@@ -52,6 +53,15 @@ Loose text in the div
 		{"OEBPS/art.xhtml", `<html><body><div><img src="pic.png"/></div></body></html>`},
 		{"OEBPS/pic.png", "png"},
 		{"OEBPS/ch2.xhtml", `<html><body><p>Two one.</p><p>Two two.</p></body></html>`},
+		// Self-closing page-break markers, as a real KOReader-tested book
+		// has them: XHTML means an empty element, the HTML5 parser nests
+		// everything after one inside it. Also a spacer paragraph holding
+		// only a no-break space, which owns no block.
+		{"OEBPS/ch3.xhtml", `<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body><div>
+<header><p class="SP"> </p><h1><span id="pg_201" role="doc-pagebreak"/><a href="#ack"><b>ACKNOWLEDGMENTS</b></a></h1></header>
+<p>Oprah, I never thought you would know <span id="pg_202" role="doc-pagebreak"/>who I am at all.</p>
+</div></body></html>`},
 	})
 }
 
@@ -102,6 +112,10 @@ func TestToXPointerGoldens(t *testing.T) {
 		// No tbody: that is the HTML parser's, not the book's.
 		"Cell B":   "/body/DocFragment[2]/body/table/tr/td[2]/text().0",
 		"Two two.": "/body/DocFragment[4]/body/p[2]/text().0",
+		// No phantom <span> from the self-closed page breaks: these are the
+		// paths crengine builds.
+		"ACKNOWLEDGMENTS": "/body/DocFragment[5]/body/div/header/h1/a/b/text().0",
+		"Oprah, I never thought you would know who I am at all.": "/body/DocFragment[5]/body/div/p/text()[1].0",
 	}
 	for block, want := range cases {
 		got, ok := f.loc.ToXPointer(f.at(t, block))
@@ -150,7 +164,10 @@ func TestFromXPointerAsDevicesSendThem(t *testing.T) {
 		{"table row without tbody", "/body/DocFragment[2]/body/table/tr/td[2]/text().1", "Cell B"},
 		{"non-linear fragment → next kept text", "/body/DocFragment[1]/body/p/text().3", "Chapter One"},
 		{"image-only fragment → next text", "/body/DocFragment[3]/body/div/img", "Two one."},
-		{"fragment past the end → last block", "/body/DocFragment[42]/body/p/text().0", "Two two."},
+		{"fragment past the end → last block", "/body/DocFragment[42]/body/p/text().0", "Oprah, I never thought you would know who I am at all."},
+		// Pointers a Kindle's KOReader really sent, reshaped onto the fixture.
+		{"KOReader: text after a self-closed span", "/body/DocFragment[5]/body/div/p/text()[2].10", "Oprah, I never thought you would know who I am at all."},
+		{"KOReader: no-break-space spacer paragraph", "/body/DocFragment[5]/body/div/header/p/text().0", "ACKNOWLEDGMENTS"},
 	}
 	for _, c := range cases {
 		got, ok := f.loc.FromXPointer(c.xp)
@@ -178,7 +195,7 @@ func TestFromPercent(t *testing.T) {
 	if got := f.loc.FromPercent(0); got != 0 {
 		t.Errorf("0%% = %d", got)
 	}
-	if got, want := f.loc.FromPercent(1), f.at(t, "Two two."); got != want {
+	if got, want := f.loc.FromPercent(1), f.at(t, "Oprah, I never thought you would know who I am at all."); got != want {
 		t.Errorf("100%% = %d, want the last block %d", got, want)
 	}
 	if got := f.loc.FromPercent(0.5); got <= 0 || got >= f.loc.CharCount() {

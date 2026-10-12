@@ -188,7 +188,7 @@ func (s *Server) handleOPDSShelf(shelf string) http.HandlerFunc {
 }
 
 // handleOPDSSearch answers the {searchTerms} template: title and author,
-// the same match the library's own search box makes.
+// the same match the library's own search box makes, then series and ISBN.
 func (s *Server) handleOPDSSearch(w http.ResponseWriter, r *http.Request) {
 	userID, err := auth.MustUserID(r.Context())
 	if err != nil {
@@ -205,6 +205,20 @@ func (s *Server) handleOPDSSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		books = booksFromEntries(entries)
+		// Then series and ISBN, which the library's own search box does not
+		// cover but a reader at a device keyboard reaches for ("Discworld",
+		// or the ISBN on the back of a paperback). Duplicates of title hits
+		// are dropped when the page is built.
+		more, err := s.store.SearchBooksBySeriesOrISBN(r.Context(), userID, q)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		for _, m := range more {
+			var authors []string
+			_ = json.Unmarshal([]byte(m.AuthorsJSON), &authors)
+			books = append(books, opdsBook{EntryID: m.EntryID, BookID: m.BookID, Title: m.Title, Authors: authors})
+		}
 	}
 	s.serveOPDSBooks(w, r, userID, "/search?q="+url.QueryEscape(q), "Search: "+q, books)
 }

@@ -344,3 +344,21 @@ func TestLongTransferSkipsTimeout(t *testing.T) {
 		}
 	}
 }
+
+// TestKosyncUnauthorizedMatchesReference pins the 401 body to the reference
+// kosync server's own ({"code":2001,"message":"Unauthorized"}); the catalog
+// keeps the API's usual error envelope. scripts/ereader/kosync-diff.py
+// checks the rest of the protocol against a live reference server.
+func TestKosyncUnauthorizedMatchesReference(t *testing.T) {
+	app := newEpubTestApp(t)
+	resp, body := app.deviceRequest(t, http.MethodGet, "/api/kosync/users/auth", xauth("reader", "bh_nope"), nil)
+	var got map[string]any
+	_ = json.Unmarshal(body, &got)
+	if resp.StatusCode != http.StatusUnauthorized || got["code"] != float64(2001) || got["message"] != "Unauthorized" {
+		t.Errorf("kosync 401 = %d %s", resp.StatusCode, body)
+	}
+	resp, body = app.deviceRequest(t, http.MethodGet, "/api/opds", nil, nil)
+	if resp.StatusCode != http.StatusUnauthorized || !bytes.Contains(body, []byte(`"error"`)) {
+		t.Errorf("opds 401 = %d %s", resp.StatusCode, body)
+	}
+}

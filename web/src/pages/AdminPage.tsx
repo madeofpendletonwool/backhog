@@ -355,13 +355,6 @@ function UsersPanel() {
     onError,
   });
 
-  const reset = useMutation({
-    mutationFn: ({ id, password }: { id: string; password: string }) =>
-      api.resetUserPassword(id, password),
-    onSuccess: () => setError(""),
-    onError,
-  });
-
   if (isLoading) {
     return (
       <Panel className="p-5">
@@ -395,8 +388,6 @@ function UsersPanel() {
             onRole={(role) => update.mutate({ id: account.id, changes: { role } })}
             onDisabled={(disabled) => update.mutate({ id: account.id, changes: { disabled } })}
             onDelete={() => remove.mutate(account.id)}
-            onReset={(password) => reset.mutate({ id: account.id, password })}
-            resetDone={reset.isSuccess}
           />
         ))}
       </ul>
@@ -411,8 +402,6 @@ function UserRow({
   onRole,
   onDisabled,
   onDelete,
-  onReset,
-  resetDone,
 }: {
   account: AdminUser;
   isMe: boolean;
@@ -420,13 +409,28 @@ function UserRow({
   onRole: (role: Role) => void;
   onDisabled: (disabled: boolean) => void;
   onDelete: () => void;
-  onReset: (password: string) => void;
-  resetDone: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [confirming, setConfirming] = useState(false);
+  const [resetError, setResetError] = useState("");
+  const [resetDone, setResetDone] = useState(false);
   const disabled = !!account.disabled_at;
+
+  // Per-row rather than in the panel above: the success tick and any error
+  // belong next to the account they are about, not a list away.
+  const reset = useMutation({
+    mutationFn: (newPassword: string) => api.resetUserPassword(account.id, newPassword),
+    onSuccess: () => {
+      setPassword("");
+      setResetError("");
+      setResetDone(true);
+    },
+    onError: (err: Error) => {
+      setResetDone(false);
+      setResetError(err.message);
+    },
+  });
 
   return (
     <li className="py-3">
@@ -485,22 +489,28 @@ function UserRow({
                   autoComplete="new-password"
                   minLength={8}
                   value={password}
-                  onChange={(event) => setPassword(event.target.value)}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    setResetDone(false);
+                  }}
                   placeholder="At least 8 characters"
                 />
               </Field>
             </div>
             <Button
               size="sm"
+              loading={reset.isPending}
               disabled={password.length < 8}
-              onClick={() => {
-                onReset(password);
-                setPassword("");
-              }}
+              onClick={() => reset.mutate(password)}
             >
-              {resetDone ? "Set" : "Set password"}
+              {resetDone ? "Set ✓" : "Set password"}
             </Button>
           </div>
+          {resetError && (
+            <p role="alert" className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">
+              {resetError}
+            </p>
+          )}
           <p className="text-xs leading-relaxed text-ink-500">
             Setting it signs them out of every device — a password they did not choose should
             not leave their old logins running.

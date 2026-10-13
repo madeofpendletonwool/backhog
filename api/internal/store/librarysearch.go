@@ -96,10 +96,10 @@ func (s *Store) ReplaceBookTextIndex(ctx context.Context, bookID string, mediaFi
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM book_text_fts WHERE media_file_id = ?`, mediaFileID); err != nil {
+	if err := deleteBookTextIndexTx(ctx, tx, mediaFileID); err != nil {
 		return err
 	}
+	inserted := 0
 	for _, ch := range chapters {
 		if ch.CharEnd <= ch.CharStart || ch.CharEnd > len(text) {
 			continue
@@ -109,8 +109,38 @@ func (s *Store) ReplaceBookTextIndex(ctx context.Context, bookID string, mediaFi
 			FoldForFTS(text[ch.CharStart:ch.CharEnd]), bookID, mediaFileID); err != nil {
 			return err
 		}
+		inserted++
+	}
+	// Recorded only when rows landed, so a text with no indexable chapter
+	// stays a candidate, exactly as it did when the check read the FTS
+	// table itself.
+	if inserted > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO book_text_fts_files (media_file_id) VALUES (?)`,
+			mediaFileID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+// deleteBookTextIndexTx drops a media file's FTS rows and its entry in
+// book_text_fts_files. The FTS delete is a full scan of the index (its
+// media_file_id is UNINDEXED), so it runs only when the side table says
+// there is something to delete — never for a file indexed for the first
+// time, which is most of a walk.
+func deleteBookTextIndexTx(ctx context.Context, tx *sql.Tx, mediaFileID int64) error {
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM book_text_fts_files WHERE media_file_id = ?`, mediaFileID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM book_text_fts WHERE media_file_id = ?`, mediaFileID)
+	return err
 }
 
 // BookTextIndexed reports whether a media file has any FTS rows — the
@@ -118,7 +148,7 @@ func (s *Store) ReplaceBookTextIndex(ctx context.Context, bookID string, mediaFi
 func (s *Store) BookTextIndexed(ctx context.Context, mediaFileID int64) (bool, error) {
 	var one int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT 1 FROM book_text_fts WHERE media_file_id = ? LIMIT 1`, mediaFileID).Scan(&one)
+		`SELECT 1 FROM book_text_fts_files WHERE media_file_id = ?`, mediaFileID).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -237,7 +267,7 @@ func (s *Store) BookTextIndexCandidates(ctx context.Context, parserVersion strin
 		  	NOT EXISTS (SELECT 1 FROM epub_texts et WHERE et.media_file_id = mf.id)
 		  	OR EXISTS (SELECT 1 FROM epub_texts et
 			             WHERE et.media_file_id = mf.id AND et.parser_version <> ?)
-		  	OR NOT EXISTS (SELECT 1 FROM book_text_fts f WHERE f.media_file_id = mf.id)
+		  	OR NOT EXISTS (SELECT 1 FROM book_text_fts_files f WHERE f.media_file_id = mf.id)
 		  	OR NOT EXISTS (SELECT 1 FROM epub_texts et
 			               WHERE et.media_file_id = mf.id AND et.names_version <> '')
 		  )

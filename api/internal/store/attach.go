@@ -347,8 +347,7 @@ func (s *Store) DetachMediaFile(ctx context.Context, userID, entryID string, fil
 	// for exactly this moment: a detached file's rows must stop answering
 	// queries the same breath the file stops resolving, or a search would
 	// keep proposing a book its own endpoints now refuse.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM book_text_fts WHERE media_file_id = ?`, fileID); err != nil {
+	if err := deleteBookTextIndexTx(ctx, tx, fileID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,

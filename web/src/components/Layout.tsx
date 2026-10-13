@@ -10,6 +10,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { JumpDialog } from "./JumpDialog";
 import { PickDialog } from "./PickDialog";
 import { ReadDialog } from "./ReadDialog";
+import { SharedWithYouNotice } from "./SharedWithYouNotice";
 import { SteamImportDialog } from "./SteamImportDialog";
 import { Dialog } from "./ui/Dialog";
 import { Button, Gi } from "./ui/primitives";
@@ -336,6 +337,7 @@ export function Layout() {
           book is open), so the last row of a page is never buried under it;
           below lg the tab bar's height is padded on top of it. */}
       <main className="min-w-0 flex-1 pb-[calc(var(--player-h,0px)+4.5rem)] pt-20 lg:pb-[var(--player-h,0px)] lg:pl-[17rem] lg:pt-0">
+        <SharedWithYouNotice />
         <ErrorBoundary>
           <Outlet
             context={{

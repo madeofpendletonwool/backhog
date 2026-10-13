@@ -200,6 +200,10 @@ type BookShare struct {
 	// shelf yet. A share grants access; it does not reach into someone
 	// else's library and add rows to it.
 	InLibrary bool `json:"in_library"`
+	// Seen reports whether the recipient has acknowledged the share, by
+	// adding the book or dismissing the notice. Until then the app tells
+	// them about it.
+	Seen bool `json:"seen"`
 }
 
 // ShareCandidate is one account a book can be shared with, and whether it

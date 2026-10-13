@@ -117,12 +117,26 @@ func TestUserRolesRoundTrip(t *testing.T) {
 		t.Error("member should manage media but not administer")
 	}
 
+	// A live session is the normal state of a real server — the admin
+	// reading this list is signed in — and its MAX() arrives untyped.
+	if _, _, err := s.CreateSession(ctx, admin.ID); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+
 	users, err := s.ListUsers(ctx)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if len(users) != 3 || users[0].Username != "aaa" {
 		t.Fatalf("ListUsers = %+v, want the admin first of three", users)
+	}
+	if users[0].LastSeenAt == nil {
+		t.Error("signed-in admin has no last_seen_at")
+	}
+	for _, u := range users[1:] {
+		if u.LastSeenAt != nil {
+			t.Errorf("%s never signed in but last_seen_at = %v", u.Username, u.LastSeenAt)
+		}
 	}
 }
 

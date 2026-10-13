@@ -377,6 +377,8 @@ export interface BookShare {
   user_email?: string;
   shared_at: string;
   in_library: boolean;
+  /** The recipient has added it or dismissed the notice about it. */
+  seen: boolean;
 }
 
 export interface Stats {

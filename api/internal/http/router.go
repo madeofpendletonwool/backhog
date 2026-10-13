@@ -460,6 +460,7 @@ func (s *Server) Routes() http.Handler {
 			// Both halves of "who has what": books this account shared
 			// out, and books other people shared with it.
 			r.Get("/shares", s.handleSharesOverview)
+			r.Post("/shares/{shareID}/seen", s.handleShareSeen)
 
 			// Personal API tokens: bearer credentials for clients acting
 			// as this user from outside the web app. Managed only with

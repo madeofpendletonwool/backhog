@@ -303,3 +303,46 @@ func TestDetachClearsOwnership(t *testing.T) {
 		t.Errorf("attached_by = %q after detach, want NULL", *attachedBy)
 	}
 }
+
+// TestMarkShareSeen covers the notice's lifecycle: a new share arrives
+// unseen, only its recipient can acknowledge it, and acknowledging it twice
+// is harmless.
+func TestMarkShareSeen(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	f := seedSharedFixture(t, s)
+
+	share, err := s.ShareBook(ctx, f.owner, f.ownerEntry, f.friend)
+	if err != nil {
+		t.Fatalf("share: %v", err)
+	}
+
+	in, err := s.SharesWithUser(ctx, f.friend)
+	if err != nil {
+		t.Fatalf("shares with user: %v", err)
+	}
+	if len(in) != 1 || in[0].Seen {
+		t.Fatalf("SharesWithUser = %+v, want one unseen share", in)
+	}
+
+	if err := s.MarkShareSeen(ctx, f.owner, share.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("owner marking the recipient's notice: got %v, want ErrNotFound", err)
+	}
+	if err := s.MarkShareSeen(ctx, f.friend, "no-such-share"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown share: got %v, want ErrNotFound", err)
+	}
+
+	for range 2 {
+		if err := s.MarkShareSeen(ctx, f.friend, share.ID); err != nil {
+			t.Fatalf("mark seen: %v", err)
+		}
+	}
+
+	in, err = s.SharesWithUser(ctx, f.friend)
+	if err != nil {
+		t.Fatalf("shares with user: %v", err)
+	}
+	if len(in) != 1 || !in[0].Seen {
+		t.Fatalf("SharesWithUser = %+v, want the share seen", in)
+	}
+}

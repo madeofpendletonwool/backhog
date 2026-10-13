@@ -242,7 +242,8 @@ func (s *Store) SharesByOwner(ctx context.Context, ownerID string) ([]models.Boo
 		SELECT bs.id, bs.book_id, COALESCE(b.title, ''), bs.owner_id, COALESCE(o.username, ''),
 		       bs.shared_with_id, r.username, r.email, bs.created_at,
 		       EXISTS (SELECT 1 FROM library_entries e
-		                WHERE e.user_id = bs.shared_with_id AND e.book_id = bs.book_id)
+		                WHERE e.user_id = bs.shared_with_id AND e.book_id = bs.book_id),
+		       bs.seen_at IS NOT NULL
 		FROM book_shares bs
 		JOIN users r ON r.id = bs.shared_with_id
 		LEFT JOIN users o ON o.id = bs.owner_id
@@ -259,13 +260,35 @@ func (s *Store) SharesWithUser(ctx context.Context, userID string) ([]models.Boo
 		SELECT bs.id, bs.book_id, COALESCE(b.title, ''), bs.owner_id, COALESCE(o.username, ''),
 		       bs.shared_with_id, r.username, '', bs.created_at,
 		       EXISTS (SELECT 1 FROM library_entries e
-		                WHERE e.user_id = bs.shared_with_id AND e.book_id = bs.book_id)
+		                WHERE e.user_id = bs.shared_with_id AND e.book_id = bs.book_id),
+		       bs.seen_at IS NOT NULL
 		FROM book_shares bs
 		JOIN users r ON r.id = bs.shared_with_id
 		LEFT JOIN users o ON o.id = bs.owner_id
 		LEFT JOIN books b ON b.id = bs.book_id
 		WHERE bs.shared_with_id = ?
 		ORDER BY bs.created_at DESC`, userID)
+}
+
+// MarkShareSeen records that the recipient has acknowledged a share, so the
+// app stops announcing it. Only the recipient can: the share is looked up
+// through its shared_with_id, and anyone else's id comes back ErrNotFound.
+// Marking twice keeps the first time.
+func (s *Store) MarkShareSeen(ctx context.Context, userID, shareID string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE book_shares SET seen_at = COALESCE(seen_at, CURRENT_TIMESTAMP)
+		WHERE id = ? AND shared_with_id = ?`, shareID, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) shares(ctx context.Context, query string, args ...any) ([]models.BookShare, error) {
@@ -279,7 +302,7 @@ func (s *Store) shares(ctx context.Context, query string, args ...any) ([]models
 	for rows.Next() {
 		var sh models.BookShare
 		if err := rows.Scan(&sh.ID, &sh.BookID, &sh.BookTitle, &sh.OwnerID, &sh.OwnerName,
-			&sh.UserID, &sh.Username, &sh.UserEmail, &sh.SharedAt, &sh.InLibrary); err != nil {
+			&sh.UserID, &sh.Username, &sh.UserEmail, &sh.SharedAt, &sh.InLibrary, &sh.Seen); err != nil {
 			return nil, err
 		}
 		out = append(out, sh)

@@ -369,6 +369,10 @@ export const api = {
   /** Both halves of "who has what": shared out, and shared with you. */
   shares: () => request<{ shared: BookShare[]; received: BookShare[] }>("/shares"),
 
+  /** Acknowledges a share lent to you, so the app stops announcing it. */
+  markShareSeen: (shareId: string) =>
+    request<{ ok: boolean }>(`/shares/${shareId}/seen`, { method: "POST" }),
+
   // --- lists ----------------------------------------------------------
   lists: () => request<{ lists: GameList[] }>("/lists"),
 

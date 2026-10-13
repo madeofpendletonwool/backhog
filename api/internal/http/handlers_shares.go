@@ -116,3 +116,25 @@ func (s *Server) handleSharesOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"shared": shared, "received": received})
 }
+
+// handleShareSeen acknowledges a share lent to the caller, by adding the book
+// or dismissing the notice, so the app stops announcing it. The share stays;
+// it is still listed under Settings.
+func (s *Server) handleShareSeen(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.MustUserID(r.Context())
+	if err != nil {
+		fail(w, errUnauthorized)
+		return
+	}
+
+	err = s.store.MarkShareSeen(r.Context(), userID, chi.URLParam(r, "shareID"))
+	if errors.Is(err, store.ErrNotFound) {
+		fail(w, errNotFound)
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}

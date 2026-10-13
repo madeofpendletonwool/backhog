@@ -103,9 +103,16 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.AdminUser, error) {
 	out := []models.AdminUser{}
 	for rows.Next() {
 		var u models.AdminUser
+		// MAX() loses the column's declared type, so the newest session
+		// arrives as a plain string; scanning it straight into a time
+		// failed the whole listing the moment anyone was signed in.
+		var lastSeen sql.NullString
 		if err := rows.Scan(&u.ID, &u.Email, &u.Username, &u.Role, &u.DisabledAt, &u.CreatedAt,
-			&u.EntryCount, &u.SharedCount, &u.ReceivedCount, &u.LastSeenAt); err != nil {
+			&u.EntryCount, &u.SharedCount, &u.ReceivedCount, &lastSeen); err != nil {
 			return nil, err
+		}
+		if t, ok := parseDBTime(lastSeen.String); lastSeen.Valid && ok {
+			u.LastSeenAt = &t
 		}
 		out = append(out, u)
 	}

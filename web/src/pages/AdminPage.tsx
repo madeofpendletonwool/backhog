@@ -472,8 +472,13 @@ function UserRow({
                 </option>
               ))}
             </Select>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>
-              <Gi name={open ? "chevron-up" : "chevron-down"} className="size-3.5" label="More" />
+            {/* Labelled, not a bare chevron: the password reset lives in
+                here, and an unlabelled arrow hid it well enough that it
+                read as missing. */}
+            <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>
+              <Gi name="lock" className="size-3.5" />
+              Password &amp; access
+              <Gi name={open ? "chevron-up" : "chevron-down"} className="size-3.5" />
             </Button>
           </>
         )}
@@ -487,6 +492,7 @@ function UserRow({
                 <Input
                   type="password"
                   autoComplete="new-password"
+                  autoFocus
                   minLength={8}
                   value={password}
                   onChange={(event) => {

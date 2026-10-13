@@ -88,6 +88,23 @@ func TestReplaceBookTextIndexIsIdempotent(t *testing.T) {
 	if err != nil || ifed {
 		t.Errorf("BookTextIndexed of a stranger = %v, %v; want false", ifed, err)
 	}
+
+	// A re-parse that yields no indexable chapter clears the old rows and
+	// the side table with them, so the file goes back to being a candidate.
+	if err := s.ReplaceBookTextIndex(ctx, "OL1W", file, nil, text); err != nil {
+		t.Fatalf("replace with nothing: %v", err)
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM book_text_fts WHERE media_file_id = ?`, file).Scan(&rows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("rows after an empty re-index = %d, want 0", rows)
+	}
+	ifed, err = s.BookTextIndexed(ctx, file)
+	if err != nil || ifed {
+		t.Errorf("BookTextIndexed after an empty re-index = %v, %v; want false", ifed, err)
+	}
 }
 
 func TestSearchBookTextIndexRanksBooks(t *testing.T) {

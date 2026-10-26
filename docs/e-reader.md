@@ -24,6 +24,14 @@ In Backhog, open **Settings → API tokens**:
 The card that appears shows the catalog and sync addresses and your username.
 The key is the password for both. It is shown only once.
 
+**Custom key:** the generated key is 67 characters, which is miserable on an
+e-reader's on-screen keyboard. Fill in **Custom key** before creating to pick
+your own — `bh_x4-pro`, say. It must start with `bh_` and use 4–120 letters,
+numbers, `-`, `_` or `.` after it, and no other token may already hold it. A
+short key is easier to guess than the generated one; on your own network, over
+TLS, that is usually the right trade. Type it once on the device instead of
+seventy tiny taps.
+
 An e-reader token can read your library and move your reading position, and
 nothing else. Revoke it from the same page if the device is lost.
 

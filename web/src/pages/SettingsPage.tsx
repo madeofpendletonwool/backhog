@@ -320,6 +320,10 @@ function SharingPanel() {
   );
 }
 
+/** The server's rule for a chosen key, mirrored for instant feedback:
+ *  the bh_ prefix, then 4-120 letters, digits, '-', '_' or '.'. */
+const CUSTOM_KEY_RE = /^bh_[A-Za-z0-9._-]{4,120}$/;
+
 /**
  * Personal API tokens: the credential an outside client (an MCP assistant, a
  * script) uses to act as you. A token reads your library by default; the two
@@ -332,6 +336,12 @@ function SharingPanel() {
  * also answers to KOReader sync's login, which sends an MD5 of the password
  * rather than the password itself.
  *
+ * The secret may be chosen rather than generated — short enough to type on
+ * an e-reader's on-screen keyboard — by filling in the custom key field.
+ * The same rules the server enforces are checked here: bh_ + 4–120 of
+ * A-Z a-z 0-9 - _ . A short key trades strength for typeability, which is
+ * the typist's call to make.
+ *
  * The secret is shown exactly once, at creation, because the server keeps
  * only a hash: a lost token is revoked and reissued, never recovered.
  */
@@ -340,6 +350,7 @@ function APITokensPanel() {
   const { data, isLoading } = useQuery({ queryKey: ["api-tokens"], queryFn: api.apiTokens });
 
   const [name, setName] = useState("");
+  const [secret, setSecret] = useState("");
   const [expiresDays, setExpiresDays] = useState(0);
   const [quizWrite, setQuizWrite] = useState(false);
   const [claimsWrite, setClaimsWrite] = useState(false);
@@ -356,6 +367,7 @@ function APITokensPanel() {
           name: name.trim(),
           device: true,
           expires_days: expiresDays || undefined,
+          secret: secret.trim() || undefined,
         });
       }
       const scopes: TokenScope[] = ["books:read"];
@@ -365,11 +377,13 @@ function APITokensPanel() {
         name: name.trim(),
         scopes,
         expires_days: expiresDays || undefined,
+        secret: secret.trim() || undefined,
       });
     },
     onSuccess: (token) => {
       setFresh(token);
       setName("");
+      setSecret("");
       setError("");
       void refresh();
     },
@@ -398,7 +412,15 @@ function APITokensPanel() {
         className="mb-3 grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"
         onSubmit={(event) => {
           event.preventDefault();
-          if (name.trim()) create.mutate();
+          if (!name.trim()) return;
+          const key = secret.trim();
+          if (key && !CUSTOM_KEY_RE.test(key)) {
+            setError(
+              "A custom key must start with bh_ and use 4-120 letters, numbers, '-', '_' or '.' after it.",
+            );
+            return;
+          }
+          create.mutate();
         }}
       >
         <Field label="Name">
@@ -426,6 +448,24 @@ function APITokensPanel() {
           <Gi name="lock" className="size-4" />
           Create token
         </Button>
+        <div className="sm:col-span-3">
+          <Field label="Custom key (optional)">
+            <Input
+              type="text"
+              value={secret}
+              maxLength={123}
+              placeholder="bh_x4-pro"
+              spellCheck={false}
+              onChange={(event) => setSecret(event.target.value)}
+            />
+          </Field>
+          <p className="mt-1 text-xs leading-relaxed text-ink-500">
+            Your own key instead of the generated one — short enough to type on an
+            e-reader's on-screen keyboard. Starts with bh_, then 4–120 letters,
+            numbers, '-', '_' or '.'. A short key is easier to guess than a
+            generated one; that trade is yours to make.
+          </p>
+        </div>
       </form>
 
       <label className="-mt-2 mb-2 flex w-fit cursor-pointer items-center gap-2 text-xs text-ink-500">

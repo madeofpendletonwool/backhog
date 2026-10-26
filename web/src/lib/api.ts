@@ -336,6 +336,9 @@ export const api = {
     expires_days?: number;
     /** An e-reader token: scopes default to books:read + progress:write. */
     device?: boolean;
+    /** A chosen key instead of the generated one: bh_ + 4-120 of
+     *  A-Z a-z 0-9 - _ . — short enough to type on an e-reader. */
+    secret?: string;
   }) =>
     request<APIToken>("/tokens", { method: "POST", body: body(input) }),
 

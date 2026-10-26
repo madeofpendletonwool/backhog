@@ -16,7 +16,7 @@ func TestAPITokenLifecycle(t *testing.T) {
 	user := newTestUser(t, s, "owner@example.com", "owner")
 	other := newTestUser(t, s, "friend@example.com", "friend")
 
-	token, err := s.CreateAPIToken(ctx, user, "mcp", nil, nil)
+	token, err := s.CreateAPIToken(ctx, user, "mcp", "", nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestAPITokenExpiryAndDisabledAccount(t *testing.T) {
 	user := newTestUser(t, s, "owner@example.com", "owner")
 
 	past := time.Now().Add(-time.Hour).UTC()
-	expired, err := s.CreateAPIToken(ctx, user, "stale", nil, &past)
+	expired, err := s.CreateAPIToken(ctx, user, "stale", "", nil, &past)
 	if err != nil {
 		t.Fatalf("create expired: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestAPITokenExpiryAndDisabledAccount(t *testing.T) {
 		t.Errorf("status = %q, want expired", got)
 	}
 
-	live, err := s.CreateAPIToken(ctx, user, "live", nil, nil)
+	live, err := s.CreateAPIToken(ctx, user, "live", "", nil, nil)
 	if err != nil {
 		t.Fatalf("create live: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAPITokenLastUsedThrottles(t *testing.T) {
 	ctx := context.Background()
 	user := newTestUser(t, s, "owner@example.com", "owner")
 
-	token, err := s.CreateAPIToken(ctx, user, "busy", nil, nil)
+	token, err := s.CreateAPIToken(ctx, user, "busy", "", nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -169,11 +169,53 @@ func TestAPITokenScopeValidation(t *testing.T) {
 
 	// Unknown scopes were rejected at the handler; the store drops them
 	// rather than storing a credential that grants nothing it can name.
-	token, err := s.CreateAPIToken(ctx, user, "odd", []string{"wizardry"}, nil)
+	token, err := s.CreateAPIToken(ctx, user, "odd", "", []string{"wizardry"}, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if len(token.Scopes) != 1 || token.Scopes[0] != models.ScopeBooksRead {
 		t.Errorf("unknown scope stored as %v, want the read-only default", token.Scopes)
+	}
+}
+
+func TestAPITokenCustomSecret(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	user := newTestUser(t, s, "owner@example.com", "owner")
+
+	// A chosen key comes back verbatim, and both of its login paths
+	// recognise it: the bearer hash and the kosync MD5 a device sends.
+	token, err := s.CreateDeviceAPIToken(ctx, user, "x4-pro", "bh_x4-pro", nil, nil)
+	if err != nil {
+		t.Fatalf("create custom: %v", err)
+	}
+	if token.Token != "bh_x4-pro" {
+		t.Errorf("secret = %q, want the chosen key verbatim", token.Token)
+	}
+	if got, _, err := s.UserForAPIToken(ctx, "bh_x4-pro"); err != nil || got.ID != user {
+		t.Errorf("bearer resolve = %v, %v; want the owner", got.ID, err)
+	}
+	if got, _, err := s.UserForKosyncKey(ctx, "owner", kosyncKey("bh_x4-pro")); err != nil || got.ID != user {
+		t.Errorf("kosync resolve = %v, %v; want the owner", got.ID, err)
+	}
+
+	// The same key is nobody's to issue twice — the hash is UNIQUE, and a
+	// second device claiming it would collide on the kosync MD5 too. Both
+	// are the one answer: pick another.
+	other := newTestUser(t, s, "friend@example.com", "friend")
+	if _, err := s.CreateAPIToken(ctx, other, "mine", "bh_x4-pro", nil, nil); !errors.Is(err, ErrConflict) {
+		t.Errorf("duplicate custom key err = %v, want ErrConflict", err)
+	}
+	if _, err := s.CreateDeviceAPIToken(ctx, other, "clash", "bh_x4-pro", nil, nil); !errors.Is(err, ErrConflict) {
+		t.Errorf("duplicate device key err = %v, want ErrConflict", err)
+	}
+
+	// The empty secret is still "generate one", not a validation failure.
+	fresh, err := s.CreateAPIToken(ctx, other, "generated", "   ", nil, nil)
+	if err != nil {
+		t.Fatalf("create generated: %v", err)
+	}
+	if !strings.HasPrefix(fresh.Token, models.TokenPrefix) || fresh.Token == "bh_x4-pro" {
+		t.Errorf("blank secret minted %q, want a fresh generated key", fresh.Token)
 	}
 }

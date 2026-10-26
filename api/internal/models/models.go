@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -222,6 +223,37 @@ type ShareCandidate struct {
 // tokens the /internal endpoints authenticate, and it makes a leaked one
 // greppable.
 const TokenPrefix = "bh_"
+
+// A custom token secret is the user's own chosen key, offered at creation
+// for clients where the generated 67-character secret is impractical — an
+// e-reader's on-screen keyboard above all. Short means typeable, and
+// typeable means guessable, so the form is deliberately narrow and the
+// trade is the user's to make: the greppable bh_ prefix, then 4–120
+// characters of letters, digits, '-', '_' or '.'. On a TLS endpoint in
+// front of a home library that is a reasonable spend of entropy.
+const (
+	tokenSecretMinTail = 4
+	tokenSecretMaxTail = 120
+)
+
+// ValidTokenSecret reports whether secret is a well-formed custom token
+// secret. Empty is not valid: an empty request means "generate one", and
+// that decision belongs to the caller, not to this check.
+func ValidTokenSecret(secret string) bool {
+	rest, ok := strings.CutPrefix(secret, TokenPrefix)
+	if !ok || len(rest) < tokenSecretMinTail || len(rest) > tokenSecretMaxTail {
+		return false
+	}
+	for _, r := range rest {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // Token scopes, starting minimal: a token is a reader. Write scopes are
 // separate names added only when a later feature needs them, so the default

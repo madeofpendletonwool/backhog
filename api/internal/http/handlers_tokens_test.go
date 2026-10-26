@@ -257,3 +257,48 @@ func TestBearerWithoutPrefixIsNotOurs(t *testing.T) {
 		t.Errorf("bad personal secret on a public route = %d, want 401", status)
 	}
 }
+
+// TestTokensCustomSecret covers the chosen key: it comes back verbatim,
+// authenticates through both of a device token's doors, collides as a 409,
+// and is refused with the rule when malformed.
+func TestTokensCustomSecret(t *testing.T) {
+	app := newAccountsTestApp(t)
+
+	status, body := app.as(t, app.owner, http.MethodPost, "/api/tokens", map[string]any{
+		"name": "x4-pro", "secret": "bh_x4-pro", "device": true,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create custom = %d (%v)", status, body)
+	}
+	if body["token"] != "bh_x4-pro" {
+		t.Errorf("token = %v, want the chosen key verbatim", body["token"])
+	}
+	if status, _ := app.asToken(t, "bh_x4-pro", http.MethodGet, "/api/auth/me", nil); status != http.StatusOK {
+		t.Errorf("custom key as bearer = %d, want 200", status)
+	}
+
+	// The same key is nobody's to issue twice, whoever is asking.
+	friend := app.signUp(t, "friend@example.com", "friend", "")
+	status, _ = app.as(t, friend, http.MethodPost, "/api/tokens", map[string]any{
+		"name": "mine", "secret": "bh_x4-pro",
+	})
+	if status != http.StatusConflict {
+		t.Errorf("duplicate custom key = %d, want 409", status)
+	}
+
+	// Malformed keys state the rule rather than minting anything.
+	for name, secret := range map[string]string{
+		"no prefix":     "x4-pro",
+		"too short":     "bh_ab",
+		"bad character": "bh_has space",
+		"too long":      "bh_" + strings.Repeat("a", 121),
+		"prefix alone":  "bh_",
+	} {
+		status, _ := app.as(t, app.owner, http.MethodPost, "/api/tokens", map[string]any{
+			"name": name, "secret": secret,
+		})
+		if status != http.StatusBadRequest {
+			t.Errorf("%s: create = %d, want 400", name, status)
+		}
+	}
+}

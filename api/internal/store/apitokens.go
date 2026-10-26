@@ -52,13 +52,15 @@ func newAPITokenSecret() string {
 const apiTokenColumns = `id, user_id, name, scopes, created_at, last_used_at, expires_at, revoked_at,
 	(kosync_key IS NOT NULL)`
 
-// CreateAPIToken issues a personal bearer credential. The returned token is
-// the only time the secret exists in plaintext — the row holds its hash —
-// so the caller must show it to the user immediately. An empty scope list
-// lands on the read-only default; expiresAt nil means the token never
-// expires.
-func (s *Store) CreateAPIToken(ctx context.Context, userID, name string, scopes []string, expiresAt *time.Time) (models.APIToken, error) {
-	return s.createAPIToken(ctx, userID, name, scopes, expiresAt, false)
+// CreateAPIToken issues a personal bearer credential. A non-empty secret is
+// the user's own chosen key (models.ValidTokenSecret); empty mints the usual
+// 256-bit one. The returned token is the only time the secret exists in
+// plaintext — the row holds its hash — so the caller must show it to the
+// user immediately. An empty scope list lands on the read-only default;
+// expiresAt nil means the token never expires. A chosen key someone already
+// holds is ErrConflict.
+func (s *Store) CreateAPIToken(ctx context.Context, userID, name, secret string, scopes []string, expiresAt *time.Time) (models.APIToken, error) {
+	return s.createAPIToken(ctx, userID, name, secret, scopes, expiresAt, false)
 }
 
 // CreateDeviceAPIToken issues a token for an e-reader (MAD-828). It is an
@@ -67,21 +69,24 @@ func (s *Store) CreateAPIToken(ctx context.Context, userID, name string, scopes 
 // because KOReader authenticates with nothing else. An empty scope list
 // lands on the device default rather than the read-only one: a reader that
 // cannot move its own position is not much of a reader.
-func (s *Store) CreateDeviceAPIToken(ctx context.Context, userID, name string, scopes []string, expiresAt *time.Time) (models.APIToken, error) {
+func (s *Store) CreateDeviceAPIToken(ctx context.Context, userID, name, secret string, scopes []string, expiresAt *time.Time) (models.APIToken, error) {
 	if len(scopes) == 0 {
 		scopes = models.DeviceScopes
 	}
-	return s.createAPIToken(ctx, userID, name, scopes, expiresAt, true)
+	return s.createAPIToken(ctx, userID, name, secret, scopes, expiresAt, true)
 }
 
-func (s *Store) createAPIToken(ctx context.Context, userID, name string, scopes []string, expiresAt *time.Time, device bool) (models.APIToken, error) {
+func (s *Store) createAPIToken(ctx context.Context, userID, name, secret string, scopes []string, expiresAt *time.Time, device bool) (models.APIToken, error) {
 	scopes = normalizeScopes(scopes)
+	if strings.TrimSpace(secret) == "" {
+		secret = newAPITokenSecret()
+	}
 	t := models.APIToken{
 		ID:        newID(),
 		UserID:    userID,
 		Name:      name,
 		Scopes:    scopes,
-		Token:     newAPITokenSecret(),
+		Token:     strings.TrimSpace(secret),
 		Device:    device,
 		ExpiresAt: expiresAt,
 	}
@@ -96,6 +101,12 @@ func (s *Store) createAPIToken(ctx context.Context, userID, name string, scopes 
 		t.ID, userID, name, hashAPIToken(t.Token), strings.Join(scopes, ","), expiresAt, key).
 		Scan(&t.CreatedAt)
 	if err != nil {
+		// Two people may choose the same key: the hash is UNIQUE, and so is
+		// a device token's kosync MD5. Either way the answer is the same —
+		// pick another.
+		if isUniqueViolation(err) {
+			return models.APIToken{}, ErrConflict
+		}
 		return models.APIToken{}, err
 	}
 	return t, nil

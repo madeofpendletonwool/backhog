@@ -23,6 +23,10 @@ type tokenRequest struct {
 	// KOReader sync protocol's x-auth headers, and its scopes default to
 	// books:read + progress:write instead of read-only.
 	Device bool `json:"device"`
+	// Secret is an optional chosen key (models.ValidTokenSecret) for clients
+	// where the generated 67-character secret is impractical — an e-reader's
+	// on-screen keyboard above all. Empty mints a generated one.
+	Secret string `json:"secret"`
 }
 
 // handleListAPITokens shows the caller's own tokens with their last use and
@@ -91,6 +95,13 @@ func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		fail(w, errorf(http.StatusBadRequest, "an expiry runs between 1 and 3650 days"))
 		return
 	}
+	secret := strings.TrimSpace(body.Secret)
+	if secret != "" && !models.ValidTokenSecret(secret) {
+		fail(w, errorf(http.StatusBadRequest,
+			"a custom key must start with "+models.TokenPrefix+
+				" and use 4-120 letters, digits, '-', '_' or '.' after it"))
+		return
+	}
 
 	var expiresAt *time.Time
 	if body.ExpiresDays > 0 {
@@ -102,8 +113,12 @@ func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 	if body.Device {
 		create = s.store.CreateDeviceAPIToken
 	}
-	token, err := create(r.Context(), userID, name, body.Scopes, expiresAt)
+	token, err := create(r.Context(), userID, name, secret, body.Scopes, expiresAt)
 	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			fail(w, errorf(http.StatusConflict, "that key is already taken — pick another"))
+			return
+		}
 		fail(w, err)
 		return
 	}

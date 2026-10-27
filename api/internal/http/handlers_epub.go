@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -359,6 +360,7 @@ func (s *Server) handleBookTextDisplay(w http.ResponseWriter, r *http.Request) {
 		fail(w, errorf(http.StatusInternalServerError, "could not read this ebook's text"))
 		return
 	}
+	full := len(blocks)
 	blocks = clampDisplayBlocks(blocks, doc.Blocks, doc.CharEnd, bound.offset)
 	if blocks == nil {
 		blocks = []string{}
@@ -367,8 +369,37 @@ func (s *Server) handleBookTextDisplay(w http.ResponseWriter, r *http.Request) {
 		"spine_index": spine,
 		"href":        doc.Href,
 		"blocks":      blocks,
+		"styles":      s.displayStyles(r, et, spine, blocks, full),
 		"bound":       bound.view,
 	})
+}
+
+// displayStyles is the typography for the blocks a display response
+// carries: parallel to them, or null for a book with none recorded. A
+// block the bound cut short keeps its kind but loses its runs, which
+// describe text the reader has not reached.
+func (s *Server) displayStyles(r *http.Request, et models.EpubText, spine int, blocks []string, full int) []*epub.BlockStyle {
+	styles, err := s.epubs.ReadStyles(et, spine)
+	if err != nil {
+		slog.WarnContext(r.Context(), "read block styles", "error", err)
+		return nil
+	}
+	if styles == nil || len(styles) != full {
+		return nil
+	}
+	styles = styles[:len(blocks)]
+	if n := len(blocks); n > 0 && n <= full && styles[n-1] != nil && styles[n-1].Runs != nil {
+		var joined strings.Builder
+		for _, run := range styles[n-1].Runs {
+			joined.WriteString(run.Text)
+		}
+		if joined.String() != blocks[n-1] {
+			cut := *styles[n-1]
+			cut.Runs = nil
+			styles[n-1] = &cut
+		}
+	}
+	return styles
 }
 
 // clampDisplayBlocks cuts a document's display blocks at a canonical offset.

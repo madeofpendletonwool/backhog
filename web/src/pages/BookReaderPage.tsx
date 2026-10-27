@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams, useParams } from "react-router-dom";
 
+import { BookBlockText } from "@/components/BookBlockText";
 import { SearchInBookDialog } from "@/components/SearchInBookDialog";
 import { Dialog } from "@/components/ui/Dialog";
 import { Gi } from "@/components/ui/Gi";
@@ -24,6 +25,7 @@ import {
   readerBlocks,
   sentenceSpanAt,
 } from "@/lib/booktext";
+import { layoutBlocks } from "@/lib/booklayout";
 import { cn } from "@/lib/cn";
 import { formatTimecode, pageCountFor } from "@/lib/format";
 import type {
@@ -99,6 +101,11 @@ interface ReaderPrefs {
   measure: number;
   face: FaceName;
   surface: SurfacePref;
+  /** Indented paragraphs run on like a book's; spaced ones are the web's. */
+  paragraphs?: "indent" | "spaced";
+  justify?: boolean;
+  /** A drop cap on the first paragraph of each chapter. */
+  dropCaps?: boolean;
   /** Bumped when a stored shape needs migrating; absent means version 1. */
   v?: number;
 }
@@ -111,6 +118,9 @@ const DEFAULT_PREFS: ReaderPrefs = {
   measure: 36,
   face: "serif",
   surface: "auto",
+  paragraphs: "indent",
+  justify: false,
+  dropCaps: true,
   v: PREFS_VERSION,
 };
 
@@ -338,9 +348,14 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
   });
 
   const blocks = useMemo(
-    () => (chapter && display.data ? readerBlocks(chapter, display.data.blocks) : []),
+    () =>
+      chapter && display.data
+        ? readerBlocks(chapter, display.data.blocks, display.data.styles)
+        : [],
     [chapter, display.data],
   );
+  // What each block is for on the page: the opener, the prose, the breaks.
+  const laid = useMemo(() => layoutBlocks(blocks), [blocks]);
 
   // --- opening the book ------------------------------------------------
   // The stored offset picks the chapter; the chapter picks the paragraph.
@@ -994,7 +1009,17 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
           </div>
         )}
 
-        <div ref={articleRef}>
+        <div
+          ref={articleRef}
+          lang="en"
+          className={cn(
+            "book-text",
+            (prefs.paragraphs ?? "indent") === "indent" ? "bt-indent" : "bt-spaced",
+            prefs.justify && "bt-justify",
+            (prefs.dropCaps ?? true) && "bt-dropcaps",
+          )}
+          style={{ ["--bt-muted" as string]: surface.muted, ["--bt-rule" as string]: surface.rule }}
+        >
           {blocks.map((block, index) => (
             <div
               key={`${block.offset}-${index}`}
@@ -1015,20 +1040,12 @@ function ScrolledReader({ entry }: { entry: BookEntry }) {
                   className="mx-auto my-6 block h-auto max-w-full"
                 />
               ))}
-              {block.text && readAlongBlock === index && readAlongSpan ? (
-                <p className="my-[0.85em]">
-                  {block.text.slice(0, readAlongSpan[0])}
-                  <mark
-                    className="rounded-sm text-inherit"
-                    style={{ background: `${surface.fg}26`, color: "inherit" }}
-                  >
-                    {block.text.slice(readAlongSpan[0], readAlongSpan[1])}
-                  </mark>
-                  {block.text.slice(readAlongSpan[1])}
-                </p>
-              ) : (
-                block.text && <p className="my-[0.85em]">{block.text}</p>
-              )}
+              <BookBlockText
+                block={block}
+                laid={laid[index]}
+                highlight={readAlongBlock === index ? readAlongSpan : null}
+                highlightColor={`${surface.fg}26`}
+              />
             </div>
           ))}
         </div>
@@ -1976,6 +1993,36 @@ function TypeControls({
         ]}
         value={prefs.surface}
         onChange={(value) => set("surface", value)}
+      />
+      <Choice
+        label="Paragraphs"
+        surface={surface}
+        options={[
+          { value: "indent" as const, label: "Indented" },
+          { value: "spaced" as const, label: "Spaced" },
+        ]}
+        value={prefs.paragraphs ?? "indent"}
+        onChange={(value) => set("paragraphs", value)}
+      />
+      <Choice
+        label="Alignment"
+        surface={surface}
+        options={[
+          { value: "left" as const, label: "Ragged" },
+          { value: "justify" as const, label: "Justified" },
+        ]}
+        value={prefs.justify ? "justify" : "left"}
+        onChange={(value) => set("justify", value === "justify")}
+      />
+      <Choice
+        label="Drop caps"
+        surface={surface}
+        options={[
+          { value: "on" as const, label: "On" },
+          { value: "off" as const, label: "Off" },
+        ]}
+        value={(prefs.dropCaps ?? true) ? "on" : "off"}
+        onChange={(value) => set("dropCaps", value === "on")}
       />
     </div>
   );

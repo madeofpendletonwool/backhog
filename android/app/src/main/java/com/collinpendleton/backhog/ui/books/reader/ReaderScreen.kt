@@ -67,7 +67,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.collinpendleton.backhog.AppContainer
 import com.collinpendleton.backhog.api.apiCall
-import com.collinpendleton.backhog.books.ReaderPages
 import com.collinpendleton.backhog.books.chapterTitle
 import com.collinpendleton.backhog.books.describeToc
 import com.collinpendleton.backhog.books.isInferredTitle
@@ -110,14 +109,6 @@ data class ReadingSurface(val label: String, val bg: Color, val fg: Color, val m
             else -> null
         }
     }
-}
-
-/** One measured thing on a page: a paragraph of prose, or an illustration. */
-private sealed interface PageItem {
-    val blockIndex: Int
-
-    data class Text(override val blockIndex: Int) : PageItem
-    data class Image(override val blockIndex: Int, val imageIndex: Int, val href: String, val alt: String?) : PageItem
 }
 
 /**
@@ -220,6 +211,7 @@ fun ReaderScreen(
                 onType = { showType = true },
                 onTurn = vm::reportTextPage,
                 onGoToChapter = vm::goToChapter,
+                onGoToChapterEnd = vm::goToChapterEnd,
                 onBackToPlace = vm::backToMyPlace,
                 onReadFromHere = vm::endPeek,
                 onLanded = vm::landed,
@@ -311,6 +303,20 @@ private fun ReaderChrome(
 
 /* ---------------------------------------------------------- text reader */
 
+/** One thing laid on a page: a block's lines, an illustration, or an ornament. */
+private sealed interface PageItem {
+    val blockIndex: Int
+
+    data class Text(override val blockIndex: Int, val look: BlockLook) : PageItem
+    data class Image(override val blockIndex: Int, val href: String, val alt: String?) : PageItem
+
+    /** A scene break's ⁂, or the rule closing a chapter opener. */
+    data class Ornament(override val blockIndex: Int, val rule: Boolean) : PageItem
+
+    /** The air above a chapter's opener, kept even at the top of a page. */
+    data class Lead(override val blockIndex: Int) : PageItem
+}
+
 @Composable
 private fun TextReader(
     state: ReaderState,
@@ -323,139 +329,83 @@ private fun TextReader(
     onType: () -> Unit,
     onTurn: (Long) -> Unit,
     onGoToChapter: (com.collinpendleton.backhog.api.TextChapter) -> Unit,
+    onGoToChapterEnd: (com.collinpendleton.backhog.api.TextChapter) -> Unit,
     onBackToPlace: () -> Unit,
     onReadFromHere: () -> Unit,
     onLanded: () -> Unit,
     onListenFromHere: (() -> Unit)? = null,
 ) {
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val density = LocalDensity.current
-        val pageHeightPx = with(density) { maxHeight.toPx() }
-        val columnWidth = maxWidth - 40.dp
-        val textMeasurer = rememberTextMeasurer()
+    val face = if (prefs.face == "serif") FontFamily.Serif else FontFamily.Default
+    val base = TextStyle(
+        fontFamily = face,
+        fontSize = prefs.fontSize.sp,
+        lineHeight = (prefs.fontSize * prefs.lineHeight).sp,
+        color = surface.fg,
+    )
+    val toc = state.toc
+    val tocIndex = toc.indexOfFirst { it.spineIndex == state.spine }
+    val previous = if (tocIndex > 0) toc[tocIndex - 1] else null
+    val next = if (tocIndex in 0..(toc.size - 2)) toc[tocIndex + 1] else null
 
-        val face = if (prefs.face == "serif") FontFamily.Serif else FontFamily.Default
-        val style = TextStyle(
-            fontFamily = face,
-            fontSize = prefs.fontSize.sp,
-            lineHeight = (prefs.fontSize * prefs.lineHeight).sp,
-            color = surface.fg,
+    // Every block's look, computed once: the measuring and the drawing below
+    // both read these, so a page can never come out taller than measured.
+    val items: List<PageItem> = remember(state.blocks, prefs, surface) {
+        val laid = com.collinpendleton.backhog.books.layoutBlocks(state.blocks)
+        buildList {
+            val opener = laid.firstOrNull()?.role
+            if (opener == com.collinpendleton.backhog.books.BlockRole.Label ||
+                opener == com.collinpendleton.backhog.books.BlockRole.Title
+            ) {
+                add(PageItem.Lead(0))
+            }
+            state.blocks.forEachIndexed { index, block ->
+                block.images.forEach { image -> add(PageItem.Image(index, image.href, image.alt)) }
+                if (laid[index].breakBefore) add(PageItem.Ornament(index, rule = false))
+                if (block.text.isNotEmpty() || block.images.isEmpty()) {
+                    add(PageItem.Text(index, blockLook(block, laid[index], base, prefs, surface.muted)))
+                }
+                if (laid[index].endsOpener) add(PageItem.Ornament(index, rule = true))
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        ReaderChrome(
+            surface = surface,
+            title = state.chapter?.let { chapterTitle(it) } ?: "",
+            progress = state.percent,
+            progressLabel = null,
+            onBack = onBack,
+            actions = {
+                onListenFromHere?.let { listen ->
+                    IconButton(onClick = listen) {
+                        Icon(Icons.Filled.Headphones, contentDescription = "Start narration here", tint = surface.muted)
+                    }
+                }
+                IconButton(onClick = onSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search inside", tint = surface.muted)
+                }
+                IconButton(onClick = onContents) {
+                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Contents", tint = surface.muted)
+                }
+                IconButton(onClick = onType) {
+                    Icon(Icons.Filled.Tune, contentDescription = "Reading settings", tint = surface.muted)
+                }
+            },
+            peekBanner = if (state.peek) {
+                { PeekBanner(surface = surface, state = state, onBackToPlace = onBackToPlace, onReadFromHere = onReadFromHere) }
+            } else null,
         )
-        val measureWidth = with(density) { columnWidth.toPx().toInt() }
 
-        // The items and their measured heights: prose blocks measured for
-        // real, illustrations reserving a fixed share of the page until
-        // their bytes arrive. Heights are in pixels.
-        val items: List<PageItem> = remember(state.blocks) {
-            buildList {
-                state.blocks.forEachIndexed { index, block ->
-                    block.images.forEachIndexed { imageIndex, image ->
-                        add(PageItem.Image(index, imageIndex, image.href, image.alt))
-                    }
-                    if (block.text.isNotEmpty() || block.images.isEmpty()) {
-                        add(PageItem.Text(index))
-                    }
+        // The page is what is left between the chrome and the chapter bar —
+        // measured here, where the pages actually draw, not across the
+        // whole screen.
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                state.display == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = surface.muted)
                 }
-            }
-        }
-        val imageReserve = pageHeightPx * 0.42
-        val heights: List<Double> = remember(items, style, pageHeightPx, measureWidth) {
-            // 0.85em between paragraphs — the web reader's my-[0.85em].
-            val gap = 0.85 * with(density) { prefs.fontSize.sp.toPx() }
-            items.map { item ->
-                when (item) {
-                    is PageItem.Text -> {
-                        val layout: TextLayoutResult = textMeasurer.measure(
-                            text = state.blocks[item.blockIndex].text,
-                            style = style,
-                            constraints = Constraints(maxWidth = measureWidth),
-                        )
-                        layout.size.height.toDouble() + gap
-                    }
-                    is PageItem.Image -> imageReserve + gap
-                }
-            }
-        }
-        val pages = remember(heights, pageHeightPx) {
-            ReaderPages.paginate(heights, pageHeightPx.toDouble())
-        }
-
-        // The offset a page reports: its first block's canonical offset —
-        // paragraph-level reporting, the whole contract.
-        val pageOffsets = remember(pages, items) {
-            pages.map { range -> state.blocks[items[range.first].blockIndex].offset }
-        }
-
-        val pagerState = rememberPagerState(pageCount = { pages.size.coerceAtLeast(1) })
-
-        // Restore and re-anchor: whenever the pagination itself moves — a
-        // chapter load, a type change, a rotation — land on the page holding
-        // the paragraph that is currently the truth, then arm the writes.
-        // The web keeps this exact rule: the paragraph is the anchor, so a
-        // reflow moves the page under it rather than the reader through the book.
-        LaunchedEffect(pages, state.spine) {
-            if (pages.isEmpty()) return@LaunchedEffect
-            val target = state.pendingOffset ?: state.liveOffset
-            val blockIndex = com.collinpendleton.backhog.books.blockIndexAt(state.blocks, target)
-            // A block may own several items (its images render above it); the
-            // first of them names where the block starts on a page.
-            val itemIndex = items.indexOfFirst { it.blockIndex == blockIndex }.let {
-                if (it >= 0) it else items.lastIndex
-            }
-            val page = ReaderPages.pageForItem(pages, itemIndex)
-            pagerState.scrollToPage(page)
-            onLanded()
-        }
-
-        // The turn is the checkpoint: report the offset of the page that settled.
-        LaunchedEffect(pagerState.settledPage, pages) {
-            if (pages.isEmpty()) return@LaunchedEffect
-            val page = pagerState.settledPage
-            if (page in pageOffsets.indices) onTurn(pageOffsets[page])
-        }
-
-        Column(Modifier.fillMaxSize()) {
-            ReaderChrome(
-                surface = surface,
-                title = state.chapter?.let { chapterTitle(it) } ?: "",
-                progress = state.percent,
-                progressLabel = null,
-                onBack = onBack,
-                actions = {
-                    onListenFromHere?.let { listen ->
-                        IconButton(onClick = listen) {
-                            Icon(
-                                Icons.Filled.Headphones,
-                                contentDescription = "Start narration here",
-                                tint = surface.muted,
-                            )
-                        }
-                    }
-                    IconButton(onClick = onSearch) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search inside", tint = surface.muted)
-                    }
-                    IconButton(onClick = onContents) {
-                        Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Contents", tint = surface.muted)
-                    }
-                    IconButton(onClick = onType) {
-                        Icon(Icons.Filled.Tune, contentDescription = "Reading settings", tint = surface.muted)
-                    }
-                },
-                peekBanner = if (state.peek) {
-                    {
-                        PeekBanner(
-                            surface = surface,
-                            state = state,
-                            onBackToPlace = onBackToPlace,
-                            onReadFromHere = onReadFromHere,
-                        )
-                    }
-                } else null,
-            )
-
-            if (pages.isEmpty()) {
-                // An image-only chapter (a cover page) has nothing to anchor to.
-                Column(
+                items.isEmpty() -> Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
@@ -467,49 +417,273 @@ private fun TextReader(
                         textAlign = TextAlign.Center,
                     )
                 }
-            } else {
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.weight(1f),
-                    beyondViewportPageCount = 1,
-                ) { page ->
-                    val range = pages.getOrNull(page) ?: return@HorizontalPager
-                    Column(
-                        Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp)
-                            .padding(top = 12.dp, bottom = 16.dp),
-                    ) {
-                        range.forEach { itemIndex ->
-                            val item = items[itemIndex]
-                            when (item) {
-                                is PageItem.Image -> {
-                                    AsyncImage(
-                                        model = assetUrl(baseUrl, state.entryId, item.href),
-                                        contentDescription = item.alt,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 12.dp)
-                                            .height(with(density) { imageReserve.toInt().toDp() }),
-                                    )
-                                }
-                                is PageItem.Text -> {
-                                    Text(
-                                        text = state.blocks[item.blockIndex].text,
-                                        style = style,
-                                        modifier = Modifier.padding(vertical = 4.dp),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                ChapterSteps(state, surface, onPick = onGoToChapter)
+                prefs.layout == "scroll" -> ScrolledText(
+                    state = state, items = items, surface = surface, base = base, baseUrl = baseUrl,
+                    next = next, onTurn = onTurn, onGoToChapter = onGoToChapter, onLanded = onLanded,
+                )
+                else -> PagedText(
+                    state = state, items = items, surface = surface, base = base, baseUrl = baseUrl,
+                    pageWidth = maxWidth, pageHeight = maxHeight,
+                    previous = previous, next = next,
+                    onTurn = onTurn, onGoToChapter = onGoToChapter, onGoToChapterEnd = onGoToChapterEnd,
+                    onLanded = onLanded,
+                )
             }
         }
+
+        ChapterSteps(state, surface, onPick = onGoToChapter)
+    }
+}
+
+private val PAGE_GUTTER = 20.dp
+private val PAGE_TOP = 12.dp
+private val PAGE_BOTTOM = 16.dp
+
+@Composable
+private fun PagedText(
+    state: ReaderState,
+    items: List<PageItem>,
+    surface: ReadingSurface,
+    base: TextStyle,
+    baseUrl: String,
+    pageWidth: androidx.compose.ui.unit.Dp,
+    pageHeight: androidx.compose.ui.unit.Dp,
+    previous: com.collinpendleton.backhog.api.TextChapter?,
+    next: com.collinpendleton.backhog.api.TextChapter?,
+    onTurn: (Long) -> Unit,
+    onGoToChapter: (com.collinpendleton.backhog.api.TextChapter) -> Unit,
+    onGoToChapterEnd: (com.collinpendleton.backhog.api.TextChapter) -> Unit,
+    onLanded: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val em = with(density) { base.fontSize.toPx() }
+    val columnPx = with(density) { (pageWidth - PAGE_GUTTER * 2).toPx() }
+    val capacity = with(density) { (pageHeight - PAGE_TOP - PAGE_BOTTOM).toPx() }.toDouble()
+    val imageHeight = capacity * 0.42
+
+    // Measure every item for real, at the width it will draw at.
+    val layouts: List<TextLayoutResult?> = remember(items, columnPx) {
+        items.map { item ->
+            (item as? PageItem.Text)?.let {
+                val inset = (it.look.insetEm * em * 2).toInt()
+                textMeasurer.measure(
+                    it.look.text,
+                    it.look.style,
+                    constraints = Constraints(maxWidth = (columnPx.toInt() - inset).coerceAtLeast(1)),
+                )
+            }
+        }
+    }
+    val pages = remember(layouts, capacity) {
+        val measured = items.mapIndexed { index, item ->
+            when (item) {
+                is PageItem.Text -> {
+                    val layout = layouts[index]!!
+                    com.collinpendleton.backhog.books.LinePages.Item(
+                        List(layout.lineCount) { (layout.getLineBottom(it) - layout.getLineTop(it)).toDouble() },
+                        marginTop = item.look.marginTopEm * em.toDouble(),
+                        marginBottom = item.look.marginBottomEm * em.toDouble(),
+                    )
+                }
+                is PageItem.Image -> com.collinpendleton.backhog.books.LinePages.Item(imageHeight, em * 0.8, em * 0.8)
+                is PageItem.Ornament -> com.collinpendleton.backhog.books.LinePages.Item(em * 3.0)
+                is PageItem.Lead -> com.collinpendleton.backhog.books.LinePages.Item(em * 2.5)
+            }
+        }
+        com.collinpendleton.backhog.books.LinePages.paginate(measured, capacity)
+    }
+
+    // A page reports the paragraph its first line belongs to.
+    val pageOffsets = remember(pages, items) {
+        pages.map { slices -> state.blocks[items[slices.first().item].blockIndex].offset }
+    }
+    // A page either side of the chapter, when there is a chapter there, so
+    // swiping past the end of one turns into the next — as a book does.
+    val lead = if (previous != null) 1 else 0
+    val trail = if (next != null) 1 else 0
+    val pagerState = rememberPagerState(initialPage = lead, pageCount = { pages.size + lead + trail })
+
+    LaunchedEffect(pages, state.spine) {
+        if (pages.isEmpty()) return@LaunchedEffect
+        val target = state.pendingOffset ?: state.liveOffset
+        val blockIndex = com.collinpendleton.backhog.books.blockIndexAt(state.blocks, target)
+        val itemIndex = items.indexOfFirst { it is PageItem.Text && it.blockIndex == blockIndex }
+            .let { if (it >= 0) it else items.indexOfFirst { item -> item.blockIndex >= blockIndex } }
+            .let { if (it >= 0) it else items.lastIndex }
+        pagerState.scrollToPage(lead + com.collinpendleton.backhog.books.LinePages.pageForItem(pages, itemIndex))
+        onLanded()
+    }
+
+    LaunchedEffect(pagerState.settledPage, pages) {
+        if (pages.isEmpty() || !state.armed) return@LaunchedEffect
+        val page = pagerState.settledPage - lead
+        when {
+            page < 0 -> previous?.let(onGoToChapterEnd)
+            page >= pages.size -> next?.let(onGoToChapter)
+            else -> onTurn(pageOffsets[page])
+        }
+    }
+
+    HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { index ->
+        val page = index - lead
+        val slices = pages.getOrNull(page)
+        if (slices == null) {
+            ChapterTurn(surface, if (page < 0) previous else next, forward = page >= 0)
+            return@HorizontalPager
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = PAGE_GUTTER)
+                .padding(top = PAGE_TOP, bottom = PAGE_BOTTOM),
+        ) {
+            for (slice in slices) {
+                val top = with(density) { slice.marginTop.toFloat().toDp() }
+                val bottom = with(density) { slice.marginBottom.toFloat().toDp() }
+                when (val item = items[slice.item]) {
+                    is PageItem.Text -> {
+                        val layout = layouts[slice.item]!!
+                        val from = layout.getLineStart(slice.lineStart)
+                        val to = layout.getLineEnd(slice.lineEnd - 1)
+                        // A continuation is not a new paragraph: no first-line indent.
+                        val style = if (slice.lineStart > 0) item.look.style.copy(textIndent = null) else item.look.style
+                        Text(
+                            text = item.look.text.subSequence(from, to),
+                            style = style,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = top, bottom = bottom)
+                                .padding(horizontal = with(density) { (item.look.insetEm * em).toDp() }),
+                        )
+                    }
+                    is PageItem.Image -> AsyncImage(
+                        model = assetUrl(baseUrl, state.entryId, item.href),
+                        contentDescription = item.alt,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = top, bottom = bottom)
+                            .height(with(density) { imageHeight.toFloat().toDp() }),
+                    )
+                    is PageItem.Ornament -> Ornament(surface, item.rule, with(density) { (em * 3).toDp() })
+                    is PageItem.Lead -> Spacer(Modifier.height(with(density) { (em * 2.5f).toDp() }))
+                }
+            }
+        }
+    }
+}
+
+/** The scrolling layout: the same looks, one continuous column per chapter. */
+@Composable
+private fun ScrolledText(
+    state: ReaderState,
+    items: List<PageItem>,
+    surface: ReadingSurface,
+    base: TextStyle,
+    baseUrl: String,
+    next: com.collinpendleton.backhog.api.TextChapter?,
+    onTurn: (Long) -> Unit,
+    onGoToChapter: (com.collinpendleton.backhog.api.TextChapter) -> Unit,
+    onLanded: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val em = with(density) { base.fontSize.toPx() }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(items, state.spine) {
+        if (items.isEmpty()) return@LaunchedEffect
+        val target = state.pendingOffset ?: state.liveOffset
+        val blockIndex = com.collinpendleton.backhog.books.blockIndexAt(state.blocks, target)
+        val itemIndex = items.indexOfFirst { it.blockIndex >= blockIndex }.coerceAtLeast(0)
+        listState.scrollToItem(itemIndex)
+        onLanded()
+    }
+    // The block at the top of the screen is where you are, once scrolling
+    // rests. The collector outlives recompositions, so it reads the live
+    // state, not the one it started with.
+    val current by androidx.compose.runtime.rememberUpdatedState(state)
+    val report by androidx.compose.runtime.rememberUpdatedState(onTurn)
+    LaunchedEffect(listState, items) {
+        androidx.compose.runtime.snapshotFlow { listState.isScrollInProgress to listState.firstVisibleItemIndex }
+            .collect { (scrolling, first) ->
+                if (!scrolling && current.armed) {
+                    items.getOrNull(first)?.let { report(current.blocks[it.blockIndex].offset) }
+                }
+            }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = PAGE_GUTTER, vertical = PAGE_TOP),
+    ) {
+        items(items.size) { index ->
+            when (val item = items[index]) {
+                is PageItem.Text -> Text(
+                    text = item.look.text,
+                    style = item.look.style,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            top = with(density) { (item.look.marginTopEm * em).toDp() },
+                            bottom = with(density) { (item.look.marginBottomEm * em).toDp() },
+                        )
+                        .padding(horizontal = with(density) { (item.look.insetEm * em).toDp() }),
+                )
+                is PageItem.Image -> AsyncImage(
+                    model = assetUrl(baseUrl, state.entryId, item.href),
+                    contentDescription = item.alt,
+                    contentScale = ContentScale.FillWidth,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                )
+                is PageItem.Ornament -> Ornament(surface, item.rule, with(density) { (em * 3).toDp() })
+                is PageItem.Lead -> Spacer(Modifier.height(with(density) { (em * 2.5f).toDp() }))
+            }
+        }
+        if (next != null) {
+            item {
+                OutlinedButton(
+                    onClick = { onGoToChapter(next) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 32.dp, bottom = 48.dp),
+                ) { Text("Next: ${chapterTitle(next)}", color = surface.fg, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+        }
+    }
+}
+
+/** A scene break (⁂) or the short rule that closes a chapter's opener. */
+@Composable
+private fun Ornament(surface: ReadingSurface, rule: Boolean, height: androidx.compose.ui.unit.Dp) {
+    Box(Modifier.fillMaxWidth().height(height), contentAlignment = Alignment.Center) {
+        if (rule) {
+            Box(Modifier.width(56.dp).height(1.dp).background(surface.rule))
+        } else {
+            Text("⁂", color = surface.muted, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+/** The page past a chapter's edge, shown for the moment the next one loads. */
+@Composable
+private fun ChapterTurn(surface: ReadingSurface, chapter: com.collinpendleton.backhog.api.TextChapter?, forward: Boolean) {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            if (forward) "Next" else "Previous",
+            style = MaterialTheme.typography.labelMedium,
+            color = surface.muted,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            chapter?.let { chapterTitle(it) } ?: "",
+            style = MaterialTheme.typography.titleLarge,
+            color = surface.fg,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -772,6 +946,18 @@ private fun TypeControls(container: AppContainer, prefs: ReaderPrefs, surface: R
             prefs.surface,
         ) { value ->
             scope.launch { container.preferences.setReaderPrefs(prefs.copy(surface = value)) }
+        }
+        Choice("Layout", surface, listOf("pages" to "Pages", "scroll" to "Scroll"), prefs.layout) { value ->
+            scope.launch { container.preferences.setReaderPrefs(prefs.copy(layout = value)) }
+        }
+        Choice("Paragraphs", surface, listOf("indent" to "Indented", "spaced" to "Spaced"), prefs.paragraphs) { value ->
+            scope.launch { container.preferences.setReaderPrefs(prefs.copy(paragraphs = value)) }
+        }
+        Choice("Alignment", surface, listOf("left" to "Ragged", "justify" to "Justified"), if (prefs.justify) "justify" else "left") { value ->
+            scope.launch { container.preferences.setReaderPrefs(prefs.copy(justify = value == "justify")) }
+        }
+        Choice("Chapter openings", surface, listOf("on" to "Small caps", "off" to "Plain"), if (prefs.opening) "on" else "off") { value ->
+            scope.launch { container.preferences.setReaderPrefs(prefs.copy(opening = value == "on")) }
         }
     }
 }

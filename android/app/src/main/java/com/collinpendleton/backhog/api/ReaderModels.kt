@@ -58,7 +58,28 @@ data class BookTextDisplay(
     @SerialName("spine_index") val spineIndex: Int = 0,
     val href: String = "",
     val blocks: List<String> = emptyList(),
+    /**
+     * Each block's typography, parallel to `blocks` (null entries are plain
+     * paragraphs); null for a book with none recorded.
+     */
+    val styles: List<BlockStyle?>? = null,
 )
+
+/** What a block is, as the book's own markup says (web: BlockStyle). */
+@Serializable
+data class BlockStyle(
+    /** "heading" | "subtitle" | "epigraph" | "quote" | "item" | "pre" | "caption"; null for prose. */
+    val kind: String? = null,
+    val level: Int = 0,
+    /** A scene break sits between this block and the one before. */
+    @SerialName("break") val sceneBreak: Boolean = false,
+    /** The block's text cut where its marks change; concatenated, the display text. */
+    val runs: List<StyleRun>? = null,
+)
+
+/** Marks: b bold, i italic, s small caps, ^ sup, _ sub, c code, n a line break. */
+@Serializable
+data class StyleRun(val t: String, val m: String = "")
 
 /** One page of the paged reader's manifest: an image-native PDF's page axis. */
 @Serializable

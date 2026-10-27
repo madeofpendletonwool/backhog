@@ -62,6 +62,13 @@ data class ReaderPrefs(
     val face: String = "serif",
     /** "auto" | "dark" | "sepia" | "light". */
     val surface: String = "auto",
+    /** "indent" (a book's run-on paragraphs) or "spaced" (the web's). */
+    val paragraphs: String = "indent",
+    val justify: Boolean = false,
+    /** Small capitals on the words that open a chapter. */
+    val opening: Boolean = true,
+    /** "pages" (swipe) or "scroll". */
+    val layout: String = "pages",
 )
 
 /**
@@ -182,6 +189,10 @@ class AppPreferences(private val store: DataStore<Preferences>) {
             lineHeight = prefs[READER_LINE_HEIGHT] ?: 1.65f,
             face = prefs[READER_FACE] ?: "serif",
             surface = prefs[READER_SURFACE] ?: "auto",
+            paragraphs = prefs[READER_PARAGRAPHS] ?: "indent",
+            justify = prefs[READER_JUSTIFY] ?: false,
+            opening = prefs[READER_OPENING] ?: true,
+            layout = prefs[READER_LAYOUT] ?: "pages",
         )
     }
 
@@ -191,6 +202,10 @@ class AppPreferences(private val store: DataStore<Preferences>) {
             it[READER_LINE_HEIGHT] = prefs.lineHeight
             it[READER_FACE] = prefs.face
             it[READER_SURFACE] = prefs.surface
+            it[READER_PARAGRAPHS] = prefs.paragraphs
+            it[READER_JUSTIFY] = prefs.justify
+            it[READER_OPENING] = prefs.opening
+            it[READER_LAYOUT] = prefs.layout
         }
     }
 
@@ -256,6 +271,10 @@ class AppPreferences(private val store: DataStore<Preferences>) {
         val READER_LINE_HEIGHT = floatPreferencesKey("reader:lineHeight")
         val READER_FACE = stringPreferencesKey("reader:face")
         val READER_SURFACE = stringPreferencesKey("reader:surface")
+        val READER_PARAGRAPHS = stringPreferencesKey("reader:paragraphs")
+        val READER_JUSTIFY = booleanPreferencesKey("reader:justify")
+        val READER_OPENING = booleanPreferencesKey("reader:opening")
+        val READER_LAYOUT = stringPreferencesKey("reader:layout")
         val LIBRARY_STATUS = stringPreferencesKey("library:games:status")
         val LIBRARY_SORT = stringPreferencesKey("library:games:sort")
         val LIBRARY_PLATFORM = stringPreferencesKey("library:games:platform")

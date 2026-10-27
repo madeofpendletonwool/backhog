@@ -358,6 +358,7 @@ class PlaybackService : MediaLibraryService() {
     private inner class EngineListener : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) {
+                followBook()
                 startTicker()
             } else {
                 ticker?.cancel()
@@ -394,6 +395,42 @@ class PlaybackService : MediaLibraryService() {
         override fun onPlayerError(playbackError: PlaybackException) {
             error = if (tape != null) OFFLINE_MESSAGE else "This track could not be played."
             publishExtras()
+        }
+    }
+
+    /**
+     * The paper-to-tape leg of the handoff, the web player's follow ported.
+     * A paused tape holds the second it stopped at, but the stored position
+     * is shared: an e-reader's kosync push, a page scan or the web reader can
+     * move it on while the tape sits still — or while the service sat
+     * restored-but-paused for hours. So whenever play starts, ask the server
+     * where the book is and, if a derived second says somewhere else, catch
+     * the tape up before the first checkpoint can drag the book back.
+     *
+     * Only a *derived* second is followed (the text position translated
+     * through the alignment); an underived one is our own raw checkpoint or
+     * the "start at zero" default. A 'listen' source is a player's own write
+     * and is left alone, as is a tape the listener moved while we asked.
+     */
+    private fun followBook() {
+        val id = entry?.id ?: return
+        val startedAt = currentGlobalSeconds()
+        scope.launch {
+            val api = container.session.api(baseUrl) ?: return@launch
+            val position = apiCall { api.bookPosition(id) }.getOrNull() ?: return@launch
+            val seconds = position.audio?.takeIf { it.derived }?.seconds ?: return@launch
+            if (position.source == "listen") return@launch
+            val t = tape ?: return@launch
+            val p = player ?: return@launch
+            if (entry?.id != id) return@launch
+            val now = currentGlobalSeconds()
+            // Moved by hand while the request was out: theirs wins.
+            if (abs(now - startedAt) > FOLLOW_SETTLE_SECONDS) return@launch
+            if (abs(seconds - now) < FOLLOW_TOLERANCE_SECONDS) return@launch
+            // Catching up is not a position change of ours; the server
+            // already holds this second, translated from wherever it came.
+            lastWriteGlobal = seconds
+            p.seekTo(t.windowPositionMs(seconds))
         }
     }
 
@@ -832,6 +869,12 @@ class PlaybackService : MediaLibraryService() {
         const val RECENT_ID = "recent"
         const val SHELF_ID = "shelf"
         const val BROWSE_CACHE_MS = 120_000L
+
+        /** How far the book must have moved before a resuming tape follows it (the web's). */
+        private const val FOLLOW_TOLERANCE_SECONDS = 3.0
+
+        /** How far the tape may play on while the follow asks the server. */
+        private const val FOLLOW_SETTLE_SECONDS = 10.0
 
         // The media-browser completion extras a car reads for progress, by
         // value: media3's MediaConstants carries them but is restricted to

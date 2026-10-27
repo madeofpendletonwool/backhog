@@ -1,6 +1,12 @@
 package com.collinpendleton.backhog.ui.books
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -221,12 +227,12 @@ fun BookDetailScreen(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Keep") } },
         )
     }
-    if (showScan && state.drivingCopy != null) {
+    if (showScan) {
         ModalBottomSheet(onDismissRequest = { showScan = false }) {
             ScanPageSheet(
                 vm = vm,
-                copyId = state.drivingCopy!!.id,
-                anchorCount = state.drivingCopy!!.anchorCount,
+                copyId = state.drivingCopy?.id,
+                anchorCount = state.drivingCopy?.anchorCount ?: 0,
                 onDone = { showScan = false },
             )
         }
@@ -469,7 +475,10 @@ private fun PositionSection(state: BookDetailState, onScan: () -> Unit) {
         }
 
         if (!paged) {
-            val scannable = copy != null && position.charCount > 0
+            // Scanning matches a photographed page against the text, so it
+            // needs one. A registered paper copy is optional: with one, the
+            // scan also pins the printed page; without, it just moves you.
+            val scannable = position.charCount > 0
             if (scannable) {
                 OutlinedButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Filled.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -485,11 +494,7 @@ private fun PositionSection(state: BookDetailState, onScan: () -> Unit) {
                 }
             } else {
                 Text(
-                    if (position.charCount == 0L) {
-                        "Attach the ebook and a photographed page can be matched into the text."
-                    } else {
-                        "Register your paper copy under On paper below, and a photo of the page you're on becomes your position."
-                    },
+                    "Attach the ebook and a photographed page can be matched into the text.",
                     style = MaterialTheme.typography.bodySmall,
                     color = p.c500,
                 )
@@ -696,40 +701,60 @@ private fun AnchorList(vm: BookDetailViewModel, copyId: String) {
     }
 }
 
+/**
+ * Which printing you hold, and on what terms. Every printing the catalogue
+ * knows is offered — a popular book has hundreds — behind a filter that
+ * takes any run of the ISBN off the back cover, or a publisher, year or page
+ * count. The pick is also the book's printing: page numbers belong to one,
+ * and registering a copy is the reader saying which.
+ */
 @Composable
 private fun RegisterCopyDialog(state: BookDetailState, vm: BookDetailViewModel, onDismiss: () -> Unit) {
-    val editions = state.book?.editions.orEmpty().let { com.collinpendleton.backhog.books.sortEditions(it) }
+    val p = Backhog.palette
+    val editions = remember(state.book?.editions) {
+        com.collinpendleton.backhog.books.sortEditions(state.book?.editions.orEmpty())
+    }
     var editionId by remember { mutableStateOf(state.entry?.editionId ?: "") }
+    var query by remember { mutableStateOf("") }
     var borrowed by remember { mutableStateOf(false) }
     var dueAt by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+    val matches = remember(editions, query) { com.collinpendleton.backhog.books.matchEditions(editions, query) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Register a printing") },
+        title = { Text("Register your copy") },
         text = {
-            // Scrolls: eight printings plus the form outgrow a short phone.
-            Column(
-                Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (editions.isEmpty()) {
                     Text("No printings on file for this work.")
                 } else {
-                    Text("Which printing is it?", style = MaterialTheme.typography.labelMedium)
-                    editions.take(8).forEach { edition ->
-                        FilterChip(
-                            selected = editionId == edition.id,
-                            onClick = { editionId = edition.id },
-                            label = {
-                                Text(
-                                    editionLabel(edition).ifEmpty { edition.id },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                        )
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("ISBN, publisher, year…") },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        if (query.isBlank()) {
+                            "${editions.size} printing${if (editions.size == 1) "" else "s"} — the ISBN on the back narrows it fastest."
+                        } else if (matches.isEmpty()) {
+                            "No printing matches that."
+                        } else {
+                            "${matches.size} of ${editions.size}"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = p.c500,
+                    )
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        Modifier.fillMaxWidth().heightIn(max = 260.dp),
+                    ) {
+                        items(matches.size, key = { matches[it].id }) { index ->
+                            val edition = matches[index]
+                            EditionOption(edition, selected = edition.id == editionId) { editionId = edition.id }
+                        }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -749,14 +774,57 @@ private fun RegisterCopyDialog(state: BookDetailState, vm: BookDetailViewModel, 
         confirmButton = {
             TextButton(
                 onClick = {
-                    vm.registerCopy(editionId.ifEmpty { editions.firstOrNull()?.id ?: "" }, borrowed, dueAt, notes)
+                    vm.registerCopy(editionId, borrowed, dueAt, notes)
                     onDismiss()
                 },
-                enabled = editions.isNotEmpty(),
+                enabled = editionId.isNotEmpty(),
             ) { Text("Register") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/** One printing in the register list: what it is on the left, its ISBN on the right. */
+@Composable
+private fun EditionOption(
+    edition: com.collinpendleton.backhog.api.BookEdition,
+    selected: Boolean,
+    onPick: () -> Unit,
+) {
+    val p = Backhog.palette
+    val title = listOfNotNull(
+        edition.publisher.takeIf { it.isNotBlank() },
+        edition.publishedYear?.toString(),
+    ).joinToString(" · ").ifEmpty { "Unlabelled printing" }
+    val detail = listOf(
+        edition.binding,
+        com.collinpendleton.backhog.books.formatPages(edition.pageCount),
+        edition.language,
+    ).filter { it.isNotBlank() }.joinToString(" · ")
+    val isbn = com.collinpendleton.backhog.books.normalizeIsbn(com.collinpendleton.backhog.books.editionIsbn(edition))
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+            .clickable(onClick = onPick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = p.c200, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (detail.isNotEmpty()) {
+                Text(detail, style = MaterialTheme.typography.labelSmall, color = p.c500, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Text(
+            isbn.ifEmpty { "no ISBN" },
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = p.c500,
+        )
+    }
 }
 
 /* ------------------------------------------------------------------- files */

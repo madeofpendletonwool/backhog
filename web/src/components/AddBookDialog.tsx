@@ -2,6 +2,7 @@ import { cn } from "@/lib/cn";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { BookCover } from "./BookCover";
+import { EditionPicker } from "./EditionPicker";
 import { Dialog } from "./ui/Dialog";
 import { Gi } from "./ui/Gi";
 import { Button, Input, LoadingDot, Select } from "./ui/primitives";
@@ -9,11 +10,10 @@ import { useAddBookToLibrary, useBook, useBookByISBN, useBookSearch } from "@/ho
 import { useDebounced } from "@/hooks/useLibrary";
 import { ApiError } from "@/lib/api";
 import { barcodeScanningSupported, createISBNDetector } from "@/lib/barcode";
+import { editionISBNs, sortEditions } from "@/lib/editions";
 import {
   accentStyle,
   byline,
-  editionISBN,
-  editionLabel,
   looksLikeISBN,
   normalizeISBN,
   publishYear,
@@ -526,7 +526,7 @@ function ConfirmStep({
   // Preselect the printing the scanned barcode names, once the list arrives.
   useEffect(() => {
     if (!isbn || editionId) return;
-    const match = editions.find((edition) => editionISBN(edition) === isbn);
+    const match = editions.find((edition) => editionISBNs(edition).includes(isbn));
     if (match) setEditionId(match.id);
   }, [isbn, editions, editionId]);
 
@@ -560,8 +560,8 @@ function ConfirmStep({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <label className="block">
+      <div className="mt-5">
+        <label className="block sm:max-w-[50%]">
           <span className="mb-1.5 block text-xs font-medium text-ink-400">Shelf</span>
           <Select value={status} onChange={(event) => setStatus(event.target.value as Status)}>
             {ADD_STATUSES.map((value) => (
@@ -572,25 +572,23 @@ function ConfirmStep({
           </Select>
         </label>
 
-        <label className="block">
+        <div className="mt-3">
           <span className="mb-1.5 block text-xs font-medium text-ink-400">
             Printing {loadingEditions && <span className="text-ink-600">· loading…</span>}
           </span>
-          <Select
-            value={editionId}
-            disabled={editions.length === 0}
-            onChange={(event) => setEditionId(event.target.value)}
-          >
-            <option value="">
-              {editions.length === 0 ? "No printings on file" : "Not sure which one"}
-            </option>
-            {editions.map((edition) => (
-              <option key={edition.id} value={edition.id}>
-                {editionLabel(edition) || editionISBN(edition) || edition.id}
-              </option>
-            ))}
-          </Select>
-        </label>
+          {editions.length === 0 ? (
+            <p className="text-xs text-ink-500">
+              {loadingEditions ? "Fetching printings…" : "No printings on file"}
+            </p>
+          ) : (
+            <EditionPicker
+              editions={editions}
+              value={editionId || null}
+              onChange={(id) => setEditionId(id ?? "")}
+              unsureLabel="Not sure which one"
+            />
+          )}
+        </div>
       </div>
 
       <p className="mt-2 text-xs text-ink-500">
@@ -624,14 +622,6 @@ function ConfirmStep({
       </div>
     </div>
   );
-}
-
-/** Newest printings first, then the ones with a page count — the useful ones. */
-function sortEditions(editions: BookEdition[]): BookEdition[] {
-  return [...editions].sort((a, b) => {
-    if (Boolean(a.page_count) !== Boolean(b.page_count)) return a.page_count ? -1 : 1;
-    return (b.published_year ?? 0) - (a.published_year ?? 0);
-  });
 }
 
 function Message({

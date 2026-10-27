@@ -176,6 +176,9 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
   const lastWriteRef = useRef({ at: 0, global: -1 });
   /** `updated_at` of the last stored position the player has caught up to. */
   const followedRef = useRef<string | null>(null);
+  // Set by play() while it asks the server where the book is: the one moment
+  // a running tape may still follow, because it has only just started.
+  const catchUpRef = useRef<{ at: number; global: number } | null>(null);
   const lastPositionStateRef = useRef(0);
   const warmedRef = useRef(new Set<number>());
   const rateRef = useRef(rate);
@@ -330,10 +333,29 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const play = useCallback(() => {
-    void audioRef.current?.play().catch(() => {
+    const audio = audioRef.current;
+    const entryId = entryIdRef.current;
+    // Resuming a paused tape asks where the book is first — an e-reader's
+    // kosync push, say, moves it with no event this tab would hear — and the
+    // follow below catches the tape up. Playback starts at once regardless:
+    // waiting on the request would cost the user gesture some browsers need.
+    if (audio?.paused && entryId) {
+      catchUpRef.current = { at: Date.now(), global: globalRef.current };
+      void queryClient
+        .fetchQuery({
+          queryKey: ["bookPosition", entryId],
+          queryFn: () => api.bookPosition(entryId),
+          staleTime: 0,
+        })
+        .catch(() => null)
+        .finally(() => {
+          catchUpRef.current = null;
+        });
+    }
+    void audio?.play().catch(() => {
       patch({ playing: false });
     });
-  }, [patch]);
+  }, [patch, queryClient]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
@@ -790,7 +812,15 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
       const seconds = position.audio?.derived ? position.audio.seconds : null;
       if (position.source === "listen" || seconds == null) return;
       const audio = audioRef.current;
-      if (!audio || !audio.paused || !timelineRef.current) return;
+      if (!audio || !timelineRef.current) return;
+      // A running tape is the position — unless it only just resumed and has
+      // not been moved by hand since, in which case it is catching up.
+      const catchUp = catchUpRef.current;
+      const resuming =
+        catchUp !== null &&
+        Math.abs(globalRef.current - catchUp.global) <=
+          (Date.now() - catchUp.at) / 1000 + FOLLOW_TOLERANCE_SECONDS;
+      if (!audio.paused && !resuming) return;
       if (Math.abs(seconds - globalRef.current) < FOLLOW_TOLERANCE_SECONDS) return;
 
       seek(seconds);

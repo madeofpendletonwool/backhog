@@ -2,26 +2,32 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
+import { EditionPicker } from "@/components/EditionPicker";
 import { ScanPageDialog } from "@/components/ScanPageDialog";
 import { Gi } from "@/components/ui/Gi";
-import { Button, Input, Panel, Select } from "@/components/ui/primitives";
+import { Button, Input, Panel } from "@/components/ui/primitives";
+import { useUpdateEntry } from "@/hooks/useLibrary";
 import { api } from "@/lib/api";
 import { explainPage, formatPage } from "@/lib/booktext";
-import { editionLabel, formatDate, pageCountFor } from "@/lib/format";
+import { editionISBN, editionLabel, formatDate, normalizeISBN, pageCountFor } from "@/lib/format";
 import type { BookEdition } from "@/lib/types";
 
 /**
- * The paper half of a book: the printing the reader holds — owned or
- * borrowed from the library — and the map from its page numbers into the
- * text.
+ * The copy in your hands: which printing it is, whether it is yours or the
+ * library's, and the map from its page numbers into the text.
  *
- * Everything here is about making the mechanic legible. The panel says
- * where the copy came from and when it goes back, how many pages are
- * mapped, what page you are on and how sure it is of that, and that
- * scanning more improves it — because a map that silently gets better is
- * a map nobody bothers to feed.
+ * The printing is asked once. It used to be asked twice — a Printings list
+ * that anchored the entry and an On paper dropdown that registered a copy —
+ * for what is one fact: page numbers belong to a printing, and the copy that
+ * maps them is the copy of the printing the entry reads against. So the
+ * printing is picked here, and the paper questions are about that printing.
+ *
+ * The rest is about making the mechanic legible: where the copy came from
+ * and when it goes back, how many pages are mapped, what page you are on and
+ * how sure it is of that, and that scanning more improves it — because a map
+ * that silently gets better is a map nobody bothers to feed.
  */
-export function PhysicalCopyPanel({
+export function YourCopyPanel({
   entryId,
   editionId,
   editions,
@@ -33,7 +39,7 @@ export function PhysicalCopyPanel({
 }) {
   const queryClient = useQueryClient();
   const [scanning, setScanning] = useState(false);
-  const [chosen, setChosen] = useState("");
+  const [picking, setPicking] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
   const [dueDate, setDueDate] = useState("");
   const [reopenDue, setReopenDue] = useState("");
@@ -49,7 +55,7 @@ export function PhysicalCopyPanel({
 
   const register = useMutation({
     mutationFn: (opts: { acquisition: "owned" | "borrowed"; dueAt?: string }) =>
-      api.createBookCopy(entryId, chosen || offered[0].id, opts),
+      api.createBookCopy(entryId, editionId!, opts),
     onSuccess: () => {
       setCheckingOut(false);
       setDueDate("");
@@ -82,29 +88,37 @@ export function PhysicalCopyPanel({
     mutationFn: (copyId: string) => api.seedBookCopyFromPDF(entryId, copyId),
     onSuccess: () => invalidate(),
   });
-  // Re-anchoring the entry to this copy's printing. The page map itself is
-  // untouched — every copy keeps its own — so this only changes which one
-  // the position endpoints read, and it is reversible from the Printings
-  // panel or from here.
-  const readThisOne = useMutation({
-    mutationFn: (editionId: string) => api.updateEntry(entryId, { edition_id: editionId }),
-    onSuccess: () => {
-      invalidate();
-      queryClient.invalidateQueries({ queryKey: ["entry", entryId] });
-    },
-  });
+  // Anchoring the entry to a printing. Page maps are untouched — every copy
+  // keeps its own — so this only changes which one the position endpoints
+  // read, and picking the old printing again brings its map straight back.
+  const update = useUpdateEntry();
+  const choosePrinting = (next: string | null) => {
+    if (next === editionId) {
+      setPicking(false);
+      return;
+    }
+    update.mutate(
+      { id: entryId, patch: { edition_id: next } },
+      {
+        onSuccess: () => {
+          setPicking(false);
+          void invalidate();
+        },
+      },
+    );
+  };
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ["bookCopies", entryId] }),
       queryClient.invalidateQueries({ queryKey: ["bookPosition", entryId] }),
     ]);
 
-  // Page numbers belong to a printing, so registering a copy is the reader
-  // saying which printing this entry is. The server anchors an unanchored
-  // entry to it; a reader who already holds another printing keeps that
-  // one, and the copy below says so rather than quietly mapping nothing.
-  const offered = editions;
-  const copy = copies.data?.copies.find((c) => c.drives_pages) ?? copies.data?.copies[0] ?? null;
+  // The copy of the chosen printing is the one that maps pages. Copies of
+  // other printings keep their maps and are offered as a switch below.
+  const allCopies = copies.data?.copies ?? [];
+  const copy = editionId ? (allCopies.find((c) => c.edition_id === editionId) ?? null) : null;
+  const otherCopies = allCopies.filter((c) => c !== copy);
+  const edition = editions.find((e) => e.id === editionId) ?? null;
   const pdfSeed = copies.data?.pdf_seed ?? null;
   const page = position.data?.page ?? null;
   const pageCount = pageCountFor(editions, copy?.edition_id, editionId);
@@ -122,44 +136,70 @@ export function PhysicalCopyPanel({
     buyIt.error ??
     drop.error ??
     seedFromPDF.error ??
-    readThisOne.error;
+    update.error;
 
   if (editions.length === 0) return null;
 
   return (
     <Panel className="p-5">
-      <h2 className="mb-1 text-sm font-semibold text-ink-200">On paper</h2>
+      <h2 className="mb-1 text-sm font-semibold text-ink-200">Your copy</h2>
       <p className="mb-3 text-xs leading-relaxed text-ink-500">
-        Scan a page and Backhog knows where you are in the book — and in the audiobook.
+        {edition
+          ? "Page counts and scanned pages are read against this printing."
+          : "Say which printing you hold and its page numbers line up with your copy — until then they're stretched evenly across the text."}
       </p>
 
-      {!copy ? (
+      {edition && !picking ? (
+        <div className="flex items-center gap-3 rounded-xl border border-edge px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm text-ink-100">
+              {editionLabel(edition) || "Unlabelled printing"}
+            </p>
+            {editionISBN(edition) && (
+              <p className="font-mono text-[11px] tabular-nums text-ink-500">
+                ISBN {normalizeISBN(editionISBN(edition))}
+              </p>
+            )}
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => setPicking(true)}>
+            <Gi name="pencil" className="size-3.5" />
+            Change
+          </Button>
+        </div>
+      ) : (
         <>
-          <p className="text-xs leading-relaxed text-ink-400">
-            Register the printing you hold — yours or the library's — and its page numbers become a
-            position like any other.
-          </p>
-          {offered.length > 1 && (
-            <Select
-              value={chosen}
-              onChange={(event) => setChosen(event.target.value)}
-              className="mt-3"
-              aria-label="Which printing do you hold?"
+          <EditionPicker
+            editions={editions}
+            value={editionId}
+            onChange={choosePrinting}
+            unsureLabel={editionId ? "I'm not sure which printing this is" : undefined}
+            busy={update.isPending}
+            autoFocus={picking}
+          />
+          {picking && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-2 text-ink-400"
+              onClick={() => setPicking(false)}
             >
-              <option value="">Which printing?</option>
-              {offered.map((edition) => (
-                <option key={edition.id} value={edition.id}>
-                  {editionLabel(edition)}
-                </option>
-              ))}
-            </Select>
+              Keep this printing
+            </Button>
           )}
+        </>
+      )}
+
+      {edition && !copy && !picking && (
+        <>
+          <p className="mt-4 text-xs leading-relaxed text-ink-400">
+            Holding it on paper — yours or the library's? Register it and a photo of any page
+            becomes your position.
+          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="secondary"
               loading={register.isPending}
-              disabled={offered.length > 1 && chosen === ""}
               onClick={() => register.mutate({ acquisition: "owned" })}
             >
               <Gi name="book-pile" className="size-3.5" />
@@ -168,7 +208,7 @@ export function PhysicalCopyPanel({
             <Button
               size="sm"
               variant="secondary"
-              disabled={(offered.length > 1 && chosen === "") || register.isPending}
+              disabled={register.isPending}
               onClick={() => setCheckingOut(true)}
             >
               <Gi name="bookshelf" className="size-3.5" />
@@ -210,14 +250,11 @@ export function PhysicalCopyPanel({
               </div>
             </div>
           )}
-          {actionError && (
-            <p className="mt-2 text-xs text-red-300">
-              {actionError instanceof Error ? actionError.message : "That did not register."}
-            </p>
-          )}
         </>
-      ) : (
-        <>
+      )}
+
+      {copy && !picking && (
+        <div className="mt-4 border-t border-edge pt-4">
           {page && (
             <>
               <p className="font-display text-[11px] uppercase tracking-wider text-ink-200">
@@ -228,24 +265,6 @@ export function PhysicalCopyPanel({
               </p>
               <p className="mt-1.5 text-xs leading-relaxed text-ink-500">{explainPage(page)}</p>
             </>
-          )}
-
-          {!copy.drives_pages && (
-            <div className="mt-1">
-              <p className="text-xs leading-relaxed text-amber-300/90">
-                Your progress is tracked against a different printing of this book, so this copy's
-                pages are recorded but not shown.
-              </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="mt-1 text-ink-400 hover:text-ink-200"
-                loading={readThisOne.isPending}
-                onClick={() => readThisOne.mutate(copy.edition_id)}
-              >
-                Read this printing instead
-              </Button>
-            </div>
           )}
 
           <p className="mt-3 font-display text-[11px] uppercase tracking-wider text-ink-300">
@@ -353,12 +372,6 @@ export function PhysicalCopyPanel({
             </Button>
           </div>
 
-          {actionError && (
-            <p className="mt-2 text-xs text-red-300">
-              {actionError instanceof Error ? actionError.message : "That did not work."}
-            </p>
-          )}
-
           <ScanPageDialog
             open={scanning}
             onClose={() => setScanning(false)}
@@ -366,7 +379,58 @@ export function PhysicalCopyPanel({
             copyId={copy.id}
             anchorCount={copy.anchor_count}
           />
-        </>
+        </div>
+      )}
+
+      {!picking && otherCopies.length > 0 && (
+        <div className="mt-4 border-t border-edge pt-4">
+          <p className="text-xs leading-relaxed text-ink-500">
+            Also registered — {otherCopies.length === 1 ? "its page map is" : "their page maps are"}{" "}
+            kept, and switching to it reads against it again.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {otherCopies.map((other) => {
+              const printing = editions.find((e) => e.id === other.edition_id);
+              return (
+                <li key={other.id} className="flex items-center gap-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate text-ink-300">
+                    {(printing && editionLabel(printing)) || "Another printing"}
+                    <span className="text-ink-500">
+                      {" "}
+                      · {other.acquisition === "borrowed" ? "library" : "owned"} ·{" "}
+                      {other.anchor_count} page{other.anchor_count === 1 ? "" : "s"} mapped
+                    </span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="shrink-0 text-ink-400 hover:text-ink-200"
+                    loading={update.isPending && update.variables?.patch.edition_id === other.edition_id}
+                    onClick={() => choosePrinting(other.edition_id)}
+                  >
+                    Use this one
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="shrink-0 text-ink-500"
+                    aria-label="Forget this copy"
+                    loading={drop.isPending && drop.variables === other.id}
+                    onClick={() => drop.mutate(other.id)}
+                  >
+                    <Gi name="trash" className="size-3.5" />
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {actionError && (
+        <p role="alert" className="mt-2 text-xs text-red-300">
+          {actionError instanceof Error ? actionError.message : "That did not work."}
+        </p>
       )}
 
       {copy && !position.data?.char_count && (

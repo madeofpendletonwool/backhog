@@ -32,6 +32,11 @@ class EntryPatch internal constructor(private val fields: MutableList<Pair<Strin
         fields += "notes" to JsonPrimitive(notes)
     }
 
+    /** The printing a book entry reads against; null for "not sure which". */
+    fun editionId(id: String?) {
+        fields += "edition_id" to (id?.let(::JsonPrimitive) ?: JsonNull)
+    }
+
     internal fun build(): JsonObject = JsonObject(fields.toMap())
 }
 

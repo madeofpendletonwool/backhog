@@ -10,6 +10,43 @@ import org.junit.Test
 
 class BookFormatTest {
 
+    private fun edition(id: String, isbn13: String = "", isbn10: String = "", publisher: String = "", year: Int? = null, pages: Int? = null) =
+        BookEdition(id = id, isbn13 = isbn13, isbn10 = isbn10, publisher = publisher, publishedYear = year, pageCount = pages)
+
+    @Test
+    fun `isbn forms convert both ways`() {
+        assertEquals("9780141187761", isbn10To13("014118776X"))
+        assertEquals("014118776X", isbn13To10("978-0-14-118776-1"))
+        assertEquals("080442957X", isbn13To10("9780804429573"))
+        assertEquals("", isbn13To10("9791234567896"))
+        assertEquals("", isbn10To13("12345"))
+    }
+
+    @Test
+    fun `matchEditions finds a printing by any run of either isbn`() {
+        val editions = listOf(
+            edition("a", isbn13 = "9780141187761", publisher = "Penguin", year = 2000, pages = 480),
+            edition("b", isbn10 = "0199535566", publisher = "Oxford", year = 2008, pages = 480),
+            edition("c", publisher = "Penguin", year = 1985),
+        )
+        // The tail of the ISBN-13; the ISBN-10 of a printing filed only by its 13.
+        assertEquals(listOf("a"), matchEditions(editions, "87761").map { it.id })
+        assertEquals(listOf("a"), matchEditions(editions, "0-14-118776-x").map { it.id })
+        // The ISBN-13 of a printing filed only by its 10.
+        assertEquals(listOf("b"), matchEditions(editions, "9780199535569").map { it.id })
+        // Words and numbers narrow together; a page count matches too.
+        assertEquals(listOf("a", "c"), matchEditions(editions, "penguin").map { it.id })
+        assertEquals(listOf("a"), matchEditions(editions, "penguin 480").map { it.id })
+        assertEquals(listOf("a", "b", "c"), matchEditions(editions, "  ").map { it.id })
+        assertEquals(emptyList<String>(), matchEditions(editions, "faber").map { it.id })
+        // A short number ranks a page count above an incidental ISBN fragment.
+        val pages = listOf(
+            edition("isbn", isbn13 = "9783432090856", pages = 310),
+            edition("pages", isbn13 = "9780000000002", pages = 320),
+        )
+        assertEquals(listOf("pages", "isbn"), matchEditions(pages, "320").map { it.id })
+    }
+
     @Test
     fun `byline joins authors the way the web does`() {
         assertEquals("", byline(null))

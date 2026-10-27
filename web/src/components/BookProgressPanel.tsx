@@ -63,7 +63,9 @@ export function BookProgressPanel({
   const copy = copies?.copies.find((c) => c.drives_pages) ?? copies?.copies[0] ?? null;
   const pageCount = pageCountFor(editions, copy?.edition_id, editionId);
   // Scanning matches a photographed page against the text, so it needs one.
-  const scannable = copy !== null && position.char_count > 0;
+  // A registered paper copy is optional: with one, the scan also pins the
+  // printed page number; without, it just moves your place.
+  const scannable = position.char_count > 0;
 
   return (
     <Panel className="p-5">
@@ -117,9 +119,7 @@ export function BookProgressPanel({
             </Button>
           ) : (
             <p className="text-xs leading-relaxed text-ink-500">
-              {position.char_count === 0
-                ? "Attach the ebook and a photographed page can be matched into the text."
-                : "Register your paper copy under On paper below, and a photo of the page you're on becomes your position."}
+              Attach the ebook and a photographed page can be matched into the text.
             </p>
           )}
           {scannable && !started && (
@@ -128,13 +128,13 @@ export function BookProgressPanel({
         </div>
       )}
 
-      {scannable && copy && (
+      {scannable && (
         <ScanPageDialog
           open={scanning}
           onClose={() => setScanning(false)}
           entryId={entryId}
-          copyId={copy.id}
-          anchorCount={copy.anchor_count}
+          copyId={copy?.id ?? null}
+          anchorCount={copy?.anchor_count ?? 0}
         />
       )}
     </Panel>

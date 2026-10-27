@@ -93,12 +93,13 @@ func parseKF8(b *mobigo.Book) (*epub.Document, error) {
 		if !sec.Linear {
 			continue
 		}
-		blocks, headings := epub.ExtractBlocksHTML(sec.XHTML())
+		blocks, headings, styles := epub.ExtractStyledHTML(sec.XHTML())
 		d := epub.Doc{
 			SpineIndex: len(doc.Docs),
 			Href:       fmt.Sprintf("mobi:section:%d", i),
 			Blocks:     blocks,
 			Headings:   headings,
+			Styles:     styles,
 		}
 		if t, ok := titles[i]; ok {
 			d.Title, d.Depth = t.label, t.depth
@@ -176,12 +177,13 @@ func parseMOBI6(b *mobigo.Book) (*epub.Document, error) {
 		// A filepos may land mid-tag; html.Parse recovers by dropping the
 		// broken fragment, exactly as it does for EPUB documents that open
 		// mid-markup. The chapters partition the raw text regardless.
-		blocks, headings := epub.ExtractBlocksHTML(chapterHTML)
+		blocks, headings, styles := epub.ExtractStyledHTML(chapterHTML)
 		docs = append(docs, epub.Doc{
 			SpineIndex: i,
 			Href:       fmt.Sprintf("mobi:chapter:%d", i),
 			Blocks:     blocks,
 			Headings:   headings,
+			Styles:     styles,
 		})
 	}
 

@@ -30,7 +30,12 @@ interface ScanPageDialogProps {
   open: boolean;
   onClose: () => void;
   entryId: string;
-  copyId: string;
+  /**
+   * The printing a scan pins its page number to. Null when no paper copy is
+   * registered: the scan still places you in the text, it just has no page
+   * map to grow, so the page-number half of the review drops away.
+   */
+  copyId: string | null;
   /** Pages already mapped on this copy — the improvement, made visible. */
   anchorCount: number;
 }
@@ -118,7 +123,7 @@ export function ScanPageDialog({ open, onClose, entryId, copyId, anchorCount }: 
     mutationFn: async () => {
       if (!result) return;
       const printedPage = Number(page);
-      if (Number.isFinite(printedPage) && printedPage > 0) {
+      if (copyId !== null && Number.isFinite(printedPage) && printedPage > 0) {
         await api.saveBookPageAnchor(entryId, copyId, {
           printed_page: Math.round(printedPage),
           char_offset: result.match.char_offset,
@@ -126,7 +131,7 @@ export function ScanPageDialog({ open, onClose, entryId, copyId, anchorCount }: 
           confidence: result.match.confidence,
         });
       }
-      if (alsoSetProgress) {
+      if (alsoSetProgress || copyId === null) {
         // 'scan' exists for exactly this: a position that came off paper,
         // distinguishable later from one the reader or the player wrote.
         await api.putBookPosition(entryId, {
@@ -138,7 +143,8 @@ export function ScanPageDialog({ open, onClose, entryId, copyId, anchorCount }: 
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["bookCopies", entryId] }),
-        queryClient.invalidateQueries({ queryKey: ["bookCopyPages", entryId, copyId] }),
+        copyId !== null &&
+          queryClient.invalidateQueries({ queryKey: ["bookCopyPages", entryId, copyId] }),
         queryClient.invalidateQueries({ queryKey: ["bookPosition", entryId] }),
       ]);
       onClose();
@@ -148,20 +154,24 @@ export function ScanPageDialog({ open, onClose, entryId, copyId, anchorCount }: 
   // Nothing to record is not a save: with no page number and no progress to
   // move, the button would close the dialog having done nothing at all.
   const pageIsValid = page.trim() === "" || Number(page) > 0;
-  const somethingToSave = (page.trim() !== "" && Number(page) > 0) || alsoSetProgress;
+  const somethingToSave =
+    copyId === null || (page.trim() !== "" && Number(page) > 0) || alsoSetProgress;
 
   return (
     <Dialog open={open} onClose={onClose} label="Scan a page" className="max-w-xl">
       <h2 className="text-lg font-semibold text-ink-100">Scan a page</h2>
       <p className="mt-1 text-sm text-ink-400">
-        {anchorCount === 0
-          ? "Point at any page of prose. The first scan is what turns this printing's page numbers on."
-          : `${anchorCount} page${anchorCount === 1 ? "" : "s"} mapped — accuracy improves as you scan more.`}
+        {copyId === null
+          ? "Point at the page you're on and Backhog finds it in the ebook."
+          : anchorCount === 0
+            ? "Point at any page of prose. The first scan is what turns this printing's page numbers on."
+            : `${anchorCount} page${anchorCount === 1 ? "" : "s"} mapped — accuracy improves as you scan more.`}
       </p>
 
       {phase === "matched" && result ? (
         <MatchReview
           result={result}
+          mapsPages={copyId !== null}
           page={page}
           onPage={setPage}
           suggestedPage={scan?.pageNumber ?? null}
@@ -422,6 +432,7 @@ function Working({ phase, status, progress }: { phase: Phase; status: string; pr
  */
 function MatchReview({
   result,
+  mapsPages,
   page,
   onPage,
   suggestedPage,
@@ -434,6 +445,8 @@ function MatchReview({
   onSave,
 }: {
   result: PassageResult;
+  /** Whether a paper copy is registered for the page number to pin to. */
+  mapsPages: boolean;
   page: string;
   onPage: (value: string) => void;
   suggestedPage: number | null;
@@ -468,42 +481,46 @@ function MatchReview({
         </p>
       )}
 
-      <div className="mt-4">
-        <Label>The page number printed on it</Label>
-        <div className="mt-1.5 flex items-center gap-2">
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={1}
-            value={page}
-            onChange={(event) => onPage(event.target.value)}
-            placeholder="e.g. 214"
-            className="max-w-32"
-          />
-          {suggestedPage !== null && String(suggestedPage) === page && (
-            <span className="text-xs text-ink-500">read off the page — correct it if it is wrong</span>
-          )}
-        </div>
-        <p className="mt-1.5 text-xs leading-relaxed text-ink-500">
-          This is what pins the printing's pages to the text. Leave it blank to skip the map and just
-          move your progress.
-        </p>
-      </div>
+      {mapsPages && (
+        <>
+          <div className="mt-4">
+            <Label>The page number printed on it</Label>
+            <div className="mt-1.5 flex items-center gap-2">
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={page}
+                onChange={(event) => onPage(event.target.value)}
+                placeholder="e.g. 214"
+                className="max-w-32"
+              />
+              {suggestedPage !== null && String(suggestedPage) === page && (
+                <span className="text-xs text-ink-500">read off the page — correct it if it is wrong</span>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-ink-500">
+              This is what pins the printing's pages to the text. Leave it blank to skip the map and just
+              move your progress.
+            </p>
+          </div>
 
-      <label className="mt-4 flex items-start gap-2.5 text-sm text-ink-200">
-        <input
-          type="checkbox"
-          checked={alsoSetProgress}
-          onChange={(event) => onAlsoSetProgress(event.target.checked)}
-          className="mt-0.5 size-4 accent-brand-500"
-        />
-        <span>
-          Set my progress here
-          <span className="block text-xs text-ink-500">
-            Scanning a page usually means "this is where I am".
-          </span>
-        </span>
-      </label>
+          <label className="mt-4 flex items-start gap-2.5 text-sm text-ink-200">
+            <input
+              type="checkbox"
+              checked={alsoSetProgress}
+              onChange={(event) => onAlsoSetProgress(event.target.checked)}
+              className="mt-0.5 size-4 accent-brand-500"
+            />
+            <span>
+              Set my progress here
+              <span className="block text-xs text-ink-500">
+                Scanning a page usually means "this is where I am".
+              </span>
+            </span>
+          </label>
+        </>
+      )}
 
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
 
@@ -514,7 +531,7 @@ function MatchReview({
         </Button>
         <Button variant="primary" loading={saving} disabled={!canSave} onClick={onSave}>
           <Gi name="check" className="size-3.5" />
-          {page.trim() === "" ? "Set my progress" : "Record this page"}
+          {!mapsPages || page.trim() === "" ? "Set my progress" : "Record this page"}
         </Button>
       </div>
     </div>

@@ -1,5 +1,6 @@
 package com.collinpendleton.backhog.books
 
+import com.collinpendleton.backhog.api.BlockStyle
 import com.collinpendleton.backhog.api.BookTextChapters
 import com.collinpendleton.backhog.api.ChapterImage
 import com.collinpendleton.backhog.api.TOCReport
@@ -28,6 +29,8 @@ data class ReaderBlock(
     val text: String,
     /** Illustrations that render above this block. */
     val images: List<ChapterImage>,
+    /** The book's own markup for it; null for a plain paragraph. */
+    val style: BlockStyle? = null,
 )
 
 /**
@@ -38,7 +41,7 @@ data class ReaderBlock(
  * far as both agree. An image-only document owns no text but may still have
  * art, so it gets one empty block for the images to hang on.
  */
-fun readerBlocks(chapter: TextChapter, display: List<String>): List<ReaderBlock> {
+fun readerBlocks(chapter: TextChapter, display: List<String>, styles: List<BlockStyle?>? = null): List<ReaderBlock> {
     val offsets = chapter.blocks ?: emptyList()
     val imagesAt = groupImages(chapter.images, offsets.size)
 
@@ -47,10 +50,12 @@ fun readerBlocks(chapter: TextChapter, display: List<String>): List<ReaderBlock>
         return if (images.isNotEmpty()) listOf(ReaderBlock(chapter.charStart, "", images)) else emptyList()
     }
 
+    // Styles that do not line up with the blocks are worse than none.
+    val styled = styles?.takeIf { it.size == display.size }
     val paired = min(offsets.size, display.size)
     return buildList(paired) {
         for (i in 0 until paired) {
-            add(ReaderBlock(offsets[i], display[i], imagesAt[i] ?: emptyList()))
+            add(ReaderBlock(offsets[i], display[i], imagesAt[i] ?: emptyList(), styled?.get(i)))
         }
     }
 }

@@ -1,4 +1,5 @@
 import type {
+  BlockStyle,
   BookTextChapters,
   ChapterImage,
   PositionPage,
@@ -29,6 +30,8 @@ export interface ReaderBlock {
   text: string;
   /** Illustrations that render above this block. */
   images: ChapterImage[];
+  /** The book's own markup for it; null for a plain paragraph. */
+  style: BlockStyle | null;
 }
 
 /**
@@ -39,7 +42,11 @@ export interface ReaderBlock {
  * under offsets that do not belong to it — every position the reader then
  * wrote would be wrong — it pairs only as far as both agree.
  */
-export function readerBlocks(chapter: TextChapter, display: string[]): ReaderBlock[] {
+export function readerBlocks(
+  chapter: TextChapter,
+  display: string[],
+  styles?: (BlockStyle | null)[] | null,
+): ReaderBlock[] {
   const offsets = chapter.blocks ?? [];
   const imagesAt = groupImages(chapter, offsets.length);
 
@@ -47,13 +54,22 @@ export function readerBlocks(chapter: TextChapter, display: string[]): ReaderBlo
     // An image-only document (a cover page) owns no text but may still have
     // art. Give it one empty block for the images to hang on.
     const images = imagesAt.get(0) ?? [];
-    return images.length > 0 ? [{ offset: chapter.char_start, text: "", images }] : [];
+    return images.length > 0
+      ? [{ offset: chapter.char_start, text: "", images, style: null }]
+      : [];
   }
 
+  // Styles that do not line up with the blocks are worse than none.
+  const styled = styles && styles.length === display.length ? styles : null;
   const paired = Math.min(offsets.length, display.length);
   const blocks: ReaderBlock[] = [];
   for (let i = 0; i < paired; i += 1) {
-    blocks.push({ offset: offsets[i], text: display[i], images: imagesAt.get(i) ?? [] });
+    blocks.push({
+      offset: offsets[i],
+      text: display[i],
+      images: imagesAt.get(i) ?? [],
+      style: styled?.[i] ?? null,
+    });
   }
   return blocks;
 }

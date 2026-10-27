@@ -1121,6 +1121,35 @@ export interface BookTextDisplay {
   spine_index: number;
   href: string;
   blocks: string[];
+  /**
+   * Each block's typography, parallel to `blocks` (null entries are plain
+   * paragraphs). Null for a book parsed before typography was recorded, or
+   * one with no markup to record it from — it reads as plain paragraphs.
+   */
+  styles?: (BlockStyle | null)[] | null;
+}
+
+/** What kind of thing a block is, as the book's own markup says. */
+export type BlockKind = "heading" | "subtitle" | "epigraph" | "quote" | "item" | "pre" | "caption";
+
+export interface BlockStyle {
+  /** Absent for a body paragraph. */
+  kind?: BlockKind;
+  /** A heading's level, 1 (chapter title) to 6. */
+  level?: number;
+  /** A scene break sits between this block and the one before. */
+  break?: boolean;
+  /**
+   * The block's text cut where its marks change; their concatenation is the
+   * display text exactly. Marks: b bold, i italic, s small caps, ^ sup,
+   * _ sub, c code, n a line break (on a space).
+   */
+  runs?: StyleRun[];
+}
+
+export interface StyleRun {
+  t: string;
+  m?: string;
 }
 
 /** Where the player should start, in global seconds and as a track offset. */

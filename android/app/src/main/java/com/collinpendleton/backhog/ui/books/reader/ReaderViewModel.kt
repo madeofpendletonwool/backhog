@@ -164,7 +164,7 @@ class ReaderViewModel(
         apiCall { api().bookTextDisplay(id, spine) }
             .onSuccess { display ->
                 val chapter = _state.value.chapters?.chapters?.firstOrNull { it.spineIndex == spine }
-                val blocks = if (chapter != null) readerBlocks(chapter, display.blocks) else emptyList()
+                val blocks = if (chapter != null) readerBlocks(chapter, display.blocks, display.styles) else emptyList()
                 _state.update { it.copy(spine = spine, display = display, blocks = blocks) }
             }
             .onFailure { e ->
@@ -198,6 +198,26 @@ class ReaderViewModel(
             }
             viewModelScope.launch { loadSpine(target.spineIndex) }
         }
+    }
+
+    /**
+     * Paging back past a chapter's first page: open the previous chapter on
+     * its last paragraph, the way turning back a page in a book does.
+     */
+    fun goToChapterEnd(target: com.collinpendleton.backhog.api.TextChapter) {
+        val last = target.blocks?.lastOrNull() ?: target.charStart
+        _state.update {
+            it.copy(
+                peek = false,
+                spine = target.spineIndex,
+                display = null,
+                blocks = emptyList(),
+                liveOffset = last,
+                pendingOffset = last,
+                armed = false,
+            )
+        }
+        viewModelScope.launch { loadSpine(target.spineIndex) }
     }
 
     /** A search hit or "back to my place": land on a paragraph, optionally as a look that never writes. */

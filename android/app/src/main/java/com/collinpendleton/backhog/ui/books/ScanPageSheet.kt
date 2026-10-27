@@ -60,7 +60,11 @@ import java.io.File
 @Composable
 fun ScanPageSheet(
     vm: BookDetailViewModel,
-    copyId: String,
+    /**
+     * The printing a scan pins its page number to; null when no paper copy is
+     * registered, in which case the scan only moves progress.
+     */
+    copyId: String?,
     anchorCount: Int,
     onDone: () -> Unit,
 ) {
@@ -181,7 +185,9 @@ fun ScanPageSheet(
     ) {
         Text("Scan a page", style = MaterialTheme.typography.titleLarge, color = p.c100)
         Text(
-            if (anchorCount == 0) {
+            if (copyId == null) {
+                "Point at the page you're on and Backhog finds it in the ebook."
+            } else if (anchorCount == 0) {
                 "Point at any page of prose. The first scan is what turns this printing's page numbers on."
             } else {
                 "$anchorCount page${if (anchorCount == 1) "" else "s"} mapped — accuracy improves as you scan more."
@@ -217,21 +223,23 @@ fun ScanPageSheet(
                     style = MaterialTheme.typography.bodySmall,
                     color = p.c300,
                 )
-                Field(
-                    value = page,
-                    onValueChange = { page = it.filter { c -> c.isDigit() } },
-                    label = "Printed page number",
-                    keyboardType = KeyboardType.Number,
-                    supportingText = scan?.pageNumber?.let { "The folio looked like $it — correct it if that's wrong." },
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = alsoSetProgress, onCheckedChange = { alsoSetProgress = it })
-                    Text("Also move me to this spot", style = MaterialTheme.typography.bodyMedium, color = p.c300)
+                if (copyId != null) {
+                    Field(
+                        value = page,
+                        onValueChange = { page = it.filter { c -> c.isDigit() } },
+                        label = "Printed page number",
+                        keyboardType = KeyboardType.Number,
+                        supportingText = scan?.pageNumber?.let { "The folio looked like $it — correct it if that's wrong." },
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = alsoSetProgress, onCheckedChange = { alsoSetProgress = it })
+                        Text("Also move me to this spot", style = MaterialTheme.typography.bodyMedium, color = p.c300)
+                    }
                 }
                 ErrorText(error)
                 val pageNumber = page.toIntOrNull()
                 val pageValid = page.isBlank() || (pageNumber != null && pageNumber > 0)
-                val somethingToSave = (pageNumber != null && pageNumber > 0) || alsoSetProgress
+                val somethingToSave = copyId == null || (pageNumber != null && pageNumber > 0) || alsoSetProgress
                 PrimaryButton(
                     text = "Save",
                     onClick = {

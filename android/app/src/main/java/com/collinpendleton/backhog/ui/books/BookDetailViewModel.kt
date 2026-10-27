@@ -193,7 +193,16 @@ class BookDetailViewModel(
         )
         runMutation(
             call = { api().createCopy(_state.value.entryId, request) },
-            onDone = { refreshCopiesAndPosition() },
+            onDone = { created ->
+                // Picking a printing to register is saying which one you
+                // hold, so the entry reads against it — the server only
+                // adopts it on its own for an entry anchored to nothing.
+                if (!created.copy.drivesPages) {
+                    apiCall { api().patchEntry(_state.value.entryId, entryPatch { editionId(editionId) }) }
+                        .onSuccess { result -> _state.update { it.copy(entry = result.entry) } }
+                }
+                refreshCopiesAndPosition()
+            },
         )
     }
 
@@ -240,9 +249,11 @@ class BookDetailViewModel(
     /**
      * Pin the page and (unless the reader declined) move progress to the
      * match: one scan answers "what page am I on" and "where am I" both.
+     * With no paper copy registered (`copyId` null) or no page number given
+     * there is nothing to pin, and the scan only moves progress.
      */
     fun saveScan(
-        copyId: String,
+        copyId: String?,
         printedPage: Int,
         charOffset: Long,
         source: String,
@@ -250,23 +261,25 @@ class BookDetailViewModel(
         alsoSetProgress: Boolean,
     ) {
         viewModelScope.launch {
-            val anchor = apiCall {
-                api().savePageAnchor(
-                    _state.value.entryId,
-                    copyId,
-                    SaveAnchorRequest(
-                        printedPage = printedPage,
-                        charOffset = charOffset,
-                        source = source,
-                        confidence = confidence,
-                    ),
-                )
+            if (copyId != null && printedPage > 0) {
+                val anchor = apiCall {
+                    api().savePageAnchor(
+                        _state.value.entryId,
+                        copyId,
+                        SaveAnchorRequest(
+                            printedPage = printedPage,
+                            charOffset = charOffset,
+                            source = source,
+                            confidence = confidence,
+                        ),
+                    )
+                }
+                anchor.onFailure { e ->
+                    _state.update { it.copy(actionError = e.message) }
+                    return@launch
+                }
             }
-            anchor.onFailure { e ->
-                _state.update { it.copy(actionError = e.message) }
-                return@launch
-            }
-            if (alsoSetProgress) {
+            if (alsoSetProgress || copyId == null) {
                 // 'scan' exists for exactly this: a position that came off
                 // paper, distinguishable from one the reader wrote.
                 val write = apiCall {

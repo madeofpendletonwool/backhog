@@ -57,6 +57,72 @@ fun sortEditions(editions: List<BookEdition>): List<BookEdition> = editions.sort
     compareByDescending<BookEdition> { it.pageCount != null }.thenByDescending { it.publishedYear ?: 0 },
 )
 
+/** ISBN-10 → ISBN-13, or "" when the input is not a well-formed ISBN-10. */
+fun isbn10To13(isbn10: String): String {
+    val isbn = normalizeIsbn(isbn10)
+    if (!Regex("^\\d{9}[\\dX]$").matches(isbn)) return ""
+    val core = "978" + isbn.take(9)
+    val sum = core.mapIndexed { i, c -> (c - '0') * if (i % 2 == 0) 1 else 3 }.sum()
+    return core + ((10 - sum % 10) % 10)
+}
+
+/** ISBN-13 → ISBN-10, or "" for a 979 prefix (which has no ISBN-10). */
+fun isbn13To10(isbn13: String): String {
+    val isbn = normalizeIsbn(isbn13)
+    if (!Regex("^978\\d{10}$").matches(isbn)) return ""
+    val core = isbn.substring(3, 12)
+    val sum = core.mapIndexed { i, c -> (c - '0') * (10 - i) }.sum()
+    val check = (11 - sum % 11) % 11
+    return core + if (check == 10) "X" else check.toString()
+}
+
+/** Both forms of a printing's ISBN, whichever of them the catalogue carried. */
+fun editionIsbns(edition: BookEdition): List<String> = listOf(
+    normalizeIsbn(edition.isbn13).ifEmpty { isbn10To13(edition.isbn10) },
+    normalizeIsbn(edition.isbn10).ifEmpty { isbn13To10(edition.isbn13) },
+).filter { it.isNotEmpty() }
+
+/**
+ * Filters (and, for a query, ranks) printings — the web's matchEditions.
+ * Every whitespace-separated term must match: a run of digits against either
+ * form of the ISBN (hyphens ignored — the last few digits off the back cover
+ * are usually enough), anything else against publisher, binding, language,
+ * year and page count. An exact ISBN ranks first, so a scan lands on one row.
+ */
+fun matchEditions(editions: List<BookEdition>, query: String): List<BookEdition> {
+    val terms = query.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (terms.isEmpty()) return editions
+    return editions.mapIndexedNotNull { order, edition ->
+        val isbns = editionIsbns(edition).map { it.lowercase() }
+        val words = listOf(
+            edition.publisher,
+            edition.binding,
+            edition.language,
+            edition.publishedYear?.toString().orEmpty(),
+            formatPages(edition.pageCount),
+        ).joinToString(" ").lowercase()
+        var score = 0
+        for (term in terms) {
+            val digits = term.replace("-", "")
+            val numeric = Regex("^\\d+x?$").matches(digits)
+            val inIsbn = numeric && isbns.any { it.contains(digits) }
+            val inWords = words.contains(term)
+            // A long run of digits is an ISBN being typed; a short one is more
+            // likely the page count or year, and only incidentally in an ISBN.
+            score += when {
+                inIsbn && digits in isbns -> 100
+                inIsbn && digits.length >= 4 -> 10
+                inWords -> 3
+                inIsbn -> 1
+                else -> return@mapIndexedNotNull null
+            }
+        }
+        Triple(edition, score, order)
+    }
+        .sortedWith(compareByDescending<Triple<BookEdition, Int, Int>> { it.second }.thenBy { it.third })
+        .map { it.first }
+}
+
 /**
  * The page count "page 214 of N" is measured in: the copy driving the page
  * map, else the printing the entry is anchored to, else the first printing

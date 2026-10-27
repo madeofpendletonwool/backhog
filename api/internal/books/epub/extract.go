@@ -81,6 +81,47 @@ type extractor struct {
 	// character in it, and that character's byte offset.
 	anchors *[]Anchor
 	pending *Anchor
+
+	// The typography walk, alongside the text one and never changing it:
+	// styles is parallel to blocks; runs is the buffer's text cut where
+	// marks change; kinds is the stack of container kinds the walk is
+	// inside; level is the open heading's level; breakNext is an <hr>
+	// waiting for the next block to carry it.
+	styles    []BlockStyle
+	runs      []Run
+	marks     marks
+	kinds     []string
+	level     int
+	breakNext bool
+	// styleHeading is the typography's heading state: like heading, but
+	// never lent by a container — a <section epub:type="chapter"> is a
+	// chapter, not a title, and must not set its every paragraph as one.
+	styleHeading bool
+}
+
+// write appends text to the buffer and to the current run.
+func (ex *extractor) write(text string, extra rune) {
+	ex.buf.WriteString(text)
+	m := ex.marks.String()
+	if extra != 0 {
+		m += string(extra)
+	}
+	if n := len(ex.runs); n > 0 && ex.runs[n-1].Marks == m {
+		ex.runs[n-1].Text += text
+		return
+	}
+	ex.runs = append(ex.runs, Run{Text: text, Marks: m})
+}
+
+// kind is the strongest kind of the containers the walk is inside.
+func (ex *extractor) kind() string {
+	best := ""
+	for _, k := range ex.kinds {
+		if kindRank[k] > kindRank[best] {
+			best = k
+		}
+	}
+	return best
 }
 
 // selfClosingRE matches a self-closing tag: <name attrs/>.
@@ -146,7 +187,7 @@ func AnchorBlocks(zr *zip.Reader, href string) (*html.Node, []Anchor, error) {
 		return nil, nil, fmt.Errorf("epub: parse %s: %w", href, err)
 	}
 	var anchors []Anchor
-	ex := &extractor{anchors: &anchors}
+	ex := &extractor{anchors: &anchors, marks: marks{}}
 	ex.walk(root)
 	ex.flush()
 	return root, anchors, nil
@@ -168,27 +209,40 @@ func ExtractBlocksHTML(src string) ([]string, []int) {
 	if err != nil {
 		return nil, nil
 	}
-	ex := &extractor{}
+	ex := &extractor{marks: marks{}}
 	ex.walk(root)
 	ex.flush()
 	return ex.blocks, ex.headings
 }
 
+// ExtractStyledHTML is ExtractBlocksHTML with each block's typography.
+func ExtractStyledHTML(src string) ([]string, []int, []BlockStyle) {
+	root, err := html.Parse(strings.NewReader(src))
+	if err != nil {
+		return nil, nil, nil
+	}
+	ex := &extractor{marks: marks{}}
+	ex.walk(root)
+	ex.flush()
+	return ex.blocks, ex.headings, ex.styles
+}
+
 // extractBlocks returns the raw text of every block-level element in the
 // spine document at href, in document order, together with the internal
 // images it references.
-func extractBlocks(zr *zip.Reader, href string) ([]string, []int, []Image, error) {
+func extractBlocks(zr *zip.Reader, href string) ([]string, []int, []Image, []BlockStyle, error) {
 	root, err := parseHTML(zr, href)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	ex := &extractor{
 		baseDir: path.Dir(href),
 		exists:  func(name string) bool { return zipLookup(zr, name) != nil },
+		marks:   marks{},
 	}
 	ex.walk(root)
 	ex.flush()
-	return ex.blocks, ex.headings, ex.images, nil
+	return ex.blocks, ex.headings, ex.images, ex.styles, nil
 }
 
 // walk descends the node tree. Inline content accumulates in the buffer; a
@@ -202,7 +256,7 @@ func (ex *extractor) walk(n *html.Node) {
 				ex.pending = &Anchor{Node: n, Offset: i}
 			}
 		}
-		ex.buf.WriteString(n.Data)
+		ex.write(n.Data, 0)
 	case html.ElementNode:
 		if skipTags[n.Data] {
 			return
@@ -210,7 +264,13 @@ func (ex *extractor) walk(n *html.Node) {
 		if n.Data == "br" {
 			// A line break is a word boundary, not a paragraph boundary:
 			// the surrounding text stays one block, with a space.
-			ex.buf.WriteByte(' ')
+			ex.write(" ", MarkBreak)
+			return
+		}
+		if n.Data == "hr" {
+			// A scene break: no text, so no block — the next block carries it.
+			ex.flush()
+			ex.breakNext = true
 			return
 		}
 		if n.Data == "img" || n.Data == "image" {
@@ -224,13 +284,30 @@ func (ex *extractor) walk(n *html.Node) {
 			// it must run while the outer heading state still applies; the
 			// closing one emits this element's own content, under its own.
 			ex.flush()
-			outer := ex.heading
+			outer, outerStyle, outerLevel := ex.heading, ex.styleHeading, ex.level
 			ex.heading = outer || isHeading(n)
+			if !outerStyle && isHeading(n) && !containerTags[n.Data] {
+				ex.styleHeading, ex.level = true, headingLevel(n)
+			}
+			ex.kinds = append(ex.kinds, containerKind(n))
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
 				ex.walk(c)
 			}
 			ex.flush()
-			ex.heading = outer
+			ex.kinds = ex.kinds[:len(ex.kinds)-1]
+			ex.heading, ex.styleHeading, ex.level = outer, outerStyle, outerLevel
+			return
+		}
+		if added := inlineMarks(n); len(added) > 0 {
+			for _, m := range added {
+				ex.marks[m]++
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				ex.walk(c)
+			}
+			for _, m := range added {
+				ex.marks[m]--
+			}
 			return
 		}
 	}
@@ -308,8 +385,15 @@ func (ex *extractor) flush() {
 			a.Raw = s
 			*ex.anchors = append(*ex.anchors, a)
 		}
+		style := BlockStyle{Kind: ex.kind(), Break: ex.breakNext, Runs: ex.runs}
+		if ex.styleHeading {
+			style.Kind, style.Level = KindHeading, ex.level
+		}
+		ex.styles = append(ex.styles, style)
+		ex.breakNext = false
 	}
 	ex.buf.Reset()
+	ex.runs = nil
 	ex.pending = nil
 }
 

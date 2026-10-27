@@ -57,6 +57,9 @@ type Doc struct {
 	// Pratchett writes DEATH in capitals, and a title rule that trusted
 	// letter case alone would find four hundred chapters in Reaper Man.
 	Headings []int
+	// Styles is each block's typography, parallel to Blocks (see
+	// BlockStyle). Nil for a format with no markup to read it from.
+	Styles []BlockStyle
 	// Images holds the document's internal illustrations in document
 	// order. Only references that resolve to a file actually inside this
 	// EPUB survive; see extractor.resolveAsset.
@@ -151,7 +154,7 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 			continue
 		}
 		href := joinZipPath(path.Dir(container.RootfilePath), item.Href)
-		blocks, headings, images, err := extractBlocks(zr, href)
+		blocks, headings, images, styles, err := extractBlocks(zr, href)
 		if err != nil {
 			return nil, err
 		}
@@ -159,11 +162,12 @@ func Parse(r io.ReaderAt, size int64) (*Document, error) {
 			SpineIndex:    len(doc.Docs),
 			FragmentIndex: fragment,
 			Href:          href,
-			Title:      matchingTitle(entries, href),
-			Depth:      matchingDepth(entries, href),
-			Blocks:     blocks,
-			Headings:   headings,
-			Images:     images,
+			Title:         matchingTitle(entries, href),
+			Depth:         matchingDepth(entries, href),
+			Blocks:        blocks,
+			Headings:      headings,
+			Images:        images,
+			Styles:        styles,
 		})
 	}
 	return doc, nil

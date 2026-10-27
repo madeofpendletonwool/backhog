@@ -116,6 +116,9 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 			if existing.NamesVersion != NamesVersion {
 				ing.indexNames(ctx, f, existing)
 			}
+			if !ing.stylesCurrent(existing) {
+				ing.healStyles(ctx, f, existing)
+			}
 			return existing, nil
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -180,6 +183,10 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 	}
 	if err := writeJSONAtomic(ing.IndexPath(et.ID), index); err != nil {
 		return models.EpubText{}, err
+	}
+	// Typography is a nicety the reader degrades without; never fail a parse on it.
+	if err := ing.writeStyles(et, parsed); err != nil {
+		slog.WarnContext(ctx, "styles: write", "file", f.ID, "error", err)
 	}
 	// The derived indexes are a best-effort tail on the parse: the book is
 	// readable without them, so a failure logs and moves on — the index

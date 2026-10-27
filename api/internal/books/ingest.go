@@ -185,7 +185,7 @@ func (ing *Ingester) EnsureForMediaFile(ctx context.Context, f models.MediaFile)
 		return models.EpubText{}, err
 	}
 	// Typography is a nicety the reader degrades without; never fail a parse on it.
-	if err := ing.writeStyles(et, parsed); err != nil {
+	if err := ing.writeStyles(et, parsed, index); err != nil {
 		slog.WarnContext(ctx, "styles: write", "file", f.ID, "error", err)
 	}
 	// The derived indexes are a best-effort tail on the parse: the book is

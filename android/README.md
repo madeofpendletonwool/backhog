@@ -17,7 +17,7 @@ cd android
 ./gradlew lintDebug testDebugUnitTest
 ```
 
-The debug build installs as `com.collinpendleton.backhog.debug`, next to a
+The debug build installs as `com.gooseberrydevelopment.backhog.debug`, next to a
 release build. It may also reach a dev server on the host over plain HTTP at
 `http://10.0.2.2:<port>` from the emulator (`src/debug`). Release builds are
 HTTPS-only.
@@ -105,7 +105,7 @@ extras) against a device or emulator with the app playing.
 ## Layout
 
 ```
-app/src/main/java/com/collinpendleton/backhog/
+app/src/main/java/com/gooseberrydevelopment/backhog/
   api/        Retrofit surface, models (from web/src/lib/types.ts), cookie jar, errors
   data/       DataStore preferences (themes, arena, remembered filters, playback speed),
               server-URL parsing

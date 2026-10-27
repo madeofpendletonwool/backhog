@@ -10,18 +10,25 @@ plugins {
 val versionNameEnv: String? = providers.environmentVariable("BACKHOG_VERSION_NAME").orNull
 val versionCodeEnv: Int? = providers.environmentVariable("BACKHOG_VERSION_CODE").orNull?.toIntOrNull()
 
-// Release signing, from the environment only — the keystore never lives in the
-// repo. CI decodes it from secrets; without them the release build is still
-// produced (so R8 is exercised on every PR) but left unsigned.
-val keystorePath: String? = providers.environmentVariable("BACKHOG_KEYSTORE_PATH").orNull
+// Release signing — the keystore never lives in the repo. CI decodes it from
+// secrets into BACKHOG_KEYSTORE_* environment variables; a local machine sets
+// the same names as Gradle properties in ~/.gradle/gradle.properties
+// (backhog.keystore.path, .password, backhog.key.alias, .password). Without
+// either the release build is still produced (so R8 is exercised on every
+// PR) but left unsigned.
+fun signingValue(env: String, property: String): String? =
+    providers.environmentVariable(env).orNull?.takeIf { it.isNotBlank() }
+        ?: providers.gradleProperty(property).orNull?.takeIf { it.isNotBlank() }
+
+val keystorePath: String? = signingValue("BACKHOG_KEYSTORE_PATH", "backhog.keystore.path")
 val hasReleaseKey = !keystorePath.isNullOrBlank() && file(keystorePath).exists()
 
 android {
-    namespace = "com.collinpendleton.backhog"
+    namespace = "com.gooseberrydevelopment.backhog"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.collinpendleton.backhog"
+        applicationId = "com.gooseberrydevelopment.backhog"
         minSdk = 29
         targetSdk = 36
         versionCode = versionCodeEnv ?: 1
@@ -49,9 +56,9 @@ android {
         if (hasReleaseKey) {
             create("release") {
                 storeFile = file(keystorePath!!)
-                storePassword = providers.environmentVariable("BACKHOG_KEYSTORE_PASSWORD").orNull
-                keyAlias = providers.environmentVariable("BACKHOG_KEY_ALIAS").orNull
-                keyPassword = providers.environmentVariable("BACKHOG_KEY_PASSWORD").orNull
+                storePassword = signingValue("BACKHOG_KEYSTORE_PASSWORD", "backhog.keystore.password")
+                keyAlias = signingValue("BACKHOG_KEY_ALIAS", "backhog.key.alias")
+                keyPassword = signingValue("BACKHOG_KEY_PASSWORD", "backhog.key.password")
             }
         }
     }

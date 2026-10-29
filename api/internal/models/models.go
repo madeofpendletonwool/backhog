@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -1359,6 +1360,44 @@ type EpubChapter struct {
 	CharEnd     int    `json:"char_end"`
 	// Depth is the TOC nesting of the entry targeting this document.
 	Depth int `json:"depth"`
+}
+
+// TitleSourceContinued names a chapter after the TOC entry it continues. It
+// sits beside the stored sources in books (toc, heading, text, none) but is
+// never stored: LabelContinuedChapters assigns it on the way out.
+const TitleSourceContinued = "continued"
+
+// LabelContinuedChapters names the unnamed chapters that are a TOC entry
+// running on: "Begin Reading, part 2", "part 3", and so on.
+//
+// Grouping caps how much text one chapter absorbs from unnamed documents
+// after it, so a book whose TOC lists only "Begin Reading" — Pratchett, who
+// writes without chapters — comes out as that entry plus dozens of untitled
+// fragments. A TOC entry covers everything up to the next entry, so those
+// fragments are honestly that entry continuing. Only a TOC title is carried
+// forward: a heading guessed from the opening line ("Chapter 1" in a book
+// whose TOC names nothing) is followed by real chapters we failed to name,
+// and calling them its parts would be a lie. Those stay unnamed.
+func LabelContinuedChapters(chapters []EpubChapter) {
+	var anchor string
+	part := 0
+	for i := range chapters {
+		ch := &chapters[i]
+		if ch.CharEnd <= ch.CharStart {
+			continue
+		}
+		switch {
+		case ch.Title != "":
+			anchor, part = "", 0
+			if ch.TitleSource == "toc" {
+				anchor, part = ch.Title, 1
+			}
+		case anchor != "":
+			part++
+			ch.Title = fmt.Sprintf("%s, part %d", anchor, part)
+			ch.TitleSource = TitleSourceContinued
+		}
+	}
 }
 
 // Sources for a stored reading position: what produced the canonical

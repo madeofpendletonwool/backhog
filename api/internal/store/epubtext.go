@@ -115,7 +115,8 @@ func (s *Store) ReplaceEpubText(ctx context.Context, et models.EpubText, chapter
 	return tx.Commit()
 }
 
-// ListEpubChapters returns a canonical text's chapters in reading order.
+// ListEpubChapters returns a canonical text's chapters in reading order,
+// with the unnamed runs of a TOC entry labelled as its parts.
 func (s *Store) ListEpubChapters(ctx context.Context, epubTextID string) ([]models.EpubChapter, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, epub_text_id, spine_index, href, title, title_source,
@@ -135,7 +136,11 @@ func (s *Store) ListEpubChapters(ctx context.Context, epubTextID string) ([]mode
 		}
 		chapters = append(chapters, ch)
 	}
-	return chapters, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	models.LabelContinuedChapters(chapters)
+	return chapters, nil
 }
 
 // TextFormatRank orders the text-side containers by how much of the book

@@ -102,7 +102,9 @@ export function BookDetailPage() {
             Shelf
           </Link>
 
-          <div className="flex flex-col gap-6 sm:flex-row sm:items-end">
+          {/* Top-aligned: the text column grows with the actions a book has,
+              and a bottom-aligned cover sinks further with every one. */}
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
             <div className="relative w-32 shrink-0 sm:w-40">
               <BookCover book={book} className="shadow-2xl ring-1 ring-edge-strong" />
               {/* Covers are shared across the server, so changing one is a
@@ -159,8 +161,16 @@ export function BookDetailPage() {
                 </div>
               )}
 
-              <div className="mt-5 flex max-w-md flex-wrap items-center gap-3">
+              {/* On a phone the actions are a two-column grid — the ways in
+                  (read, listen) full width, the rest paired at equal width —
+                  rather than a ragged wrap of whatever happens to fit, the
+                  ways in pulled to the top so the rest pair up. Below
+                  360px a pair no longer fits the arcade's labels, so it is
+                  one column. */}
+              <div className="mt-5 sm:w-fit">
                 <StatusMenu entry={entry} size="md" statuses={STATUSES} />
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
                 <ReadButton entry={entry} />
                 <JumpBackInButton entry={entry} />
                 <ListenButton entry={entry} />
@@ -366,8 +376,8 @@ function ReadButton({ entry }: { entry: BookEntry }) {
   const into = paged ? (position?.page_index ?? 0) : (position?.char_offset ?? 0);
 
   return (
-    <Link to={`/books/${entry.id}/read`}>
-      <Button variant="primary">
+    <Link to={`/books/${entry.id}/read`} className="col-span-full -order-2 sm:order-none sm:col-auto">
+      <Button variant="primary" className="w-full sm:w-auto">
         <Gi name="scroll-unfurled" className="size-3.5" />
         {into > 0 ? "Continue reading" : "Read"}
       </Button>
@@ -405,8 +415,9 @@ function JumpBackInButton({ entry }: { entry: BookEntry }) {
     <Link
       to={`/books/${entry.id}/read?offset=${position.char_offset}&peek=1`}
       title="Open at your spot and look around — a peek never moves your saved position"
+      className="min-w-0"
     >
-      <Button variant="secondary">
+      <Button variant="secondary" className="w-full sm:w-auto">
         <Gi name="history" className="size-3.5" />
         Jump back in
       </Button>
@@ -462,7 +473,7 @@ function SearchButton({ entry }: { entry: BookEntry }) {
 
   return (
     <>
-      <Button variant="secondary" onClick={() => setOpen(true)}>
+      <Button variant="secondary" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
         <Gi name="search" className="size-3.5" />
         Search inside
       </Button>
@@ -508,7 +519,7 @@ function CopyReadButton({ entry }: { entry: BookEntry }) {
   };
 
   return (
-    <div className="flex flex-col items-start">
+    <div className="col-span-full flex flex-col items-stretch sm:col-auto sm:items-start">
       <Button variant="secondary" onClick={copy}>
         <Gi name={copied ? "check" : "scroll-unfurled"} className="size-3.5" />
         {copied ? "Copied" : "Copy what I've read"}
@@ -551,9 +562,10 @@ function ListenButton({ entry }: { entry: BookEntry }) {
   const finished = timeline.total_duration > 0 && into >= timeline.total_duration - 30;
 
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="col-span-full -order-1 flex items-center gap-2.5 sm:order-none sm:col-auto">
       <Button
         variant={active ? "secondary" : "primary"}
+        className="grow sm:grow-0"
         onClick={() =>
           active ? player.toggle() : player.open(entry, finished ? { startAt: 0 } : undefined)
         }
@@ -569,7 +581,7 @@ function ListenButton({ entry }: { entry: BookEntry }) {
               ? "Resume"
               : "Listen"}
       </Button>
-      <span className="text-xs text-ink-500">
+      <span className="shrink-0 text-xs text-ink-500">
         {formatDuration(timeline.total_duration)} · {timeline.tracks.length} file
         {timeline.tracks.length === 1 ? "" : "s"}
       </span>

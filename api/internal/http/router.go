@@ -231,6 +231,11 @@ func (s *Server) Routes() http.Handler {
 
 			r.Get("/books/isbn/{isbn}", s.handleBookByISBN)
 			r.Get("/books/{bookID}", s.handleGetBook)
+			// The cover picker: every cover Open Library has for a work,
+			// and pinning one. Covers are shared across the server, so
+			// choosing one is a library-management act.
+			r.Get("/books/{bookID}/covers", s.handleBookCovers)
+			r.With(auth.RequireMediaManager).Put("/books/{bookID}/cover", s.handleSetBookCover)
 
 			// Canonical text for a library entry: the spine index and ranged
 			// slices of the normalized text (byte offsets). Parsing is on

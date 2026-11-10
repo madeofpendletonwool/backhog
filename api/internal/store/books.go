@@ -36,7 +36,8 @@ func (s *Store) UpsertBook(ctx context.Context, b metadata.Book, accentHex strin
 			authors_json       = CASE WHEN excluded.authors_json <> '[]'
 			                          THEN excluded.authors_json ELSE books.authors_json END,
 			description        = COALESCE(NULLIF(excluded.description, ''), books.description),
-			cover_url          = COALESCE(NULLIF(excluded.cover_url, ''), books.cover_url),
+			cover_url          = CASE WHEN books.cover_pinned THEN books.cover_url
+			                          ELSE COALESCE(NULLIF(excluded.cover_url, ''), books.cover_url) END,
 			accent_hex         = COALESCE(NULLIF(excluded.accent_hex, ''), books.accent_hex),
 			first_publish_year = COALESCE(excluded.first_publish_year, books.first_publish_year),
 			subjects_json      = CASE WHEN excluded.subjects_json <> '[]'
@@ -179,6 +180,24 @@ func (s *Store) RecordBookCover(ctx context.Context, id, localPath, accentHex st
 		                  accent_hex = COALESCE(NULLIF(?, ''), accent_hex)
 		 WHERE id = ?`, localPath, accentHex, id)
 	return err
+}
+
+// SetBookCover pins a hand-picked cover on a work: the upstream URL, and the
+// accent sampled from the newly cached file. A pinned cover survives every
+// later metadata refresh (see UpsertBook).
+func (s *Store) SetBookCover(ctx context.Context, id, coverURL, localPath, accentHex string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE books SET cover_url = ?, cover_pinned = 1,
+		                  cover_local_path = COALESCE(NULLIF(?, ''), cover_local_path),
+		                  accent_hex = COALESCE(NULLIF(?, ''), accent_hex)
+		 WHERE id = ?`, coverURL, localPath, accentHex, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // OwnedBookIDs reports which of the given works are already in a user's

@@ -187,7 +187,14 @@ func (s *Server) handleBookCover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	serveCoverFile(w, r, s.covers.Path(id))
+	// A book's cover can be swapped by hand, so the bare URL must not be
+	// cached forever. Clients that version the URL (?v=<cover id>) get the
+	// long-lived cache back; everyone else revalidates against Last-Modified.
+	cache := "public, no-cache"
+	if r.URL.Query().Get("v") != "" {
+		cache = "public, max-age=31536000, immutable"
+	}
+	serveCoverFileWith(w, r, s.covers.Path(id), cache)
 }
 
 // handleLegacyCoverRedirect keeps the original single-media cover route

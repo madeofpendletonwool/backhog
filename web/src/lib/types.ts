@@ -135,6 +135,24 @@ export interface Book {
 }
 
 /** One printing of a work. Page maps key off the edition, never the work. */
+/** One piece of cover art a work could wear, and the printing it came from
+ *  when Open Library ties it to one. */
+export interface BookCoverOption {
+  id: number;
+  url: string;
+  edition_id?: string;
+  publisher?: string;
+  year?: number | null;
+  binding?: string;
+  language?: string;
+}
+
+/** The cover picker's payload: the choices, and which one the work wears. */
+export interface BookCoverChoices {
+  current_id: number;
+  covers: BookCoverOption[];
+}
+
 export interface BookEdition {
   id: string;
   book_id: string;

@@ -77,7 +77,28 @@ func (c *CoverCache) Fetch(ctx context.Context, key string, url string) (accent 
 	if c.Has(key) {
 		return accentFromFile(dest), nil
 	}
+	return c.download(ctx, dest, url)
+}
 
+// Replace downloads url over whatever is cached under key — the path for a
+// cover someone chose by hand. The old file stays in place until the new one
+// has fully arrived, so a failed download leaves the previous cover showing.
+func (c *CoverCache) Replace(ctx context.Context, key string, url string) (accent string, err error) {
+	if url == "" {
+		return "", nil
+	}
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return c.download(ctx, c.Path(key), url)
+}
+
+// download fetches url to a temp file and renames it onto dest, returning the
+// sampled accent. Callers hold a download slot.
+func (c *CoverCache) download(ctx context.Context, dest, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err

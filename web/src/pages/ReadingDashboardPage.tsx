@@ -165,7 +165,7 @@ function ContinueHero({ book }: { book: ReadingNowBook }) {
       {entry.book.cover_url && (
         <div
           className="absolute inset-0 -z-10 scale-110 bg-cover bg-center opacity-20 blur-3xl"
-          style={{ backgroundImage: `url(${bookCoverUrl(entry.book.id)})` }}
+          style={{ backgroundImage: `url(${bookCoverUrl(entry.book)})` }}
           aria-hidden="true"
         />
       )}

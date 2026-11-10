@@ -105,9 +105,12 @@ func ValidISBN(s string) bool { return isbnPattern.MatchString(s) }
 // Requests are rate-limited and identified by User-Agent per Open Library's
 // fair-use policy.
 type OpenLibrary struct {
-	base    string
-	http    *http.Client
-	limiter *rate.Limiter
+	base string
+	// coverBase overrides the covers host for the cover picker; empty
+	// means covers.openlibrary.org.
+	coverBase string
+	http      *http.Client
+	limiter   *rate.Limiter
 }
 
 // NewOpenLibrary constructs the production client against openlibrary.org.
@@ -572,4 +575,117 @@ func marshalOrEmpty(v any) []byte {
 		return nil
 	}
 	return encoded
+}
+
+// coverIDPattern pulls the cover id out of a large-size Open Library cover
+// URL, whichever host served it.
+var coverIDPattern = regexp.MustCompile(`/b/id/(\d+)-L\.jpg$`)
+
+// OpenLibraryCoverID extracts the cover id from an Open Library cover URL,
+// or 0 when the URL is anything else.
+func OpenLibraryCoverID(u string) int64 {
+	m := coverIDPattern.FindStringSubmatch(u)
+	if m == nil {
+		return 0
+	}
+	id, _ := strconv.ParseInt(m[1], 10, 64)
+	return id
+}
+
+// CoverOption is one piece of cover art a work could wear. Edition describes
+// the printing it came from when Open Library ties it to one; covers attached
+// to the work itself carry no edition.
+type CoverOption struct {
+	ID        int64  `json:"id"`
+	URL       string `json:"url"`
+	EditionID string `json:"edition_id,omitempty"`
+	Publisher string `json:"publisher,omitempty"`
+	Year      *int   `json:"year,omitempty"`
+	Binding   string `json:"binding,omitempty"`
+	Language  string `json:"language,omitempty"`
+}
+
+// CoverLister is implemented by providers that can enumerate every cover a
+// work has, not just the one search promoted. It is a separate interface so
+// test fakes of BookProvider need not grow a method they never exercise.
+type CoverLister interface {
+	GetCovers(ctx context.Context, key string) ([]CoverOption, error)
+	// CoverURL builds the download URL for a cover id. The server builds
+	// it, never the client, so choosing a cover cannot become "fetch
+	// whatever address I give you".
+	CoverURL(id int64) string
+}
+
+// CoverURL is the large-size cover URL for an Open Library cover id.
+func (c *OpenLibrary) CoverURL(id int64) string {
+	if c.coverBase != "" {
+		return fmt.Sprintf("%s/b/id/%d-L.jpg", c.coverBase, id)
+	}
+	return fmt.Sprintf(openLibraryCoverURL, id)
+}
+
+// WithCoverBase points cover-picker downloads at another host, for tests
+// that serve fake artwork.
+func (c *OpenLibrary) WithCoverBase(base string) *OpenLibrary {
+	c.coverBase = strings.TrimRight(base, "/")
+	return c
+}
+
+// coverEditionLimit bounds the editions walked for covers. Popular works run
+// to hundreds of printings; the first page holds plenty of distinct art, and
+// one request keeps the picker polite to Open Library.
+const coverEditionLimit = 100
+
+// GetCovers gathers a work's covers: every cover on the work record, plus the
+// art on each of its printings, de-duplicated by cover id. Edition covers come
+// first since they carry a publisher and year to tell them apart; work-level
+// covers that no edition claims follow.
+func (c *OpenLibrary) GetCovers(ctx context.Context, key string) ([]CoverOption, error) {
+	key = workKey(key)
+	if key == "" {
+		return nil, fmt.Errorf("openlibrary: empty work key")
+	}
+
+	var work olWork
+	if err := c.getJSON(ctx, "/works/"+url.PathEscape(key)+".json", &work); err != nil {
+		return nil, err
+	}
+
+	var payload struct {
+		Entries []olEdition `json:"entries"`
+	}
+	if err := c.getJSON(ctx, "/works/"+url.PathEscape(key)+"/editions.json?limit="+
+		strconv.Itoa(coverEditionLimit), &payload); err != nil {
+		// The work's own covers are still worth offering.
+		payload.Entries = nil
+	}
+
+	seen := map[int64]bool{}
+	var out []CoverOption
+	for _, ed := range payload.Entries {
+		info := editionFromOL(ed)
+		for _, id := range ed.Covers {
+			if id <= 0 || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, CoverOption{
+				ID:        id,
+				URL:       c.CoverURL(id),
+				EditionID: info.ID,
+				Publisher: info.Publisher,
+				Year:      info.PublishedYear,
+				Binding:   info.Binding,
+				Language:  info.Language,
+			})
+		}
+	}
+	for _, id := range work.Covers {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, CoverOption{ID: id, URL: c.CoverURL(id)})
+	}
+	return out, nil
 }

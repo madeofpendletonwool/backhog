@@ -733,7 +733,7 @@ export function AudioPlayerProvider({ children }: { children: ReactNode }) {
       // An absolute URL: the notification is drawn by the OS, which has no
       // idea what our origin is.
       artwork: book.cover_url
-        ? [{ src: new URL(bookCoverUrl(book.id), window.location.origin).href, sizes: "512x512" }]
+        ? [{ src: new URL(bookCoverUrl(book), window.location.origin).href, sizes: "512x512" }]
         : [],
     });
 

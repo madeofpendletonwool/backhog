@@ -144,7 +144,7 @@ export function FullPlayer() {
       {book.cover_url && (
         <div
           className="fixed inset-0 -z-10 scale-110 bg-cover bg-center opacity-25 blur-3xl"
-          style={{ backgroundImage: `url(${bookCoverUrl(book.id)})` }}
+          style={{ backgroundImage: `url(${bookCoverUrl(book)})` }}
           aria-hidden="true"
         />
       )}

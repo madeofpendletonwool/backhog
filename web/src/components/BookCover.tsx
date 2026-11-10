@@ -47,7 +47,7 @@ export function BookCover({
         </div>
       ) : (
         <img
-          src={bookCoverUrl(book.id)}
+          src={bookCoverUrl(book)}
           alt=""
           loading="lazy"
           decoding="async"

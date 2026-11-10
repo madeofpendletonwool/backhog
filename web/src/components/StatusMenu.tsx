@@ -96,7 +96,7 @@ export function StatusMenu({
                 update.mutate({ id: entry.id, patch: { status } });
               }}
               className={cn(
-                "flex flex-1 items-center justify-center transition-colors",
+                "flex flex-1 items-center justify-center whitespace-nowrap transition-colors",
                 size === "sm" ? "h-7" : "h-8 px-3",
                 isActive
                   ? activeStyles[status]

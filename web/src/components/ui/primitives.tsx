@@ -14,10 +14,12 @@ type ButtonSize = "sm" | "md" | "lg" | "icon";
    only things this file branches on. */
 const buttonVariants: Record<ThemeFamily, Record<ButtonVariant, string>> = {
   pixel: {
-    primary: "f-btn-gold font-display text-[11px] uppercase tracking-wider",
-    secondary: "f-btn-soft font-display text-[11px] uppercase tracking-wider",
+    // The bitmap face is wide; at phone width the extra tracking is what
+    // pushes a two-word label past its row, so it waits for room.
+    primary: "f-btn-gold font-display text-[11px] uppercase tracking-wide sm:tracking-wider",
+    secondary: "f-btn-soft font-display text-[11px] uppercase tracking-wide sm:tracking-wider",
     ghost: "text-ink-300 hover:text-ink-100 hover:bg-fill-hover",
-    danger: "f-btn-danger font-display text-[11px] uppercase tracking-wider",
+    danger: "f-btn-danger font-display text-[11px] uppercase tracking-wide sm:tracking-wider",
   },
   flat: {
     primary: "f-btn-gold",
@@ -43,14 +45,14 @@ const buttonBase: Record<ThemeFamily, string> = {
 };
 
 const buttonSizes: Record<ThemeFamily, Record<ButtonSize, string>> = {
-  /* min-h, not h: the arcade's frames are 12px of sprite a side, so a
-     two-line label inside a fixed 48px button has 24px of content box and
-     spills straight out through the bottom edge. Growing the frame is
-     what a nine-slice is for. */
+  /* min-h, not h: the arcade's frames are 12px of sprite a side, and
+     content taller than a label must grow the frame rather than spill out
+     through the bottom edge. Labels themselves stay on one line (see
+     Button), so in practice the frame sits at its minimum. */
   pixel: {
     sm: "min-h-10 px-3 py-1.5 gap-1.5",
-    md: "min-h-12 px-4 py-2 gap-2",
-    lg: "min-h-14 px-5 py-2.5 gap-2",
+    md: "min-h-12 px-3 py-2 gap-2 sm:px-4",
+    lg: "min-h-14 px-4 py-2.5 gap-2 sm:px-5",
     icon: "h-11 w-11",
   },
   flat: {
@@ -88,7 +90,9 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center",
+        // One line, always: a label that wraps inside a button reads as two
+        // buttons stacked. Rows of buttons wrap the buttons instead.
+        "inline-flex shrink-0 items-center justify-center whitespace-nowrap",
         "transition-all duration-150 ease-[var(--ease-spring)]",
         "focus-visible:focus-ring",
         "disabled:cursor-not-allowed disabled:opacity-60",

@@ -84,7 +84,7 @@ export function AudioPlayer() {
             >
               <span className="size-10 shrink-0 overflow-hidden rounded-xl bg-ink-800">
                 {book.cover_url && (
-                  <img src={bookCoverUrl(book.id)} alt="" className="size-full object-cover" />
+                  <img src={bookCoverUrl(book)} alt="" className="size-full object-cover" />
                 )}
               </span>
               <span className="min-w-0 flex-1">

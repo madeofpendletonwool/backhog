@@ -5,6 +5,7 @@ import type {
   AudioEdition,
   AudioTimeline,
   Book,
+  BookCoverChoices,
   BookFacets,
   BookPosition,
   BookPages,
@@ -490,6 +491,13 @@ export const api = {
   /** A work by its Open Library key, editions included. */
   getBook: (bookId: string) => request<Book>(`/books/${bookId}`),
 
+  /** Every cover Open Library has for a work, for the cover picker. */
+  bookCovers: (bookId: string) => request<BookCoverChoices>(`/books/${bookId}/covers`),
+
+  /** Pins one of those covers on the work, for everyone on the server. */
+  setBookCover: (bookId: string, cover_id: number) =>
+    request<Book>(`/books/${bookId}/cover`, { method: "PUT", body: body({ cover_id }) }),
+
   /**
    * Adds a work. `editionId` names the printing the reader actually owns —
    * page counts and (later) page maps hang off the edition, not the work.
@@ -830,7 +838,15 @@ export const api = {
 export const coverUrl = (gameId: number) => `/api/covers/game/${gameId}`;
 
 /** The books half of the same cache, keyed by Open Library work id. */
-export const bookCoverUrl = (bookId: string) => `/api/covers/book/${bookId}`;
+/**
+ * A work's cached cover. The version is the upstream cover URL's cover id, so
+ * picking a different cover changes the address and the browser's year-long
+ * cache never serves the old jacket; without one the server revalidates.
+ */
+export const bookCoverUrl = (book: { id: string; cover_url?: string }) => {
+  const version = book.cover_url?.match(/\/b\/id\/(\d+)-/)?.[1];
+  return `/api/covers/book/${book.id}${version ? `?v=${version}` : ""}`;
+};
 
 /**
  * One track's bytes, range-served. The element loads this same-origin, so the

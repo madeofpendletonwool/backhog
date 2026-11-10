@@ -135,6 +135,11 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 // serveCoverFile streams a cached cover from disk. Covers are immutable for a
 // given key, so they are cached hard.
 func serveCoverFile(w http.ResponseWriter, r *http.Request, path string) {
+	serveCoverFileWith(w, r, path, "public, max-age=31536000, immutable")
+}
+
+// serveCoverFileWith streams a cached cover under the given Cache-Control.
+func serveCoverFileWith(w http.ResponseWriter, r *http.Request, path, cacheControl string) {
 	f, err := os.Open(path)
 	if err != nil {
 		http.NotFound(w, r)
@@ -149,6 +154,6 @@ func serveCoverFile(w http.ResponseWriter, r *http.Request, path string) {
 	}
 
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", cacheControl)
 	http.ServeContent(w, r, path, info.ModTime(), f)
 }

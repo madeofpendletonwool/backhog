@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { BookCover } from "@/components/BookCover";
+import { CoverPicker } from "@/components/CoverPicker";
 import { BookProgressPanel } from "@/components/BookProgressPanel";
 import { YourCopyPanel } from "@/components/YourCopyPanel";
 import { ShareBookPanel } from "@/components/ShareBookPanel";
@@ -16,6 +17,7 @@ import { Button, Panel, Skeleton } from "@/components/ui/primitives";
 import { useBook, useBookEntry } from "@/hooks/useBooks";
 import { useDeleteEntry, useUpdateEntry } from "@/hooks/useLibrary";
 import { useAudioPlayer } from "@/hooks/useAudioPlayer";
+import { useAuth } from "@/hooks/useAuth";
 import { api, bookCoverUrl } from "@/lib/api";
 import {
   accentStyle,
@@ -49,6 +51,8 @@ export function BookDetailPage() {
   const [notes, setNotes] = useState("");
   const [notesDirty, setNotesDirty] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [pickingCover, setPickingCover] = useState(false);
+  const { canManageMedia } = useAuth();
 
   useEffect(() => {
     if (entry && !notesDirty) setNotes(entry.notes);
@@ -83,7 +87,7 @@ export function BookDetailPage() {
         {hasCover && (
           <div
             className="absolute inset-0 -z-10 scale-110 bg-cover bg-center opacity-25 blur-3xl"
-            style={{ backgroundImage: `url(${bookCoverUrl(book.id)})` }}
+            style={{ backgroundImage: `url(${bookCoverUrl(book)})` }}
             aria-hidden="true"
           />
         )}
@@ -99,8 +103,21 @@ export function BookDetailPage() {
           </Link>
 
           <div className="flex flex-col gap-6 sm:flex-row sm:items-end">
-            <div className="w-32 shrink-0 sm:w-40">
+            <div className="relative w-32 shrink-0 sm:w-40">
               <BookCover book={book} className="shadow-2xl ring-1 ring-edge-strong" />
+              {/* Covers are shared across the server, so changing one is a
+                  library-management act, gated like attaching files. */}
+              {canManageMedia && (
+                <button
+                  type="button"
+                  onClick={() => setPickingCover(true)}
+                  aria-label="Change cover"
+                  title="Change cover"
+                  className="absolute bottom-2 right-2 flex size-9 items-center justify-center rounded-full bg-ink-950/80 text-ink-100 shadow-lg ring-1 ring-edge-strong backdrop-blur transition-colors hover:bg-ink-900 focus-visible:focus-ring"
+                >
+                  <Gi name="pencil" className="size-4" />
+                </button>
+              )}
             </div>
 
             <div className="min-w-0 flex-1">
@@ -254,6 +271,10 @@ export function BookDetailPage() {
           </Button>
         </div>
       </div>
+
+      {canManageMedia && (
+        <CoverPicker book={book} open={pickingCover} onClose={() => setPickingCover(false)} />
+      )}
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Confirm removal">
         <h2 className="text-lg font-semibold text-ink-100">Remove {book.title}?</h2>

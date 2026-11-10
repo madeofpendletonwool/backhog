@@ -165,16 +165,19 @@ function ContinueHero({ book }: { book: ReadingNowBook }) {
       {entry.book.cover_url && (
         <div
           className="absolute inset-0 -z-10 scale-110 bg-cover bg-center opacity-20 blur-3xl"
-          style={{ backgroundImage: `url(${bookCoverUrl(entry.book.id)})` }}
+          style={{ backgroundImage: `url(${bookCoverUrl(entry.book)})` }}
           aria-hidden="true"
         />
       )}
       <div className="absolute inset-0 -z-10 bg-gradient-to-r from-ink-950/70 via-ink-950/40 to-ink-950/70" />
 
-      <div className="flex gap-4 sm:gap-5">
+      {/* A grid rather than a row so the actions can drop under the cover
+          on a phone, where a 6rem cover leaves too little width beside it
+          for a button label, and sit beside it again once there is room. */}
+      <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-4 sm:grid-cols-[9rem_minmax(0,1fr)] sm:grid-rows-[1fr_auto] sm:gap-x-5">
         <Link
           to={`/books/${entry.id}`}
-          className="w-24 shrink-0 self-start overflow-hidden rounded-xl ring-1 ring-art shadow-2xl transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 hover:ring-art-hover focus-visible:focus-ring sm:w-36"
+          className="w-24 shrink-0 self-start overflow-hidden rounded-xl ring-1 ring-art shadow-2xl transition-transform duration-300 ease-[var(--ease-spring)] hover:-translate-y-0.5 hover:ring-art-hover focus-visible:focus-ring sm:row-span-2 sm:w-36"
           aria-label={entry.book.title}
         >
           <BookCover book={entry.book} sizes="160px" />
@@ -207,30 +210,30 @@ function ContinueHero({ book }: { book: ReadingNowBook }) {
             </div>
             <ProgressBar percent={percent} complete={percent >= 100} />
           </div>
+        </div>
 
-          <div className="mt-auto flex flex-wrap items-center gap-2.5 pt-5">
-            {/* The primary is whichever end the book was last put down at;
-                the other end, when it exists, is one click further. */}
-            {entry.progress_source === "listen" && hasAudio ? (
-              <>
-                <ListenAction entry={entry} primary />
-                {hasText && <ReadAction entry={entry} />}
-              </>
-            ) : (
-              <>
-                {(hasText || !hasAudio) && (
-                  <Button variant="primary" onClick={() => continueReading(entry)}>
-                    <Gi name="scroll-unfurled" className="size-3.5" />
-                    {continueLabel(entry)}
-                  </Button>
-                )}
-                {hasAudio && <ListenAction entry={entry} primary={!hasText} />}
-              </>
-            )}
-            <Link to={`/books/${entry.id}`} className="text-sm text-ink-400 hover:text-ink-100">
-              Details
-            </Link>
-          </div>
+        <div className="col-span-2 flex flex-wrap items-center gap-2.5 pt-5 sm:col-span-1 sm:col-start-2">
+          {/* The primary is whichever end the book was last put down at;
+              the other end, when it exists, is one click further. */}
+          {entry.progress_source === "listen" && hasAudio ? (
+            <>
+              <ListenAction entry={entry} primary />
+              {hasText && <ReadAction entry={entry} />}
+            </>
+          ) : (
+            <>
+              {(hasText || !hasAudio) && (
+                <Button variant="primary" onClick={() => continueReading(entry)}>
+                  <Gi name="scroll-unfurled" className="size-3.5" />
+                  {continueLabel(entry)}
+                </Button>
+              )}
+              {hasAudio && <ListenAction entry={entry} primary={!hasText} />}
+            </>
+          )}
+          <Link to={`/books/${entry.id}`} className="text-sm text-ink-400 hover:text-ink-100">
+            Details
+          </Link>
         </div>
       </div>
     </section>

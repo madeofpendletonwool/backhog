@@ -1,5 +1,7 @@
 package com.gooseberrydevelopment.backhog.ui.player
 
+import android.content.Context
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -380,11 +383,37 @@ private fun TextButtonLike(label: String, accent: Color? = null, onClick: () -> 
     )
 }
 
+/**
+ * How far the thumb must travel, as a share of the bar, before a gesture
+ * counts as a scrub. A tap lands on the track and Material's slider jumps
+ * there; on a whole-book bar one stray tap is hours, so a tap is ignored and
+ * only a real drag moves the tape.
+ */
+private const val SCRUB_MIN_TRAVEL = 0.02f
+
+/** A jump at least this long offers its way back. */
+private const val UNDO_MIN_JUMP_MS = 60_000L
+private const val UNDO_WINDOW_MS = 15_000L
+
 /** Elapsed, the bar, and how much book is left — the whole book, not one file. */
 @Composable
 private fun SeekRow(state: PlayerUiState, accent: Color, onSeek: (Long) -> Unit) {
     val p = Backhog.palette
+    val context = LocalContext.current
     var scrub by remember { mutableStateOf<Float?>(null) }
+    // Where the current gesture first put the thumb, and the furthest it has
+    // travelled from there.
+    var scrubStart by remember { mutableStateOf<Float?>(null) }
+    var scrubTravel by remember { mutableStateOf(0f) }
+    // The position before the last big jump, for the undo chip. A new book
+    // forgets it.
+    var undoFrom by remember(state.entryId) { mutableStateOf<Long?>(null) }
+    LaunchedEffect(undoFrom) {
+        if (undoFrom != null) {
+            delay(UNDO_WINDOW_MS)
+            undoFrom = null
+        }
+    }
     val seconds = (state.durationMs / 1000f).coerceAtLeast(1f)
     val value = (scrub ?: state.positionMs / 1000f).coerceIn(0f, seconds)
     Column(Modifier.padding(vertical = 8.dp)) {
@@ -392,10 +421,25 @@ private fun SeekRow(state: PlayerUiState, accent: Color, onSeek: (Long) -> Unit)
             Text(formatTimecode(value.toDouble()), style = MaterialTheme.typography.labelMedium, color = p.c400)
             Slider(
                 value = value,
-                onValueChange = { scrub = it },
+                onValueChange = {
+                    val start = scrubStart ?: it.also { first -> scrubStart = first }
+                    scrubTravel = maxOf(scrubTravel, abs(it - start))
+                    scrub = it
+                },
                 onValueChangeFinished = {
-                    scrub?.let { onSeek((it * 1000).toLong()) }
+                    val target = scrub
+                    // TalkBack adjusts in single steps that look exactly like
+                    // a tap, so with touch exploration on every change counts.
+                    val dragged = scrubTravel >= seconds * SCRUB_MIN_TRAVEL || touchExplorationOn(context)
+                    if (target != null && dragged) {
+                        val targetMs = (target * 1000).toLong()
+                        val from = state.positionMs
+                        if (abs(targetMs - from) >= UNDO_MIN_JUMP_MS) undoFrom = from
+                        onSeek(targetMs)
+                    }
                     scrub = null
+                    scrubStart = null
+                    scrubTravel = 0f
                 },
                 valueRange = 0f..seconds,
                 enabled = state.durationMs > 0,
@@ -408,7 +452,23 @@ private fun SeekRow(state: PlayerUiState, accent: Color, onSeek: (Long) -> Unit)
             )
             Text(remaining(state), style = MaterialTheme.typography.labelMedium, color = p.c400)
         }
-        if (state.durationMs > 0) {
+        val back = undoFrom
+        if (back != null) {
+            Text(
+                "Undo jump · back to ${formatTimecode(back / 1000.0)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = accent,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable {
+                        undoFrom = null
+                        onSeek(back)
+                    }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        } else if (state.durationMs > 0) {
             Text(
                 "${(state.positionMs * 100 / state.durationMs.coerceAtLeast(1))}%",
                 style = MaterialTheme.typography.labelSmall,
@@ -419,6 +479,10 @@ private fun SeekRow(state: PlayerUiState, accent: Color, onSeek: (Long) -> Unit)
         }
     }
 }
+
+private fun touchExplorationOn(context: Context): Boolean =
+    (context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager)
+        ?.isTouchExplorationEnabled == true
 
 @Composable
 private fun TransportRow(

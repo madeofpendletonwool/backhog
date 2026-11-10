@@ -21,6 +21,12 @@ import { Button } from "../ui/primitives";
  * either file without the two importing each other in a circle.
  */
 
+/** How far a finger must slide along the bar before lifting counts as a scrub. */
+const TAP_SLOP_PX = 8;
+/** A jump at least this long offers its way back, for this long. */
+const UNDO_MIN_JUMP_S = 60;
+const UNDO_WINDOW_MS = 15_000;
+
 /**
  * The whole book as one track. A transparent range input sits over the frame,
  * so dragging, arrow keys and screen readers all work without hand-rolling a
@@ -28,21 +34,50 @@ import { Button } from "../ui/primitives";
  * place inside a framed surface where the book's accent is allowed to show.
  */
 export function SeekBar({ size = "sm" }: { size?: "sm" | "lg" }) {
-  const { duration, seek } = useAudioPlayer();
+  const { duration, seek, entry } = useAudioPlayer();
   const clock = useAudioClock();
   const [scrubbing, setScrubbing] = useState<number | null>(null);
+  // Where the tape was before the last big jump, offered back for a while.
+  const [undoFrom, setUndoFrom] = useState<number | null>(null);
+  // A touch that lands on the track and lifts without travelling is a tap,
+  // not a scrub: on a whole-book bar one stray tap aimed at pause is hours.
+  const touch = useRef<{ x: number; travel: number } | null>(null);
+
+  useEffect(() => {
+    if (undoFrom == null) return;
+    const timer = window.setTimeout(() => setUndoFrom(null), UNDO_WINDOW_MS);
+    return () => window.clearTimeout(timer);
+  }, [undoFrom]);
+  // A different book has nothing to go back to.
+  useEffect(() => setUndoFrom(null), [entry?.id]);
 
   const value = scrubbing ?? clock;
   const percent = duration > 0 ? Math.min(100, Math.max(0, (value / duration) * 100)) : 0;
 
   const commit = () => {
+    const gesture = touch.current;
+    touch.current = null;
     if (scrubbing == null) return;
-    seek(scrubbing);
     setScrubbing(null);
+    if (gesture && gesture.travel < TAP_SLOP_PX) return;
+    if (Math.abs(scrubbing - clock) >= UNDO_MIN_JUMP_S) setUndoFrom(clock);
+    seek(scrubbing);
   };
 
   return (
     <div className="relative min-w-0 flex-1 has-[:focus-visible]:focus-ring">
+      {undoFrom != null && (
+        <button
+          type="button"
+          onClick={() => {
+            seek(undoFrom);
+            setUndoFrom(null);
+          }}
+          className="f-panel absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap px-2 py-0.5 text-[11px] text-ink-100 focus-visible:focus-ring"
+        >
+          Undo jump · back to {formatTimecode(undoFrom)}
+        </button>
+      )}
       {/* The large variant asks the family for a thicker track rather than
           scaling one: --bar-h is what flat and library size .f-bar from, and
           the arcade's bar is a 6px nine-slice that would only blur. */}
@@ -62,6 +97,14 @@ export function SeekBar({ size = "sm" }: { size?: "sm" | "lg" }) {
         aria-label="Position in the book"
         aria-valuetext={`${formatTimecode(value)} of ${formatTimecode(duration)}`}
         onChange={(event) => setScrubbing(Number(event.target.value))}
+        onPointerDown={(event) => {
+          // A mouse click to jump is deliberate; only fingers and pens misfire.
+          touch.current = event.pointerType === "mouse" ? null : { x: event.clientX, travel: 0 };
+        }}
+        onPointerMove={(event) => {
+          const gesture = touch.current;
+          if (gesture) gesture.travel = Math.max(gesture.travel, Math.abs(event.clientX - gesture.x));
+        }}
         onPointerUp={commit}
         onPointerCancel={commit}
         onKeyUp={commit}

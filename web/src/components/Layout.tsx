@@ -216,10 +216,14 @@ export function Layout() {
             arena only decides which length the picks reason about. */}
         <Button
           variant="secondary"
-          className="mb-5 w-full shrink-0"
+          // Full width and centred, so side padding and the arcade's extra
+          // tracking buy nothing here, and its bitmap label alone fills the
+          // sidebar inside the 12px sprite frame — the dice wait for a theme
+          // with room for them.
+          className="mb-5 w-full shrink-0 px-1 tracking-normal sm:px-1 sm:tracking-normal"
           onClick={() => (arena === "books" ? setReadOpen(true) : setPickOpen(true))}
         >
-          <Gi name="dices" className="size-3.5" />
+          {family !== "pixel" && <Gi name="dices" className="size-3.5" />}
           {arena === "books" ? "What should I read?" : "What should I play?"}
         </Button>
 

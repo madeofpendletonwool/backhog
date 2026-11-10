@@ -1048,7 +1048,7 @@ export interface ChapterImage {
 }
 
 /** Who named a chapter, in descending order of authority. */
-export type TitleSource = "toc" | "heading" | "text" | "none";
+export type TitleSource = "toc" | "heading" | "text" | "none" | "continued";
 
 /**
  * One chapter of a book's canonical text — a run of one or more spine
@@ -1064,7 +1064,9 @@ export interface TextChapter {
   /**
    * Where the title came from. `toc` is the book's own table of contents;
    * `heading` is a heading in its markup; `text` was inferred from the shape
-   * of the opening line and may be wrong; `none` means nothing named it.
+   * of the opening line and may be wrong; `none` means nothing named it;
+   * `continued` is an unnamed run of the TOC entry before it ("Begin Reading,
+   * part 2"), labelled by the server.
    */
   title_source: TitleSource;
   /** 1-based position among the chapters that hold text. */

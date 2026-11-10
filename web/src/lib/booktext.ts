@@ -205,7 +205,12 @@ export function chapterTitle(chapter: Pick<TextChapter, "title" | "number">): st
 export function isInferredTitle(
   chapter: Pick<TextChapter, "title" | "title_source">,
 ): boolean {
-  return chapter.title.trim() !== "" && chapter.title_source !== "toc";
+  // A continued part is named by the TOC entry it runs on from.
+  return (
+    chapter.title.trim() !== "" &&
+    chapter.title_source !== "toc" &&
+    chapter.title_source !== "continued"
+  );
 }
 
 /**
